@@ -230,12 +230,32 @@
   .date-body .pfile-bad { color: #f85149; background: #2d1a1a; border-radius: 3px; padding: 1px 5px; font-weight: 600; }
   .date-body .pfile-bad:hover { background: #4d2a2a; color: #ff7b72; }
   .date-body .pdim { color: #484f58; font-size: 11px; }
+  .date-body .p-orig { color: #8b949e; font-size: 10px; }
   .date-body .proj-bad { background: #2d1a1a; border-left: 3px solid #f85149; }
   .date-body .proj-bad:hover { background: #3d2a2a !important; }
   .date-body .p-warn {
     font-size: 11px; color: #f85149; padding: 2px 0;
-    display: flex; align-items: center; gap: 4px;
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   }
+  .fix-btn {
+    display: inline-block; font-size: 10px; font-weight: 600;
+    background: #238636; color: #fff; padding: 2px 10px; border-radius: 4px;
+    cursor: pointer; transition: .1s; white-space: nowrap;
+  }
+  .fix-btn:hover { background: #2ea043; }
+  .fix-btn:active { transform: scale(0.95); }
+  .p-report {
+    font-size: 11px; color: #7ee787; padding: 4px 8px;
+    background: #0d441a; border-radius: 4px; margin: 2px 0; line-height: 1.5;
+  }
+  .p-report .r-move { color: #7ee787; }
+  .p-report .r-skip { color: #f7c843; }
+  .p-report .r-err  { color: #f87171; }
+  .p-report .r-link {
+    color: #58a6ff; cursor: pointer; text-decoration: underline;
+    text-decoration-style: dotted;
+  }
+  .p-report .r-link:hover { color: #79c0ff; }
   .date-body .tag {
     display: inline-block; font-size: 9px; padding: 1px 5px;
     border-radius: 6px; background: #21262d; color: #8b949e;
@@ -349,6 +369,8 @@
       <span style="color:#8b949e;font-size:13px;margin:0 6px" id="selectedCount">已选 0 张</span>
       <button class="btn btn-primary" onclick="confirmGenerate()" id="genBtn" disabled>🚀 开始 LOVART 生图</button>
       <span style="flex:1"></span>
+      <button class="btn" onclick="launchCheckRem()" title="启动 AI vs 去背 对比预览">🔍 去背预览</button>
+      <button class="btn" onclick="scanProvenance()" title="扫描所有文件建立溯源关系">🔗 溯源扫描</button>
       <button class="btn" onclick="toggleTrashPanel()" title="查看回收站文件">🗑 回收站 <span id="trashCount" style="color:#8b949e;font-size:11px"></span></button>
       <button class="btn" onclick="emptyTrash()" title="将本地回收站文件送入系统回收站">🧹 清空回收站</button>
     </div>
@@ -792,10 +814,12 @@ async function loadProjects() {
         // 判断文件名是否不一致
         const badSet = new Set(p.bad_files || []);
 
-        // AI 生图文件
+        // AI 生图文件（附带原图名）
         const aiList = (p.ai_gen || []).map(f => {
           const isBad = badSet.has(f);
-          return `<span class="pfile ${isBad ? 'pfile-bad' : ''}" onclick="event.stopPropagation();openFolder('${p.dx_id}/01_AI')" title="打开 01_AI">${esc(f)}</span>`;
+          const orig = p.ai_src_map ? p.ai_src_map[f] : '';
+          const origTag = orig ? ` <span class="p-orig">← ${esc(orig)}</span>` : '';
+          return `<span class="pfile ${isBad ? 'pfile-bad' : ''}" onclick="event.stopPropagation();openFolder('${p.dx_id}/01_AI')" title="打开 01_AI">${esc(f)}</span>${origTag}`;
         }).join(' ') || '<span class="pdim">-</span>';
 
         // 去背
@@ -815,7 +839,11 @@ async function loadProjects() {
         const grpTag = grp.group_id ? `<span class="tag" title="UID: ${(grp.images||[]).join(', ')}">${grp.group_id}</span>` : '';
 
         const warnBar = isBad
-          ? `<div class="p-warn">⚠️ 款号不一致: ${esc(p.incons_reason || '')}</div>`
+          ? `<div class="p-warn">
+              ⚠️ ${esc(p.incons_reason || '')}
+              <span class="fix-btn" onclick="event.stopPropagation();fixMismatch('${p.dx_id}', this)">🔧 自动修复</span>
+            </div>
+            <div class="p-report" id="report-${p.dx_id}" style="display:none"></div>`
           : '';
 
         return `<div class="proj-row ${isBad ? 'proj-bad' : ''}">
@@ -863,14 +891,144 @@ function toggleDateGroup(head) {
 }
 async function openFolder(dxId) { try { await fetch(`/api/open/${dxId}`); } catch (_) {} }
 
+async function scanProvenance() {
+  const btn = event.target;
+  btn.textContent = '⏳ 扫描中…'; btn.disabled = true;
+  try {
+    const res = await fetch('/api/scan-provenance', { method: 'POST' });
+    const data = await res.json();
+    addLog(data.ok ? 'ok' : 'error', data.msg || data.error || '扫描完成');
+  } catch (e) {
+    addLog('error', '溯源扫描失败: ' + e.message);
+  }
+  btn.textContent = '🔗 溯源扫描'; btn.disabled = false;
+}
+
+async function launchCheckRem() {
+  const btn = event.target;
+  btn.textContent = '⏳ 启动中…'; btn.disabled = true;
+  try {
+    const res = await fetch('/api/launch-check-rem', { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+      addLog('ok', data.msg);
+    } else {
+      addLog('error', data.error || '启动失败');
+    }
+  } catch (e) {
+    addLog('error', '网络错误: ' + e.message);
+  }
+  btn.textContent = '🔍 去背预览'; btn.disabled = false;
+}
+
+async function fixMismatch(dxId, btn) {
+  btn.textContent = '⏳ 修复中…'; btn.style.pointerEvents = 'none';
+  try {
+    const res = await fetch('/api/fix-mismatch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dx_id: dxId }),
+    });
+    const data = await res.json();
+    const reportEl = document.getElementById(`report-${dxId}`);
+    if (data.ok && data.report) {
+      const r = data.report;
+      let html = '';
+      for (const m of (r.moved || [])) {
+        const targetDx = m.to ? m.to.split('/')[0] : '';
+        html += `<div class="r-move">✅ ${esc(m.file)} 移到了 <span class="r-link" onclick="event.stopPropagation();openFolder('${targetDx}/02_REM_BG')">📂 ${esc(m.to)}</span></div>`;
+      }
+      for (const s of (r.skipped || [])) {
+        html += `<div class="r-skip">⏭ ${esc(s.file || s)} — ${esc(s.reason || '')}</div>`;
+      }
+      for (const e of (r.errors || [])) {
+        html += `<div class="r-err">❌ ${esc(e.file || e)} — ${esc(e.error || '')}</div>`;
+      }
+      if (!html) html = '<div>无需修复</div>';
+      reportEl.innerHTML = html;
+      reportEl.style.display = 'block';
+    } else {
+      reportEl.innerHTML = `<div class="r-err">${esc(data.error || '修复失败')}</div>`;
+      reportEl.style.display = 'block';
+    }
+    btn.textContent = '🔧 已修复';
+    // Refresh projects after a moment
+    setTimeout(() => { loadProjects(); }, 2000);
+  } catch (e) {
+    const reportEl = document.getElementById(`report-${dxId}`);
+    reportEl.innerHTML = `<div class="r-err">网络错误: ${esc(e.message)}</div>`;
+    reportEl.style.display = 'block';
+    btn.textContent = '🔧 重试';
+    btn.style.pointerEvents = '';
+  }
+}
+
 // ============================================================================
 // Registry
 // ============================================================================
 async function queryRegistry() {
   const q = document.getElementById('queryInput').value.trim(); if (!q) return;
   const el = document.getElementById('queryResult'); el.textContent = '查询中…';
-  try { const data = await (await fetch(`/api/registry/query?q=${encodeURIComponent(q)}`)).json(); el.innerHTML = `<pre>${esc(JSON.stringify(data, null, 2))}</pre>`; }
-  catch (e) { el.innerHTML = `<span style="color:#f87171">${esc(e.message)}</span>`; }
+  try {
+    // Get registry info
+    const regRes = await fetch(`/api/registry/query?q=${encodeURIComponent(q)}`);
+    const regData = await regRes.json();
+    // Get provenance info
+    const provRes = await fetch(`/api/provenance?q=${encodeURIComponent(q)}`);
+    const provData = await provRes.json();
+
+    let html = '<div style="display:flex;gap:10px;flex-wrap:wrap">';
+
+    // Registry info
+    html += '<div style="flex:1;min-width:300px"><b>📋 注册表信息</b>';
+    if (regData.results && regData.results.length) {
+      html += `<pre>${esc(JSON.stringify(regData.results[0], null, 2))}</pre>`;
+      if (regData.results[0].source_md5) {
+        html += `<div style="margin-top:6px"><b>🔗 来源 MD5:</b> <code style="color:#58a6ff">${esc(regData.results[0].source_md5)}</code></div>`;
+      }
+    } else {
+      html += '<div style="color:#8b949e;margin-top:8px">未找到</div>';
+    }
+    html += '</div>';
+
+    // Provenance chain
+    html += '<div style="flex:1;min-width:300px"><b>🔗 溯源链</b>';
+    if (provData.chain && provData.chain.length) {
+      html += '<div style="margin-top:6px">';
+      for (let i = provData.chain.length - 1; i >= 0; i--) {
+        const node = provData.chain[i];
+        const arrow = i > 0 ? ' → ' : '';
+        const typeIcon = {inbox:'📥', ai_gen:'🎨', rembg:'✂️', upload:'📎'}[node.type] || '❓';
+        html += `<div style="display:flex;align-items:center;gap:6px;padding:2px 0;font-size:12px">
+          <span>${typeIcon}</span>
+          <span style="color:#c9d1d9">${esc(node.name)}</span>
+          <span style="color:#8b949e;font-size:10px">[${esc(node.type)}]</span>
+        </div>`;
+        if (i > 0) html += '<div style="color:#30363d;padding-left:14px">↓</div>';
+      }
+      html += '</div>';
+    } else if (provData.error) {
+      html += `<div style="color:#f87171;margin-top:8px">${esc(provData.error)}</div>`;
+    } else {
+      html += '<div style="color:#8b949e;margin-top:8px">无溯源信息（可点击🔗溯源扫描建立）</div>';
+    }
+
+    // Derived images
+    if (provData.derived && provData.derived.length) {
+      html += `<div style="margin-top:10px"><b>📎 衍生图片 (${provData.derived.length})</b></div>`;
+      for (const d of provData.derived) {
+        const typeIcon = {inbox:'📥', ai_gen:'🎨', rembg:'✂️', upload:'📎'}[d.type] || '❓';
+        html += `<div style="display:flex;align-items:center;gap:6px;padding:2px 0;font-size:12px">
+          <span>${typeIcon}</span>
+          <span style="color:#c9d1d9">${esc(d.name)}</span>
+          <span style="color:#8b949e;font-size:10px">[${esc(d.type)}]</span>
+        </div>`;
+      }
+    }
+    html += '</div></div>';
+
+    el.innerHTML = html;
+  } catch (e) { el.innerHTML = `<span style="color:#f87171">${esc(e.message)}</span>`; }
 }
 
 // ============================================================================

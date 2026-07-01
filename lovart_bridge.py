@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Lovart-WB Bridge Server v1.0
+Lovart-WB Bridge Server v2.0
 ============================
 Flask HTTP 桥接服务 — 连接 HTML 控制面板与本地 Lovart 管线 + 文件系统
 
@@ -45,7 +45,6 @@ LOVART_SCRIPT  = LOVART_DIR / "run_official_v53.py"
 PYTHON_EXE     = r"C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe"
 PYTHONPATH     = "E:/python_packages"
 
-EXCLUDE_DIR    = "_bridge_exclude"   # 暂存未选中文件的子目录名
 HOVER_CACHE    = INBOX_DIR / "_hover_cache"  # 悬停预览缩略图缓存
 
 # ============================================================================
@@ -87,8 +86,15 @@ def _load_state():
         try:
             with open(STATE_FILE, 'r', encoding='utf-8') as f:
                 saved = json.load(f)
-            # 只恢复 completed / error 状态（不恢复 running，因为进程已不在）
-            if saved.get("status") in ("completed", "error", "idle"):
+            status = saved.get("status", "")
+            if status in ("completed", "error", "idle"):
+                task_state = saved
+            elif status == "running":
+                # 进程已不在，标记为中断
+                saved["status"] = "error"
+                saved["progress"] = "⚠️ 上次任务未完成（服务重启中断）"
+                saved["completed_at"] = datetime.now().isoformat()
+                saved["log"].append(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ 服务重启，任务中断")
                 task_state = saved
         except Exception:
             pass
@@ -137,18 +143,217 @@ def save_registry(reg: dict):
     tmp.replace(REGISTRY_FILE)
 
 
-def ensure_registry_v3(reg: dict) -> dict:
-    """确保 registry 结构包含 v3 字段"""
-    if reg.get("version", 1) < 3:
-        reg.setdefault("groups", {})
-        reg.setdefault("uid_index", {})
-        reg.setdefault("name_index", {})
-        reg["version"] = 3
-    else:
-        reg.setdefault("groups", {})
-        reg.setdefault("uid_index", {})
-        reg.setdefault("name_index", {})
+def ensure_registry_v4(reg: dict) -> dict:
+    """确保 registry 包含 v4 字段（含溯源信息）"""
+    v = reg.get("version", 1)
+    # v3 fields
+    reg.setdefault("groups", {})
+    reg.setdefault("uid_index", {})
+    reg.setdefault("name_index", {})
+    # v4 provenance fields
+    reg.setdefault("provenance", {"tree": {}, "broken": []})
+    if v < 4:
+        reg["version"] = 4
+        # 为所有现有图片添加溯源字段
+        for md5, entry in reg.get("images", {}).items():
+            _add_provenance_fields(entry)
     return reg
+
+
+# ── 溯源字段 ────────────────────────────────────────
+
+PROVENANCE_FIELDS = {
+    "source_md5": "",       # 来源图片的 MD5
+    "source_type": "",      # inbox | ai_gen | rembg | upload
+    "root_md5": "",         # 最原始 INBOX 图片的 MD5
+    "root_name": "",        # 最原始 INBOX 文件名
+    "derived_md5s": [],     # 由此图片衍生出的 MD5 列表
+    "lineage_status": "",   # confirmed | inferred | missing
+}
+
+
+def _add_provenance_fields(entry: dict):
+    """为单条图片记录添加溯源字段"""
+    for field, default in PROVENANCE_FIELDS.items():
+        entry.setdefault(field, default)
+
+
+def _register_provenance(reg: dict, child_md5: str, parent_md5: str, source_type: str,
+                          lineage_status: str = "inferred"):
+    """记录 child_md5 由 parent_md5 通过 source_type 方式生成。
+    
+    lineage_status:
+      confirmed - Hook 实时记录（可信）
+      inferred  - Scanner 推断（需验证）
+      missing   - 断链
+    """
+    child = reg["images"].get(child_md5)
+    parent = reg["images"].get(parent_md5)
+    if not child or not parent:
+        return
+
+    _add_provenance_fields(child)
+    _add_provenance_fields(parent)
+
+    child["source_md5"] = parent_md5
+    child["source_type"] = source_type
+    child["lineage_status"] = lineage_status
+    # root_md5 继承：如果 parent 有 root_md5 则继承，否则 parent 自己就是 root
+    child["root_md5"] = parent.get("root_md5") or parent_md5
+    child["root_name"] = parent.get("root_name") or parent.get("inbox_original_name") or parent.get("original_name", "")
+
+    # 在 parent 的 derived 列表中添加 child
+    if parent_md5 not in parent["derived_md5s"]:
+        parent["derived_md5s"].append(child_md5)
+
+    # 更新 provenance tree 索引
+    tree = reg.setdefault("provenance", {}).setdefault("tree", {})
+    tree.setdefault(parent_md5, [])
+    if child_md5 not in tree[parent_md5]:
+        tree[parent_md5].append(child_md5)
+
+
+# ── 批量扫描：建立现有文件的溯源链 ─────────────────
+
+def scan_provenance():
+    """扫描所有 DX 文件夹，通过文件 stem 精确匹配建立血缘关系。
+    
+    规则（不改文件名，用现有命名语义）：
+      AI:       DX{N}_{role}.png                   → 父级 = INBOX 原图（source_map）
+      去背:     DX{N}_{role}_cut.png                → 父级 = AI 图（去掉 _cut）
+      去背变体:  DX{N}_{Chinese}{role}_cut.png      → 父级 = AI 图（去掉中文+_cut）
+      贴图:     DX{N}_{role}_XXX.jpg                → 父级 = 去背图（如存在），否则 = AI 图
+    """
+    reg = load_registry()
+    reg = ensure_registry_v4(reg)
+    count = 0
+
+    # 加载 Lovart registry（用于 AI → 原图）
+    lovart_reg = {}
+    lr_path = Path("D:/Semems WB/WB_REGISTRY/registry.json")
+    if lr_path.exists():
+        try:
+            with open(lr_path, 'r', encoding='utf-8') as f:
+                lovart_reg = json.load(f)
+        except Exception:
+            pass
+
+    # 预计算：同一 DX 内所有文件的 md5 索引（dx_dir内的相对文件名 → md5）
+    # 避免重复 compute_md5
+    def _index_dir(dirpath):
+        idx = {}
+        if dirpath.exists():
+            for f in os.listdir(dirpath):
+                fp = dirpath / f
+                if fp.is_file():
+                    idx[f] = compute_md5(str(fp))
+        return idx
+
+    for d in sorted(os.listdir(PROJECTS_DIR)):
+        if not d.startswith('DX'):
+            continue
+        ai_dir = PROJECTS_DIR / d / "01_AI"
+        rem_dir = PROJECTS_DIR / d / "02_REM_BG"
+        up_dir  = PROJECTS_DIR / d / "03_UPLOAD"
+
+        ai_idx = _index_dir(ai_dir)
+        rem_idx = _index_dir(rem_dir)
+        up_idx = _index_dir(up_dir)
+
+        # ── 1) AI 图 → INBOX 原图 ──
+        sm_path = PROJECTS_DIR / d / "source_map.json"
+        src_id_map = {}
+        if sm_path.exists():
+            try:
+                with open(sm_path, 'r', encoding='utf-8') as f:
+                    sm = json.load(f)
+                for src in sm.get("sources", []):
+                    src_id_map[src.get("file", "")] = src.get("src_id", "")
+            except Exception:
+                pass
+
+        for fname, md5 in ai_idx.items():
+            if md5 not in reg.get("images", {}):
+                continue
+            entry = reg["images"].get(md5, {})
+            _add_provenance_fields(entry)
+            if entry.get("source_md5"):
+                continue
+
+            # source_map → Lovart registry → original name
+            src_id = src_id_map.get(fname, "")
+            if src_id and src_id in lovart_reg:
+                orig_name = lovart_reg[src_id].get("original_name", "")
+                orig_md5 = reg.get("name_index", {}).get(orig_name, "")
+                if orig_md5 and orig_md5 in reg.get("images", {}):
+                    _register_provenance(reg, md5, orig_md5, "ai_gen")
+                    count += 1
+                    continue
+
+            # 后备：inbox_original_name 匹配
+            for img_md5, img_info in reg.get("images", {}).items():
+                if img_info.get("inbox_original_name") and img_info["inbox_original_name"] in fname:
+                    _register_provenance(reg, md5, img_md5, "ai_gen")
+                    count += 1
+                    break
+
+        # ── 2) 去背图 → AI 图 ──
+        # 规则: DX{N}_{role}_cut.png → 去掉 _cut → DX{N}_{role}.png
+        #       DX{N}_黑{role}_cut.png → 去掉中文再去掉 _cut → DX{N}_{role}.png
+        for fname, md5 in rem_idx.items():
+            if md5 not in reg.get("images", {}):
+                continue
+            entry = reg["images"].get(md5, {})
+            _add_provenance_fields(entry)
+            if entry.get("source_md5"):
+                continue
+
+            stem = fname[:-len("_cut.png")] if fname.endswith("_cut.png") else fname.rsplit('.', 1)[0]
+            # 尝试直接匹配: stem → AI 图
+            ai_stem = re.sub(r'[\u4e00-\u9fff]+', '', stem)
+            ai_candidate = f"{ai_stem}.png"
+            if ai_candidate in ai_idx:
+                ai_md5 = ai_idx[ai_candidate]
+                if ai_md5 in reg.get("images", {}):
+                    _register_provenance(reg, md5, ai_md5, "rembg")
+                    count += 1
+                    continue
+
+        # ── 3) 贴图图 → 去背图 / AI 图 ──
+        # 规则: DX{N}_{role}_XXX.jpg → 去掉中文后缀 → DX{N}_{role}
+        #       先找 DX{N}_{role}_cut.png（去背），再找 DX{N}_{role}.png（AI）
+        for fname, md5 in up_idx.items():
+            if md5 not in reg.get("images", {}):
+                continue
+            entry = reg["images"].get(md5, {})
+            _add_provenance_fields(entry)
+            if entry.get("source_md5"):
+                continue
+
+            # 提取基础 stem：去掉文件后缀和中文部分
+            stem = fname.rsplit('.', 1)[0]
+            base_stem = re.sub(r'[\u4e00-\u9fff].*$', '', stem)
+
+            # 优先找去背图
+            cut_candidate = f"{base_stem}_cut.png"
+            if cut_candidate in rem_idx:
+                cut_md5 = rem_idx[cut_candidate]
+                if cut_md5 in reg.get("images", {}):
+                    _register_provenance(reg, md5, cut_md5, "upload")
+                    count += 1
+                    continue
+
+            # 其次找 AI 图
+            ai_candidate = f"{base_stem}.png"
+            if ai_candidate in ai_idx:
+                ai_md5 = ai_idx[ai_candidate]
+                if ai_md5 in reg.get("images", {}):
+                    _register_provenance(reg, md5, ai_md5, "upload")
+                    count += 1
+                    continue
+
+    save_registry(reg)
+    return count
 
 
 def compute_md5(filepath: str) -> str:
@@ -359,6 +564,99 @@ def rename_to_bw(filename: str) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# 修复错放文件：把去背/贴图文件移到正确的 DX 文件夹
+# ---------------------------------------------------------------------------
+
+def _find_target_dx(filename: str, current_dx: str) -> str:
+    """从文件名中提取目标 DX 编号。如 DX0178_B_副本.png → 0178
+    提取失败返回空字符串。
+    """
+    m = re.search(r'(DX\d+)', filename, re.IGNORECASE)
+    if m:
+        candidate = m.group(1).upper()
+        if candidate != current_dx and (PROJECTS_DIR / candidate).exists():
+            return candidate
+    return ""
+
+
+@app.route('/api/fix-mismatch', methods=['POST'])
+def api_fix_mismatch():
+    """修复指定 DX 中的错放文件：
+    - 文件名含正确 DX 编号 → 直接移过去
+    - 文件名不含 → 无法自动修复，跳过
+    - 在目标文件夹写入修复记录
+    """
+    data = request.get_json(silent=True) or {}
+    dx_id = data.get("dx_id", "")
+    if not dx_id.startswith("DX") or not (PROJECTS_DIR / dx_id).exists():
+        return jsonify({"ok": False, "error": "无效的 DX 编号"}), 400
+
+    rem_dir = PROJECTS_DIR / dx_id / "02_REM_BG"
+    report = {"moved": [], "skipped": [], "errors": []}
+    log_entries = []  # 写入修复记录
+
+    if not rem_dir.exists():
+        return jsonify({"ok": True, "report": report, "msg": "没有 02_REM_BG 目录"})
+
+    for f in list(rem_dir.iterdir()):
+        if not f.is_file():
+            continue
+        if f.name.startswith(f"{dx_id}_"):
+            continue
+        target_dx = _find_target_dx(f.name, dx_id)
+        if not target_dx:
+            report["skipped"].append({"file": f.name, "reason": "无法识别目标 DX"})
+            continue
+        target_rem = PROJECTS_DIR / target_dx / "02_REM_BG"
+        if not target_rem.exists():
+            target_rem.mkdir(parents=True, exist_ok=True)
+        dst = target_rem / f.name
+        if dst.exists():
+            stem, ext = os.path.splitext(f.name)
+            dst = target_rem / f"{stem}_{int(time.time())}{ext}"
+        try:
+            shutil.move(str(f), str(dst))
+            entry = {
+                "file": dst.name,
+                "from": f"{dx_id}/02_REM_BG",
+                "to": f"{target_dx}/02_REM_BG",
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            report["moved"].append(entry)
+            log_entries.append(entry)
+        except Exception as e:
+            report["errors"].append({"file": f.name, "error": str(e)})
+
+    # 写入修复记录到目标文件夹
+    if log_entries:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for entry in log_entries:
+            target_dx = entry["to"].split("/")[0]
+            log_path = PROJECTS_DIR / target_dx / "_fix_log.json"
+            logs = []
+            if log_path.exists():
+                try:
+                    with open(log_path, 'r', encoding='utf-8') as lf:
+                        logs = json.load(lf)
+                except Exception:
+                    logs = []
+            logs.append(entry)
+            with open(log_path, 'w', encoding='utf-8') as lf:
+                json.dump(logs, lf, indent=2, ensure_ascii=False)
+
+    msg_parts = []
+    if report["moved"]:
+        msg_parts.append(f"已移动 {len(report['moved'])} 个文件")
+    if report["skipped"]:
+        msg_parts.append(f"跳过 {len(report['skipped'])} 个")
+    if report["errors"]:
+        msg_parts.append(f"错误 {len(report['errors'])} 个")
+    msg = ", ".join(msg_parts) if msg_parts else "无需修复"
+
+    return jsonify({"ok": True, "report": report, "msg": msg})
+
+
+# ---------------------------------------------------------------------------
 # INBOX 分组逻辑
 # ---------------------------------------------------------------------------
 
@@ -556,10 +854,23 @@ def api_projects():
 
             sm_path = PROJECTS_DIR / d / "source_map.json"
             source_map = {}
+            ai_src_map = {}  # AI 文件名 → 原图名
             if sm_path.exists():
                 try:
                     with open(sm_path, 'r', encoding='utf-8') as f:
                         source_map = json.load(f)
+                    # 从 Lovart 注册表查找原图名
+                    lovart_reg_path = Path("D:/Semems WB/WB_REGISTRY/registry.json")
+                    if lovart_reg_path.exists():
+                        with open(lovart_reg_path, 'r', encoding='utf-8') as lf:
+                            lovart_reg = json.load(lf)
+                        for src in source_map.get("sources", []):
+                            ai_file = src.get("file", "")
+                            src_id = src.get("src_id", "")
+                            if ai_file and src_id and src_id in lovart_reg:
+                                orig = lovart_reg[src_id].get("original_name", "")
+                                if orig:
+                                    ai_src_map[ai_file] = orig
                 except Exception:
                     pass
 
@@ -601,6 +912,7 @@ def api_projects():
                 "bad_files": bad_files,
                 "incons_reason": "; ".join(incons_reason[:3]) + (f" 等{len(incons_reason)}处" if len(incons_reason) > 3 else ""),
                 "source_map": source_map,
+                "ai_src_map": ai_src_map,  # AI文件名 → 原图名
                 "modified": datetime.fromtimestamp(ai_dir.stat().st_mtime).isoformat(),
             })
 
@@ -806,7 +1118,187 @@ def api_registry_query():
         if reg["images"][q] not in results:
             results.append(reg["images"][q])
 
-    return jsonify({"query": q, "results": results, "count": len(results)})
+        return jsonify({"query": q, "results": results, "count": len(results)})
+
+
+@app.route('/api/provenance')
+def api_provenance():
+    """查询单张图片的血缘链（溯源）"""
+    q = request.args.get('q', '').strip()
+    if not q:
+        return jsonify({"error": "请提供 ?q=filename_or_md5"}), 400
+
+    reg = load_registry()
+    reg = ensure_registry_v4(reg)
+
+    # 按 MD5、文件名或 UID 查找
+    target_md5 = q
+    if q in reg.get("uid_index", {}):
+        target_md5 = reg["uid_index"][q]
+    elif q in reg.get("name_index", {}):
+        target_md5 = reg["name_index"].get(q, q)
+    elif q not in reg.get("images", {}):
+        # 尝试通过 inbox_original_name 匹配
+        for md5, entry in reg.get("images", {}).items():
+            if entry.get("inbox_original_name") == q or entry.get("original_name") == q:
+                target_md5 = md5
+                break
+
+    target = reg["images"].get(target_md5)
+    if not target:
+        return jsonify({"query": q, "error": "未找到"}), 404
+
+    # 构建血缘链：从 root 到当前
+    chain = []
+    md5 = target_md5
+    while md5 and md5 in reg.get("images", {}):
+        entry = reg["images"][md5]
+        chain.append({
+            "md5": md5,
+            "name": entry.get("current_name", ""),
+            "path": entry.get("current_path", ""),
+            "type": entry.get("source_type", "inbox" if not entry.get("source_md5") else entry["source_type"]),
+            "uid": entry.get("uid", ""),
+            "role": entry.get("role", ""),
+            "root_name": entry.get("root_name", ""),
+        })
+        md5 = entry.get("source_md5", "")
+        if not md5:
+            break
+
+    # 衍生图片
+    derived = []
+    for d_md5 in target.get("derived_md5s", []):
+        if d_md5 in reg.get("images", {}):
+            dentry = reg["images"][d_md5]
+            derived.append({
+                "md5": d_md5,
+                "name": dentry.get("current_name", ""),
+                "path": dentry.get("current_path", ""),
+                "type": dentry.get("source_type", ""),
+                "uid": dentry.get("uid", ""),
+            })
+
+    return jsonify({
+        "query": q,
+        "target": {
+            "md5": target_md5,
+            "name": target.get("current_name", ""),
+            "path": target.get("current_path", ""),
+            "uid": target.get("uid", ""),
+            "role": target.get("role", ""),
+            "inbox_original": target.get("inbox_original_name", ""),
+            "source_type": target.get("source_type", ""),
+            "source_md5": target.get("source_md5", ""),
+            "root_name": target.get("root_name", ""),
+            "root_md5": target.get("root_md5", ""),
+        },
+        "chain": chain,
+        "derived": derived,
+    })
+
+
+@app.route('/api/scan-provenance', methods=['POST'])
+def api_scan_provenance():
+    """扫描所有 DX 文件夹，建立/更新溯源关系"""
+    try:
+        count = scan_provenance()
+        return jsonify({"ok": True, "count": count, "msg": f"已建立 {count} 条溯源关系"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ── 统一血缘注册入口（供 check_rem / 贴图等外部工具 Hook 调用） ──
+
+@app.route('/api/lineage/register', methods=['POST'])
+def api_lineage_register():
+    """外部工具调用此接口记录血缘关系。
+    
+    Payload:
+      child_path: str  - 输出文件的全路径
+      parent_path: str - 输入文件的全路径  
+      stage: str       - rembg | upload | ai_gen
+    """
+    data = request.get_json(silent=True) or {}
+    child_path = data.get("child_path", "")
+    parent_path = data.get("parent_path", "")
+    stage = data.get("stage", "")
+
+    if not child_path or not parent_path or not stage:
+        return jsonify({"ok": False, "error": "需要 child_path, parent_path, stage"}), 400
+    if stage not in ("rembg", "upload", "ai_gen"):
+        return jsonify({"ok": False, "error": f"不支持的 stage: {stage}"}), 400
+
+    child_path = Path(child_path)
+    parent_path = Path(parent_path)
+    if not child_path.exists():
+        return jsonify({"ok": False, "error": f"child_path 不存在: {child_path}"}), 400
+    if not parent_path.exists():
+        return jsonify({"ok": False, "error": f"parent_path 不存在: {parent_path}"}), 400
+
+    try:
+        child_md5 = compute_md5(str(child_path))
+        parent_md5 = compute_md5(str(parent_path))
+
+        reg = load_registry()
+        reg = ensure_registry_v4(reg)
+
+        # 如果 registry 中没有这两个文件，先注册
+        for md5_val, fpath in [(child_md5, child_path), (parent_md5, parent_path)]:
+            if md5_val not in reg.get("images", {}):
+                fname = fpath.name
+                # 用相对路径
+                try:
+                    rel = fpath.relative_to(BASE_DIR)
+                    rel_str = str(rel).replace('\\', '/')
+                except ValueError:
+                    rel_str = str(fpath)
+                reg["images"][md5_val] = {
+                    "md5": md5_val,
+                    "current_name": fname,
+                    "current_path": rel_str,
+                    "events": [{
+                        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "event": "lineage_register",
+                        "detail": f"来自 Hook: {stage}",
+                    }],
+                }
+                _add_provenance_fields(reg["images"][md5_val])
+
+        _register_provenance(reg, child_md5, parent_md5, stage, lineage_status="confirmed")
+        save_registry(reg)
+        return jsonify({
+            "ok": True,
+            "msg": f"已记录 {stage} 血缘: {child_path.name} ← {parent_path.name}",
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route('/api/launch-check-rem', methods=['POST'])
+def api_launch_check_rem():
+    """一键启动「启动对比.bat」去背预览服务（端口 8766），用 Chrome 打开"""
+    script = Path("D:/Semems WB/04_OS/engine/check_rem.py")
+    chrome = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
+    if not script.exists():
+        return jsonify({"ok": False, "error": "check_rem.py 不存在"}), 404
+    try:
+        # 启动 check_rem.py（新窗口）
+        subprocess.Popen(
+            [sys.executable, str(script)],
+            cwd=str(script.parent),
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+        )
+        # 唯一一次浏览器打开
+        import webbrowser
+        chrome = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
+        if chrome.exists():
+            subprocess.Popen([str(chrome), "http://localhost:8766"])
+        else:
+            webbrowser.open("http://localhost:8766")
+        return jsonify({"ok": True, "msg": "已启动 AI vs 去背 对比预览 (端口 8766)"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 # ============================================================================
@@ -819,7 +1311,7 @@ def _run_generation(selected_files: list, task_id: str):
     start_ts = datetime.now()
 
     reg = load_registry()
-    reg = ensure_registry_v3(reg)
+    reg = ensure_registry_v4(reg)
 
     try:
         log(f"▶ 任务 {task_id} 开始")
@@ -884,25 +1376,12 @@ def _run_generation(selected_files: list, task_id: str):
                 reg["name_index"][fname] = md5_val
                 reg["groups"][gid]["images"].append(uid)
                 reg["groups"][gid]["source_files"].append(fname)
+                uid_map[fname] = uid
 
         save_registry(reg)
         log(f"已分配 {len(uid_map)} 个 UID，{len(group_map)} 个 group_id")
 
-        # ── 2. 暂存未选中的文件 ─────────────────────────────────
-        task_state["progress"] = "暂存未选中的文件..."
-        temp_dir = INBOX_DIR / EXCLUDE_DIR
-        temp_dir.mkdir(exist_ok=True)
-
-        moved = 0
-        for fname in list(os.listdir(INBOX_DIR)):
-            if not fname.endswith('.png') or fname.startswith('_'):
-                continue
-            if fname not in selected_set:
-                shutil.move(str(INBOX_DIR / fname), str(temp_dir / fname))
-                moved += 1
-        log(f"暂存了 {moved} 个未选中文件")
-
-        # ── 3. 运行 Lovart 管线 ─────────────────────────────────
+            # ── 2. 运行 Lovart 管线（不移走未选中文件，Lovart 自带 SHA256 去重） ──
         task_state["status"] = "running"
         task_state["progress"] = "正在运行 Lovart 生图管线..."
         log("启动 Lovart 管线...")
@@ -938,79 +1417,85 @@ def _run_generation(selected_files: list, task_id: str):
                 log(line[:300])
                 task_state["progress"] = line[:200]
 
-        proc.wait()
+            proc.wait()
 
-        # ── 4. 恢复暂存文件 ─────────────────────────────────────
-        task_state["progress"] = "恢复暂存文件..."
-        log("恢复未选中文件到 INBOX...")
+            # ── 4. 更新 registry ────────────────────────────────────
+            log("更新注册表，建立溯源关系...")
+            reg = load_registry()
+            reg = ensure_registry_v4(reg)
 
-        if temp_dir.exists():
-            for fname in list(os.listdir(temp_dir)):
-                shutil.move(str(temp_dir / fname), str(INBOX_DIR / fname))
-            try:
-                temp_dir.rmdir()
-            except OSError:
-                pass
+            # 扫描 Lovart 生成的 DX 文件夹，关联 group + 建立溯源
+            if PROJECTS_DIR.exists():
+                cutoff = start_ts.timestamp()
+                for d in sorted(os.listdir(PROJECTS_DIR)):
+                    if not d.startswith('DX'):
+                        continue
+                    ai_dir = PROJECTS_DIR / d / "01_AI"
+                    if not ai_dir.exists():
+                        continue
 
-        # ── 5. 更新 registry ────────────────────────────────────
-        log("更新注册表...")
-        reg = load_registry()
-        reg = ensure_registry_v3(reg)
+                    dir_mtime = ai_dir.stat().st_mtime
+                    if dir_mtime < cutoff:
+                        continue
 
-        # 扫描 Lovart 生成的 DX 文件夹，关联 group 信息
-        if PROJECTS_DIR.exists():
-            # 找生成时间之后创建/修改的 DX 文件夹
-            cutoff = start_ts.timestamp()
-            for d in sorted(os.listdir(PROJECTS_DIR)):
-                if not d.startswith('DX'):
-                    continue
-                ai_dir = PROJECTS_DIR / d / "01_AI"
-                if not ai_dir.exists():
-                    continue
+                    sm_path = PROJECTS_DIR / d / "source_map.json"
+                    if not sm_path.exists():
+                        continue
 
-                # 检查是否是本次生成的
-                dir_mtime = ai_dir.stat().st_mtime
-                if dir_mtime < cutoff:
-                    continue
+                    try:
+                        with open(sm_path, 'r', encoding='utf-8') as f:
+                            sm = json.load(f)
+                    except Exception:
+                        continue
 
-                sm_path = PROJECTS_DIR / d / "source_map.json"
-                if not sm_path.exists():
-                    continue
+                    for src in sm.get("sources", []):
+                        src_id = src.get("src_id", "")
+                        role = src.get("role", "")
+                        target_file = src.get("file", "")
 
+                        for md5_key, img_info in reg.get("images", {}).items():
+                            if img_info.get("role") == role and \
+                               img_info.get("group_id") in group_map.values():
+                                # 更新路径
+                                img_info["current_name"] = target_file
+                                img_info["current_path"] = f"02_PROJECTS/{d}/01_AI/{target_file}"
+                                img_info["src_id"] = src_id
+                                img_info["events"].append({
+                                    "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    "event": "bridge_generate_complete",
+                                    "detail": f"输出到 {d}/01_AI/{target_file}",
+                                })
+                                # 更新对应的 group
+                                gid = img_info.get("group_id")
+                                if gid in reg.get("groups", {}):
+                                    reg["groups"][gid]["dx_folder"] = d
+                                    reg["groups"][gid]["status"] = "generated"
+                                break
+
+            # 建立溯源关系（AI 图 → INBOX 原图）
+            lovart_reg_path = Path("D:/Semems WB/WB_REGISTRY/registry.json")
+            lovart_reg = {}
+            if lovart_reg_path.exists():
                 try:
-                    with open(sm_path, 'r', encoding='utf-8') as f:
-                        sm = json.load(f)
+                    with open(lovart_reg_path, 'r', encoding='utf-8') as f:
+                        lovart_reg = json.load(f)
                 except Exception:
+                    pass
+
+            for md5_key, img_info in reg.get("images", {}).items():
+                if img_info.get("source_type") or not img_info.get("group_id"):
                     continue
+                gid = img_info.get("group_id")
+                if gid not in group_map.values():
+                    continue
+                # 这张 AI 图刚生成，找它的 INBOX 源图
+                inbox_name = img_info.get("inbox_original_name", "")
+                src_md5 = reg.get("name_index", {}).get(inbox_name, "")
+                if src_md5 and src_md5 in reg.get("images", {}):
+                    _register_provenance(reg, md5_key, src_md5, "ai_gen")
 
-                # 通过 source_map 中的 src_id 关联回我们的 registry
-                for src in sm.get("sources", []):
-                    src_id = src.get("src_id", "")
-                    role = src.get("role", "")
-                    target_file = src.get("file", "")
-
-                    # 尝试查找匹配的 group
-                    for md5_key, img_info in reg.get("images", {}).items():
-                        if img_info.get("role") == role and \
-                           img_info.get("group_id") in group_map.values():
-                            # 更新路径
-                            img_info["current_name"] = target_file
-                            img_info["current_path"] = f"02_PROJECTS/{d}/01_AI/{target_file}"
-                            img_info["src_id"] = src_id
-                            img_info["events"].append({
-                                "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "event": "bridge_generate_complete",
-                                "detail": f"输出到 {d}/01_AI/{target_file}",
-                            })
-                            # 更新对应的 group
-                            gid = img_info.get("group_id")
-                            if gid in reg.get("groups", {}):
-                                reg["groups"][gid]["dx_folder"] = d
-                                reg["groups"][gid]["status"] = "generated"
-                            break
-
-        save_registry(reg)
-        log("注册表更新完成")
+            save_registry(reg)
+            log("注册表更新完成（含溯源关系）")
 
         # ── 6. 完成 ─────────────────────────────────────────────
         task_state["status"] = "completed"
@@ -1053,14 +1538,14 @@ if __name__ == '__main__':
     if renamed:
         # 重新扫描分组（更新 registry 的 name_index）
         reg = load_registry()
-        reg = ensure_registry_v3(reg)
+        reg = ensure_registry_v4(reg)
         for fname in os.listdir(INBOX_DIR):
             if fname.endswith('.png') and not fname.startswith('_'):
                 reg["name_index"][fname] = ""
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Lovart-WB Bridge Server v1.0          ║")
+    print("║   Lovart-WB Bridge Server v2.0          ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")
@@ -1069,5 +1554,21 @@ if __name__ == '__main__':
     print(f"║   Lovart:  {LOVART_SCRIPT}")
     print("║                                         ║")
     print("║   Open:  http://127.0.0.1:8765          ║")
+    print("║   AutoScan: every 60s                   ║")
     print("╚══════════════════════════════════════════╝")
+
+    # 后台自动溯源扫描（每 60 秒）
+    def _auto_scan_loop():
+        while True:
+            time.sleep(60)
+            try:
+                n = scan_provenance()
+                if n:
+                    print(f"  [AutoScan] 新增 {n} 条血缘关系", flush=True)
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_auto_scan_loop, daemon=True)
+    t.start()
+
     app.run(host='127.0.0.1', port=8765, debug=False)
