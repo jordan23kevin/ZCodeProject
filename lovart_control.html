@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lovart-WB 控制台</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #0f1117; color: #e1e4e8;
+    min-height: 100vh; padding: 18px;
+  }
+  .container { max-width: 1600px; margin: 0 auto; }
+  a { color: #58a6ff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Header */
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 22px; background: #161b22;
+    border: 1px solid #30363d; border-radius: 8px; margin-bottom: 16px;
+  }
+  .header h1 { font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .header-right { display: flex; align-items: center; gap: 14px; }
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 14px; border-radius: 12px;
+    font-size: 13px; font-weight: 500; border: 1px solid;
+  }
+  .status-idle   { background: #0d4420; color: #7ee787; border-color: #238636; }
+  .status-running{ background: #442d0a; color: #f7c843; border-color: #9e6a03; }
+  .status-completed{ background: #0d4420; color: #7ee787; border-color: #238636; }
+  .status-error  { background: #4d1a1a; color: #f87171; border-color: #a42c2c; }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid #8b949e; border-top-color: transparent;
+    border-radius: 50%; animation: spin .6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 7px 16px; border-radius: 6px; font-size: 13px; font-weight: 500;
+    cursor: pointer; border: 1px solid; transition: .1s;
+    background: #21262d; color: #c9d1d9; border-color: #30363d; white-space: nowrap;
+  }
+  .btn:hover { background: #30363d; }
+  .btn:active { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary { background: #238636; color: #fff; border-color: #2ea043; }
+  .btn-primary:hover:not(:disabled) { background: #2ea043; }
+
+  /* Section */
+  .section {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;
+  }
+  .section-title {
+    font-size: 15px; font-weight: 600; margin-bottom: 12px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .section-title .count { font-size: 12px; color: #8b949e; font-weight: 400; }
+  .toolbar {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 12px; flex-wrap: wrap;
+  }
+
+  /* ===== Group Card Grid ===== */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 12px;
+  }
+  .gcard {
+    background: #0d1117; border: 1px solid #30363d;
+    border-radius: 8px; overflow: hidden;
+  }
+  .gcard-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; background: #161b22;
+    border-bottom: 1px solid #21262d;
+  }
+  .gcard-head .gcb {
+    width: 16px; height: 16px; accent-color: #238636; cursor: pointer;
+  }
+  .gcard-head .glabel { font-weight: 600; font-size: 14px; color: #58a6ff; }
+  .gcard-head .gtypes { font-size: 11px; color: #8b949e; }
+  .gcard-head .gcount { font-size: 11px; color: #8b949e; margin-left: auto; }
+
+  /* Consistent image cells: fixed 150px width, flex layout */
+  .gcard-body {
+    display: flex;
+    gap: 8px;
+    padding: 8px;
+    flex-wrap: wrap;
+  }
+  .img-wrap {
+    width: 150px; flex-shrink: 0;
+    position: relative;
+  }
+  .img-cell {
+    border: 2px solid #30363d; border-radius: 6px; overflow: hidden;
+    background: #1a1a1a; cursor: pointer; transition: .12s;
+    position: relative;
+  }
+  .img-cell:hover { border-color: #58a6ff; }
+  .img-cell.checked { border-color: #238636; box-shadow: 0 0 0 2px #23863666; }
+  .img-cell .cb {
+    position: absolute; top: 4px; left: 4px; z-index: 2;
+    width: 16px; height: 16px; cursor: pointer; accent-color: #238636;
+  }
+  .img-cell .role-tag {
+    position: absolute; top: 4px; right: 4px; z-index: 2;
+    font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 4px;
+    background: rgba(0,0,0,.7); backdrop-filter: blur(2px);
+  }
+  .role-tag.B  { color: #79c0ff; border: 1px solid #58a6ff; }
+  .role-tag.W  { color: #f0c674; border: 1px solid #f0c674; }
+  .role-tag.BW { color: #d2a8ff; border: 1px solid #d2a8ff; }
+  .role-tag.WB { color: #7ee787; border: 1px solid #7ee787; }
+
+  .img-cell .thumb {
+    width: 150px; height: 150px;
+    object-fit: contain; display: block;
+    background: #1a1a1a;
+  }
+  .img-cell .fname {
+    padding: 2px 6px 3px; font-size: 10px; color: #8b949e;
+    text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* Action buttons overlay */
+  .img-actions {
+    position: absolute; bottom: 24px; left: 0; right: 0;
+    display: none; justify-content: center; gap: 4px;
+    padding: 4px; z-index: 3;
+  }
+  .img-wrap:hover .img-actions { display: flex; }
+  .act-btn {
+    font-size: 11px; padding: 2px 8px; border-radius: 4px;
+    border: none; cursor: pointer; font-weight: 600;
+    transition: .1s; line-height: 1.6;
+  }
+  .act-del { background: #e53935cc; color: #fff; }
+  .act-del:hover { background: #e53935; }
+  .act-bw { background: #4caf50cc; color: #fff; }
+  .act-bw:hover { background: #4caf50; }
+
+  /* Status */
+  .progress-bar {
+    width: 100%; height: 5px; background: #21262d; border-radius: 3px;
+    overflow: hidden; margin: 8px 0;
+  }
+  .progress-bar .fill {
+    height: 100%; background: #238636; border-radius: 3px;
+    transition: width .5s ease;
+  }
+  .status-text { font-size: 14px; color: #c9d1d9; margin: 6px 0; }
+  .log-box {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    padding: 8px 12px; max-height: 160px; overflow-y: auto;
+    font-family: "Cascadia Code", monospace; font-size: 12px; line-height: 1.6;
+  }
+  .log-box .entry { color: #8b949e; }
+  .log-box .entry.error { color: #f87171; }
+  .log-box .entry.ok { color: #7ee787; }
+  .log-box .entry.warn { color: #f7c843; }
+
+  /* Projects */
+  .proj-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .proj-table th {
+    text-align: left; padding: 7px 10px; border-bottom: 1px solid #30363d;
+    color: #8b949e; font-weight: 500; font-size: 12px;
+  }
+  .proj-table td { padding: 7px 10px; border-bottom: 1px solid #21262d; }
+  .proj-table tr:hover td { background: #0d1117; }
+  .proj-table .dx-link { color: #58a6ff; font-weight: 500; cursor: pointer; }
+  .proj-table .dx-link:hover { text-decoration: underline; }
+  .proj-table .tag {
+    display: inline-block; font-size: 10px; padding: 1px 6px;
+    border-radius: 8px; background: #21262d; color: #8b949e; margin-right: 4px;
+  }
+  .folder-btn { cursor: pointer; font-size: 15px; padding: 2px 6px; border-radius: 4px; }
+  .folder-btn:hover { background: #30363d; }
+
+  /* Date-grouped project accordion */
+  .date-group {
+    border: 1px solid #30363d; border-radius: 6px;
+    margin-bottom: 6px; overflow: hidden;
+  }
+  .date-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; background: #0d1117; cursor: pointer;
+    user-select: none; transition: .1s;
+  }
+  .date-head:hover { background: #161b22; }
+  .date-arrow { font-size: 10px; color: #8b949e; width: 14px; text-align: center; }
+  .date-label { font-weight: 600; font-size: 14px; color: #c9d1d9; }
+  .date-count { font-size: 12px; color: #8b949e; margin-left: auto; }
+  .date-today { font-size: 10px; background: #238636; color: #fff; padding: 1px 8px; border-radius: 8px; font-weight: 600; }
+  .date-body { display: none; }
+  .date-body .proj-row {
+    display: flex; gap: 8px;
+    padding: 8px 14px 8px 30px; transition: .1s;
+    border-top: 1px solid #21262d; font-size: 13px;
+  }
+  .date-body .proj-row:hover { background: #161b22; }
+  .date-body .p-left {
+    display: flex; flex-direction: column; gap: 4px;
+    min-width: 90px; flex-shrink: 0;
+  }
+  .date-body .dx-link { color: #58a6ff; font-weight: 600; cursor: pointer; font-size: 14px; }
+  .date-body .dx-link:hover { text-decoration: underline; }
+  .date-body .p-detail { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .date-body .p-line {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px;
+  }
+  .date-body .p-label { color: #8b949e; white-space: nowrap; min-width: 80px; flex-shrink: 0; }
+  .date-body .p-files {
+    display: flex; flex-wrap: wrap; gap: 3px 8px;
+    overflow: hidden;
+  }
+  .date-body .pfile {
+    color: #c9d1d9; cursor: pointer; padding: 1px 4px;
+    border-radius: 3px; transition: .1s;
+  }
+  .date-body .pfile:hover { background: #30363d; color: #58a6ff; }
+  .date-body .pfile-bad { color: #f85149; background: #2d1a1a; border-radius: 3px; padding: 1px 5px; font-weight: 600; }
+  .date-body .pfile-bad:hover { background: #4d2a2a; color: #ff7b72; }
+  .date-body .pdim { color: #484f58; font-size: 11px; }
+  .date-body .proj-bad { background: #2d1a1a; border-left: 3px solid #f85149; }
+  .date-body .proj-bad:hover { background: #3d2a2a !important; }
+  .date-body .p-warn {
+    font-size: 11px; color: #f85149; padding: 2px 0;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .date-body .tag {
+    display: inline-block; font-size: 9px; padding: 1px 5px;
+    border-radius: 6px; background: #21262d; color: #8b949e;
+  }
+
+  /* Trash grid — match INBOX style exactly */
+  .trash-wrap {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    padding: 4px 0;
+  }
+  .trash-item {
+    width: 150px; flex-shrink: 0;
+    background: #0d1117; border: 2px solid #30363d;
+    border-radius: 6px; overflow: hidden; cursor: pointer;
+    transition: .12s; position: relative;
+  }
+  .trash-item:hover { border-color: #f0c674; }
+  .trash-item .thumb {
+    width: 150px; height: 150px;
+    object-fit: contain; display: block; background: #1a1a1a;
+  }
+  .trash-item .info {
+    padding: 2px 6px 3px; font-size: 10px; color: #8b949e;
+    text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .trash-item .restore-badge {
+    position: absolute; top: 4px; right: 4px;
+    font-size: 10px; background: #238636cc; color: #fff;
+    padding: 2px 7px; border-radius: 4px; font-weight: 600;
+    display: none;
+  }
+  .trash-item:hover .restore-badge { display: block; }
+
+  .empty-state { text-align: center; padding: 30px; color: #8b949e; }
+  .empty-state .big-icon { font-size: 40px; margin-bottom: 10px; }
+
+  /* Registry */
+  .query-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .query-row input {
+    flex: 1; padding: 7px 10px; border-radius: 6px;
+    background: #0d1117; border: 1px solid #30363d; color: #e1e4e8; font-size: 13px;
+  }
+  .query-row input:focus { outline: none; border-color: #58a6ff; }
+  .query-result {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    padding: 8px 12px; max-height: 250px; overflow-y: auto;
+  }
+  .query-result pre { margin: 0; white-space: pre-wrap; font-size: 12px; color: #c9d1d9; }
+
+  /* Modal */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.6); z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal-box {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 12px; padding: 24px; max-width: 520px; width: 90%;
+  }
+  .modal-box h2 { font-size: 18px; margin-bottom: 12px; }
+  .modal-box p { color: #8b949e; margin-bottom: 14px; line-height: 1.6; }
+  .modal-box .btn-row { display: flex; gap: 8px; justify-content: flex-end; }
+
+  /* Hover Preview */
+  #hoverPreview {
+    position: fixed; z-index: 9999; pointer-events: none; display: none;
+    border: 2px solid #555; border-radius: 8px;
+    box-shadow: 0 8px 40px rgba(0,0,0,.85);
+    background: #222; overflow: hidden;
+    max-width: 520px; max-height: 520px;
+  }
+  #hoverPreview img { display: block; width: 100%; height: 100%; object-fit: contain; }
+
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
+  @media (max-width: 768px) {
+    .header { flex-direction: column; gap: 10px; align-items: flex-start; }
+    .card-grid { grid-template-columns: 1fr; }
+    body { padding: 10px; }
+    .img-wrap { width: 120px; }
+    .img-cell .thumb { width: 120px; height: 120px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- HEADER -->
+  <div class="header">
+    <h1><span>🔷</span> Lovart-WB 控制台</h1>
+    <div class="header-right">
+      <span class="status-badge status-idle" id="statusBadge">
+        <span class="spinner" id="statusSpinner" style="display:none"></span>
+        <span id="statusLabel">就绪</span>
+      </span>
+      <button class="btn" onclick="refreshAll()">🔄 刷新</button>
+    </div>
+  </div>
+
+  <!-- INBOX -->
+  <div class="section">
+    <div class="section-title">
+      <span>📂 INBOX <span style="font-size:12px;color:#8b949e;font-weight:400">（鼠标悬停图片显示操作按钮）</span></span>
+      <span class="count" id="inboxCount">加载中…</span>
+    </div>
+    <div class="toolbar">
+      <button class="btn" onclick="toggleSelectAll()" id="selectAllBtn">☑ 全选</button>
+      <span style="color:#8b949e;font-size:13px;margin:0 6px" id="selectedCount">已选 0 张</span>
+      <button class="btn btn-primary" onclick="confirmGenerate()" id="genBtn" disabled>🚀 开始 LOVART 生图</button>
+      <span style="flex:1"></span>
+      <button class="btn" onclick="toggleTrashPanel()" title="查看回收站文件">🗑 回收站 <span id="trashCount" style="color:#8b949e;font-size:11px"></span></button>
+      <button class="btn" onclick="emptyTrash()" title="将本地回收站文件送入系统回收站">🧹 清空回收站</button>
+    </div>
+    <div class="card-grid" id="cardGrid"></div>
+    <div id="inboxEmpty" class="empty-state" style="display:none">
+      <div class="big-icon">📭</div>
+      <p>INBOX 为空</p>
+      <p style="font-size:13px;color:#8b949e">将图片放入 D:\Semems WB\01_INBOX\ 后刷新</p>
+    </div>
+  </div>
+
+  <!-- TRASH PANEL -->
+  <div class="section" id="trashPanel" style="display:none">
+    <div class="section-title">
+      <span>🗑 回收站 <span style="font-size:12px;color:#8b949e;font-weight:400">（点击文件恢复）</span></span>
+      <span class="count" id="trashCountLabel"></span>
+    </div>
+    <div class="trash-wrap" id="trashGrid"></div>
+    <div id="trashEmpty" class="empty-state" style="display:none">
+      <div class="big-icon">🗑</div><p>回收站为空</p>
+    </div>
+  </div>
+
+  <!-- STATUS -->
+  <div class="section">
+    <div class="section-title"><span>📊 状态</span><span id="taskInfo" style="font-size:12px;color:#8b949e;font-weight:400"></span></div>
+    <div class="progress-bar"><div class="fill" id="progressFill"></div></div>
+    <div class="status-text" id="statusProgress">-</div>
+    <div class="log-box" id="logBox"></div>
+  </div>
+
+  <!-- PROJECTS — date-grouped accordion -->
+  <div class="section">
+    <div class="section-title"><span>📁 项目</span><span class="count" id="projectsCount">加载中…</span></div>
+    <div id="projDateList"></div>
+    <div id="projEmpty" class="empty-state" style="display:none"><div class="big-icon">📁</div><p>暂无项目</p></div>
+  </div>
+
+  <!-- REGISTRY -->
+  <div class="section">
+    <div class="section-title"><span>🔍 Registry 查询</span></div>
+    <div class="query-row">
+      <input type="text" id="queryInput" placeholder="输入 文件名 / UID / MD5 …" onkeydown="if(event.key==='Enter')queryRegistry()">
+      <button class="btn" onclick="queryRegistry()">查询</button>
+    </div>
+    <div class="query-result" id="queryResult">输入条件后点击查询</div>
+  </div>
+
+</div>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal-box">
+    <h2>🚀 确认启动生图</h2>
+    <p id="confirmText">加载中…</p>
+    <div class="btn-row">
+      <button class="btn" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" onclick="startGenerate()">确认启动</button>
+    </div>
+  </div>
+</div>
+
+<!-- HOVER PREVIEW -->
+<div id="hoverPreview"><img id="hoverImg" src="" alt=""></div>
+
+<script>
+// ============================================================================
+const STATE = {
+  groups: [],
+  selected: new Set(),
+  polling: false,
+  generating: false,
+  allFiles: [],
+};
+
+async function refreshAll() {
+  await Promise.all([loadInbox(), loadProjects(), loadStatus()]);
+}
+
+// ============================================================================
+// INBOX
+// ============================================================================
+async function loadInbox() {
+  try {
+    const res = await fetch('/api/inbox');
+    const data = await res.json();
+    STATE.groups = data.groups || [];
+
+    STATE.allFiles = [];
+    for (const g of STATE.groups) {
+      for (const img of g.images) STATE.allFiles.push(img.filename);
+    }
+
+    document.getElementById('inboxCount').textContent =
+      `${data.total || 0} 张 / ${STATE.groups.length} 组`;
+
+    const valid = new Set(STATE.allFiles);
+    for (const f of STATE.selected) { if (!valid.has(f)) STATE.selected.delete(f); }
+
+    renderCards();
+    updateCounts();
+  } catch (e) {
+    document.getElementById('cardGrid').innerHTML =
+      '<div class="empty-state"><div class="big-icon">⚠️</div><p>无法连接 Bridge</p></div>';
+  }
+}
+
+// ============================================================================
+// Render — each image cell is 150×150 for consistent sizing
+// ============================================================================
+function renderCards() {
+  const grid = document.getElementById('cardGrid');
+  const empty = document.getElementById('inboxEmpty');
+  if (!STATE.groups.length) { grid.innerHTML = ''; empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+
+  grid.innerHTML = STATE.groups.map((g, gi) => {
+    const allSel = g.images.every(i => STATE.selected.has(i.filename));
+    const gChecked = allSel ? 'checked' : '';
+    const typesLabel = g.types.map(t => t.toUpperCase()).join(' + ');
+
+    const cells = g.images.map(img => {
+      const checked = STATE.selected.has(img.filename) ? 'checked' : '';
+      const role = (img.suffix || '').toUpperCase();
+      // Show rename button only for single B or W
+      const showRename = (role === 'B' || role === 'W') ? '' : 'style="display:none"';
+
+      return `<div class="img-wrap">
+        <div class="img-cell ${checked}"
+             onclick="toggleImg('${img.filename}','${gi}')"
+             onmouseenter="showHover('${img.filename}',this)"
+             onmouseleave="hideHover()">
+          <input type="checkbox" class="cb" ${checked}
+                 onclick="event.stopPropagation();toggleImg('${img.filename}','${gi}')">
+          <span class="role-tag ${role}">${role}</span>
+          <img class="thumb" src="/api/preview/${img.filename}"
+               alt="${img.filename}" loading="lazy"
+               onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23161b22%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2250%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23333%22 font-size=%2230%22>?</text></svg>'">
+          <div class="fname">${img.filename}</div>
+        </div>
+        <div class="img-actions">
+          <button class="act-btn act-bw" onclick="event.stopPropagation();renameToBW('${img.filename}')" ${showRename}>↗BW</button>
+          <button class="act-btn act-del" onclick="event.stopPropagation();deleteFile('${img.filename}')">✕</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    return `<div class="gcard" data-gi="${gi}">
+      <div class="gcard-head">
+        <input type="checkbox" class="gcb" ${gChecked} onclick="event.stopPropagation();toggleGroup(${gi}, this.checked)">
+        <span class="glabel">#${g.group_number}</span>
+        <span class="gtypes">[${typesLabel}]</span>
+        <span class="gcount">${g.count} 张</span>
+      </div>
+      <div class="gcard-body">${cells}</div>
+    </div>`;
+  }).join('');
+}
+
+// ============================================================================
+// Selection
+// ============================================================================
+function toggleSelectAll() {
+  if (!STATE.allFiles.length) return;
+  const allSelected = STATE.allFiles.every(f => STATE.selected.has(f));
+  if (allSelected) { STATE.selected.clear(); document.getElementById('selectAllBtn').textContent = '☑ 全选'; }
+  else { STATE.allFiles.forEach(f => STATE.selected.add(f)); document.getElementById('selectAllBtn').textContent = '☐ 取消全选'; }
+  renderCards(); updateCounts();
+}
+function toggleImg(filename, gi) {
+  if (STATE.generating) return;
+  STATE.selected.has(filename) ? STATE.selected.delete(filename) : STATE.selected.add(filename);
+  renderCards(); updateCounts();
+}
+function toggleGroup(gi, checked) {
+  if (STATE.generating) return;
+  const g = STATE.groups[gi]; if (!g) return;
+  g.images.forEach(img => { checked ? STATE.selected.add(img.filename) : STATE.selected.delete(img.filename); });
+  renderCards(); updateCounts();
+}
+function updateCounts() {
+  document.getElementById('selectedCount').textContent = `已选 ${STATE.selected.size} 张`;
+  document.getElementById('genBtn').disabled = STATE.selected.size === 0 || STATE.generating;
+  if (STATE.allFiles.length) {
+    document.getElementById('selectAllBtn').textContent =
+      STATE.allFiles.every(f => STATE.selected.has(f)) ? '☐ 取消全选' : '☑ 全选';
+  }
+}
+
+// ============================================================================
+// Delete (recycle bin) & Rename
+// ============================================================================
+async function deleteFile(filename) {
+  if (!confirm(`将 ${filename} 送回收站？可从回收站恢复。`)) return;
+  try {
+    const res = await fetch('/api/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: filename }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      STATE.selected.delete(filename);
+      refreshAll();
+    } else {
+      alert('删除失败: ' + (data.error || ''));
+    }
+  } catch (e) { alert('网络错误: ' + e.message); }
+}
+
+async function renameToBW(filename) {
+  if (!confirm(`将 ${filename} 改为 BW？`)) return;
+  try {
+    const res = await fetch('/api/rename', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: filename }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      STATE.selected.delete(filename);
+      refreshAll();
+    } else {
+      alert('改名失败: ' + (data.error || ''));
+    }
+  } catch (e) { alert('网络错误: ' + e.message); }
+}
+
+// ============================================================================
+// Trash panel
+// ============================================================================
+let trashVisible = false;
+
+function toggleTrashPanel() {
+  trashVisible = !trashVisible;
+  document.getElementById('trashPanel').style.display = trashVisible ? 'block' : 'none';
+  if (trashVisible) loadTrash();
+}
+
+async function loadTrash() {
+  try {
+    const res = await fetch('/api/trash');
+    const data = await res.json();
+    const grid = document.getElementById('trashGrid');
+    const empty = document.getElementById('trashEmpty');
+    document.getElementById('trashCountLabel').textContent = `${data.count} 个`;
+    document.getElementById('trashCount').textContent = data.count > 0 ? `(${data.count})` : '';
+
+    if (!data.count) { grid.innerHTML = ''; empty.style.display = 'block'; return; }
+    empty.style.display = 'none';
+
+    // Render grouped cards (same style as INBOX)
+    const groups = data.groups || [];
+    const others = data.others || [];
+
+    let html = '';
+    for (const g of groups) {
+      const typesLabel = g.types.map(t => t.toUpperCase()).join(' + ');
+      const cells = g.images.map(img => {
+        const role = (img.suffix || '').toUpperCase();
+        return `<div class="img-wrap">
+          <div class="img-cell" onclick="restoreFile('${img.filename}')" title="点击恢复">
+            <span class="role-tag ${role}">${role}</span>
+            <img class="thumb" src="${img.preview_url}"
+                 alt="${img.filename}" loading="lazy"
+                 onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23161b22%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2250%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23333%22 font-size=%2230%22>?</text></svg>'">
+            <div class="fname">${img.filename}</div>
+          </div>
+          <div class="img-actions">
+            <button class="act-btn" style="background:#238636cc;color:#fff" onclick="event.stopPropagation();restoreFile('${img.filename}')">↩ 恢复</button>
+          </div>
+        </div>`;
+      }).join('');
+
+      html += `<div class="gcard" style="border-color:#443a1a">
+        <div class="gcard-head" style="background:#1a1a1a;border-color:#443a1a">
+          <span class="glabel" style="color:#f0c674">#${g.group_number}</span>
+          <span class="gtypes">[${typesLabel}]</span>
+          <span class="gcount">${g.count} 张</span>
+        </div>
+        <div class="gcard-body">${cells}</div>
+      </div>`;
+    }
+    // Ungrouped files
+    for (const img of others) {
+      html += `<div class="trash-item" onclick="restoreFile('${img.filename}')" title="点击恢复">
+        <span class="restore-badge">↩ 恢复</span>
+        <img class="thumb" src="${img.preview_url}" alt="${img.filename}" loading="lazy"
+             onerror="this.src='data:image/svg+xml,...'">
+        <div class="info">${img.filename}</div>
+      </div>`;
+    }
+    grid.innerHTML = html;
+  } catch (e) {
+    document.getElementById('trashGrid').innerHTML = '<div class="empty-state"><p>加载失败</p></div>';
+  }
+}
+
+async function restoreFile(filename) {
+  if (!confirm(`恢复 ${filename} 到 INBOX？`)) return;
+  try {
+    const res = await fetch('/api/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: filename }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      loadTrash();
+      loadInbox();
+    } else {
+      alert('恢复失败: ' + (data.error || ''));
+    }
+  } catch (e) { alert('错误: ' + e.message); }
+}
+
+async function emptyTrash() {
+  if (!confirm('将本地回收站的所有文件送入系统回收站？此操作可恢复。')) return;
+  try {
+    const res = await fetch('/api/empty-trash', { method: 'POST' });
+    const data = await res.json();
+    alert(data.msg || '已完成');
+  } catch (e) { alert('错误: ' + e.message); }
+}
+
+// ============================================================================
+// Hover Preview
+// ============================================================================
+let hoverTimer = null;
+function showHover(filename, el) {
+  if (hoverTimer) clearTimeout(hoverTimer);
+  hoverTimer = setTimeout(() => {
+    const preview = document.getElementById('hoverPreview');
+    document.getElementById('hoverImg').src = `/api/hover/${filename}`;
+    preview.style.display = 'block';
+    const rect = el.getBoundingClientRect();
+    let left = rect.right + 8, top = rect.top;
+    if (left + 520 > window.innerWidth - 8) left = rect.left - 528;
+    if (left < 8) left = 8;
+    if (top + 400 > window.innerHeight) top = Math.max(8, window.innerHeight - 420);
+    if (top < 8) top = 8;
+    preview.style.left = left + 'px';
+    preview.style.top = top + 'px';
+  }, 200);
+}
+function hideHover() {
+  if (hoverTimer) clearTimeout(hoverTimer);
+  hoverTimer = setTimeout(() => { document.getElementById('hoverPreview').style.display = 'none'; }, 100);
+}
+
+// ============================================================================
+// Generate
+// ============================================================================
+function confirmGenerate() {
+  if (STATE.selected.size === 0) return;
+  const files = [...STATE.selected].slice(0, 8).join(', ');
+  const extra = STATE.selected.size > 8 ? `<br>…共 ${STATE.selected.size} 张` : '';
+  document.getElementById('confirmText').innerHTML =
+    `将使用 Lovart API 为以下 ${STATE.selected.size} 张图片生图：<br><br>
+     <code style="background:#0d1117;padding:6px 10px;border-radius:4px;font-size:13px;display:inline-block">
+     ${esc(files)}${extra}</code><br><br>⚠️ 每张约 16 积分`;
+  document.getElementById('confirmModal').classList.add('active');
+}
+function closeModal() { document.getElementById('confirmModal').classList.remove('active'); }
+async function startGenerate() {
+  closeModal(); STATE.generating = true; document.getElementById('genBtn').disabled = true; document.getElementById('logBox').innerHTML = '';
+  try {
+    const res = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selected: [...STATE.selected] }) });
+    const data = await res.json();
+    if (!res.ok) { addLog('error', `启动失败: ${data.error}`); STATE.generating = false; updateCounts(); return; }
+    addLog('ok', `任务已启动: ${data.message}`); startPolling();
+  } catch (e) { addLog('error', `网络错误: ${e.message}`); STATE.generating = false; updateCounts(); }
+}
+
+// ============================================================================
+// Status
+// ============================================================================
+function startPolling() { STATE.polling = true; pollStatus(); }
+async function pollStatus() {
+  if (!STATE.polling) return;
+  try {
+    const st = await (await fetch('/api/status')).json();
+    updateStatusUI(st);
+    if (['completed','error','cancelled'].includes(st.status)) { STATE.polling = false; STATE.generating = false; updateCounts(); refreshAll(); return; }
+  } catch (_) {}
+  setTimeout(pollStatus, 2000);
+}
+function updateStatusUI(st) {
+  const badge = document.getElementById('statusBadge'); const label = document.getElementById('statusLabel');
+  const spinner = document.getElementById('statusSpinner'); const progress = document.getElementById('statusProgress');
+  const fill = document.getElementById('progressFill'); const taskInfo = document.getElementById('taskInfo');
+  badge.className = 'status-badge';
+  const clsMap = { idle:'status-idle', starting:'status-idle', running:'status-running', completed:'status-completed', error:'status-error', cancelled:'status-idle' };
+  badge.classList.add(clsMap[st.status] || 'status-idle');
+  spinner.style.display = st.status === 'running' ? 'inline-block' : 'none';
+  const txtMap = { idle:'就绪', starting:'启动中…', running:'运行中', completed:'✅ 完成', error:'❌ 错误', cancelled:'已取消' };
+  label.textContent = txtMap[st.status] || st.status; progress.textContent = st.progress || '-';
+  const logBox = document.getElementById('logBox');
+  if (st.log && st.log.length) {
+    logBox.innerHTML = st.log.map(e => { const cls = e.includes('✘')||e.includes('Error')||e.includes('错误')?'error': e.includes('✔')||e.includes('完成')?'ok': e.includes('⚠')?'warn':''; return `<div class="entry ${cls}">${esc(e)}</div>`; }).join('');
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+  if (st.groups_total > 0) fill.style.width = Math.min(100, Math.round(st.groups_processed / st.groups_total * 100)) + '%';
+  else if (st.status === 'running') fill.style.width = '30%';
+  else if (st.status === 'completed') fill.style.width = '100%';
+  else fill.style.width = '0%';
+  taskInfo.textContent = st.task_id ? `ID: ${st.task_id}` : '';
+}
+async function loadStatus() {
+  try { const st = await (await fetch('/api/status')).json(); updateStatusUI(st); if (st.status === 'running') { STATE.generating = true; STATE.polling = true; setTimeout(pollStatus, 2000); } } catch (_) {}
+}
+
+// ============================================================================
+// Projects
+// ============================================================================
+async function loadProjects() {
+  try {
+    const res = await fetch('/api/projects'); const data = await res.json();
+    const container = document.getElementById('projDateList'); const empty = document.getElementById('projEmpty');
+    document.getElementById('projectsCount').textContent = `${data.total} 个`;
+    if (!data.projects.length) { container.innerHTML = ''; empty.style.display = 'block'; return; }
+    empty.style.display = 'none';
+
+    const today = new Date().toISOString().split('T')[0];
+    const byDate = {};
+    for (const p of data.projects) {
+      const dt = p.modified.split('T')[0];
+      if (!byDate[dt]) byDate[dt] = [];
+      byDate[dt].push(p);
+    }
+
+    const sortedDates = Object.keys(byDate).sort().reverse();
+    container.innerHTML = sortedDates.map(dt => {
+      const projects = byDate[dt];
+      const isToday = dt === today;
+
+      const rows = projects.map(p => {
+        const grp = data.group_info[p.dx_id] || {};
+        const isBad = p.inconsistent;
+
+        // 判断文件名是否不一致
+        const badSet = new Set(p.bad_files || []);
+
+        // AI 生图文件
+        const aiList = (p.ai_gen || []).map(f => {
+          const isBad = badSet.has(f);
+          return `<span class="pfile ${isBad ? 'pfile-bad' : ''}" onclick="event.stopPropagation();openFolder('${p.dx_id}/01_AI')" title="打开 01_AI">${esc(f)}</span>`;
+        }).join(' ') || '<span class="pdim">-</span>';
+
+        // 去背
+        const remIcon = p.has_rembg ? '✅' : '❌';
+        const remList = (p.rem_files || []).map(f => {
+          const isBad = badSet.has(f);
+          return `<span class="pfile ${isBad ? 'pfile-bad' : ''}" onclick="event.stopPropagation();openFolder('${p.dx_id}/02_REM_BG')" title="打开 02_REM_BG">${esc(f)}</span>`;
+        }).join(' ') || '';
+
+        // 贴图（now reads .jpg too）
+        const upIcon = p.has_upload ? '✅' : '❌';
+        const upList = (p.up_files || []).map(f => {
+          const isBad = badSet.has(f);
+          return `<span class="pfile ${isBad ? 'pfile-bad' : ''}" onclick="event.stopPropagation();openFolder('${p.dx_id}/03_UPLOAD')" title="打开 03_UPLOAD">${esc(f)}</span>`;
+        }).join(' ') || '';
+
+        const grpTag = grp.group_id ? `<span class="tag" title="UID: ${(grp.images||[]).join(', ')}">${grp.group_id}</span>` : '';
+
+        const warnBar = isBad
+          ? `<div class="p-warn">⚠️ 款号不一致: ${esc(p.incons_reason || '')}</div>`
+          : '';
+
+        return `<div class="proj-row ${isBad ? 'proj-bad' : ''}">
+          <div class="p-left">
+            <span class="dx-link" onclick="openFolder('${p.dx_id}')">📂 ${p.dx_id}</span>
+            ${grpTag}
+          </div>
+          <div class="p-detail">
+            ${warnBar}
+            <div class="p-line">
+              <span class="p-label">🎨 AI</span>
+              <span class="p-files">${aiList}</span>
+            </div>
+            <div class="p-line">
+              <span class="p-label">✂️ 去背 ${remIcon}</span>
+              <span class="p-files">${remList}</span>
+            </div>
+            <div class="p-line">
+              <span class="p-label">📎 贴图 ${upIcon}</span>
+              <span class="p-files">${upList}</span>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+
+      return `<div class="date-group">
+        <div class="date-head" onclick="toggleDateGroup(this)">
+          <span class="date-arrow">${isToday ? '▼' : '▶'}</span>
+          <span class="date-label">${dt}</span>
+          <span class="date-count">${projects.length} 个</span>
+          ${isToday ? '<span class="date-today">今天</span>' : ''}
+        </div>
+        <div class="date-body" style="display:${isToday ? 'block' : 'none'}">${rows}</div>
+      </div>`;
+    }).join('');
+  } catch (_) {}
+}
+
+function toggleDateGroup(head) {
+  const body = head.nextElementSibling;
+  const arrow = head.querySelector('.date-arrow');
+  const isOpen = body.style.display === 'block';
+  body.style.display = isOpen ? 'none' : 'block';
+  arrow.textContent = isOpen ? '▶' : '▼';
+}
+async function openFolder(dxId) { try { await fetch(`/api/open/${dxId}`); } catch (_) {} }
+
+// ============================================================================
+// Registry
+// ============================================================================
+async function queryRegistry() {
+  const q = document.getElementById('queryInput').value.trim(); if (!q) return;
+  const el = document.getElementById('queryResult'); el.textContent = '查询中…';
+  try { const data = await (await fetch(`/api/registry/query?q=${encodeURIComponent(q)}`)).json(); el.innerHTML = `<pre>${esc(JSON.stringify(data, null, 2))}</pre>`; }
+  catch (e) { el.innerHTML = `<span style="color:#f87171">${esc(e.message)}</span>`; }
+}
+
+// ============================================================================
+// Utils
+// ============================================================================
+function addLog(type, msg) {
+  const box = document.getElementById('logBox');
+  const cls = { error:'error', warn:'warn' }[type] || 'ok';
+  box.innerHTML += `<div class="entry ${cls}">${esc(msg)}</div>`; box.scrollTop = box.scrollHeight;
+}
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// ============================================================================
+// Init
+// ============================================================================
+document.addEventListener('DOMContentLoaded', () => { refreshAll(); setInterval(() => { if (!STATE.polling && !STATE.generating) loadStatus(); }, 10000); });
+</script>
+</body>
+</html>
