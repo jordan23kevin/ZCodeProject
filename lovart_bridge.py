@@ -1502,10 +1502,11 @@ def _read_completed_md():
     try:
         with open(md, "r", encoding="utf-8") as f:
             return set(
-                line.strip().lstrip("- ").strip()
+                line.strip().lstrip("- *").strip()
                 for line in f
                 if line.strip().startswith("DX")
                 or line.strip().startswith("- DX")
+                or line.strip().startswith("* DX")
             )
     except Exception:
         return set()
