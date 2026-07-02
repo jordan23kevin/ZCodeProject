@@ -1,12 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Lovart-WB Bridge Server v2.1.8
+Lovart-WB Bridge Server v2.1.9
 ==============================
 Flask HTTP 桥接服务 — 连接 HTML 控制面板与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.1.9：
+  - 修复 /api/upload/progress 进度百分比超标：done_count 只统计本次选中款内的完成数
+  - 修复已上款历史记录导致进度条显示 268/13 (2062%) 的问题
 
 变更 v2.1.8：
   - /api/batch-upload 改为 --only 精确上款：勾选哪款就上哪款，不会继续后续款
@@ -1537,16 +1541,20 @@ def api_upload_progress():
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
 
-    # 历史已完成作为权威基准
+    # 历史已完成作为权威基准（用于页面分区）
     historical = _read_completed_md()
-    completed_set = set(data.get("completed", [])) | historical
-    data["completed"] = sorted(completed_set)
-    data["done_count"] = len(data["completed"])
+    run_completed = set(data.get("completed", []))
+    all_completed = run_completed | historical
+    data["completed"] = sorted(all_completed)
 
-    # pending = selected - completed - failed
+    # pending = selected - 所有已完成 - 失败
     selected_set = set(data.get("selected", []))
     failed_set = set(data.get("failed", []))
-    data["pending"] = sorted(selected_set - completed_set - failed_set)
+    data["pending"] = sorted(selected_set - all_completed - failed_set)
+
+    # 进度条只统计本次任务内的完成数，避免历史记录把百分比撑爆
+    data["done_count"] = len(selected_set & run_completed)
+    data["fail_count"] = len(selected_set & failed_set)
 
     return jsonify(data)
 
@@ -1866,7 +1874,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Lovart-WB Bridge Server v2.1.8        ║")
+    print("║   Lovart-WB Bridge Server v2.1.9        ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")
