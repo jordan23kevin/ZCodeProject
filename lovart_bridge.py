@@ -666,7 +666,10 @@ UPLOAD_THUMB_DIR = BASE_DIR / "_upload_thumbs"
 UPLOAD_PROGRESS_FILE = BASE_DIR / ".wb_upload_progress.json"
 
 def _scan_upload_projects():
-    """扫描所有 DX 的 03_UPLOAD，返回 [{dx, date, files:[{name,mtime}]}]"""
+    """扫描所有 DX 的 03_UPLOAD，返回 [{dx, date, files:[{name,mtime}]}]
+    date 使用 AI 生成图最新 mtime（无 AI 时退去背图 mtime），与 check_rem.py 保持一致，
+    避免 03_UPLOAD 成品被统一修改后全部归到同一天。
+    """
     projects = []
     if not PROJECTS_DIR.exists():
         return projects
@@ -686,8 +689,15 @@ def _scan_upload_projects():
             files.append({"name": f.name, "mtime": int(f.stat().st_mtime)})
         if not files:
             continue
-        # date = 该 DX 03_UPLOAD 最新 mtime 的 YYMMDD
-        latest_mtime = max((f.stat().st_mtime for f in up_dir.iterdir() if f.is_file()), default=0)
+        # date = AI 生成图最新 mtime；无 AI 则用去背图 mtime
+        ai_dir = d / "01_AI"
+        rem_dir = d / "02_REM_BG"
+        date_paths = []
+        if ai_dir.is_dir():
+            date_paths.extend(p for p in ai_dir.iterdir() if p.is_file())
+        if not date_paths and rem_dir.is_dir():
+            date_paths.extend(p for p in rem_dir.iterdir() if p.is_file())
+        latest_mtime = max((p.stat().st_mtime for p in date_paths), default=0)
         dx_date = time.strftime("%y%m%d", time.localtime(latest_mtime)) if latest_mtime else ""
         projects.append({"dx": d.name, "date": dx_date, "files": files})
     return projects
