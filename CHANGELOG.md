@@ -34,6 +34,13 @@
 - `ps_batch_one.py` v2.1 — BW 合成单款入口
 - `process_black.py` v2.1 — 黑T专用贴图 + BW 合成
 
+### 🚀 启动脚本纳入版本控制 + 最小化运行
+
+- **`lovart_bridge.bat` 入库**：将 `D:\Semems WB\01_INBOX\lovart_bridge.bat` 复制到 `C:\Users\Administrator\ZCodeProject\lovart_bridge.bat`，纳入 GitHub 版本控制
+- **Bridge 启动窗口最小化**：双击 `lovart_bridge.bat` 后，原窗口自动切换为最小化窗口运行，不干扰用户操作
+- **`启动对比.bat` 最小化**：`D:\Semems WB\02_PROJECTS\01_CHECK_REM\启动对比.bat` 同样改为最小化运行
+- **新增 `start_check_rem.bat`**：在 `D:\Semems WB\04_OS\engine\` 提供版本控制的 `check_rem.py` 最小化启动器
+
 ### 🔧 修复与改进
 
 - `lovart_bridge.py` v2.1：支持 `--port` / `--host`，启动时写入 `bridge.pid`，供启动脚本优雅停止
@@ -136,6 +143,7 @@ C:\Users\Administrator\ZCodeProject\
 D:\Semems WB\04_OS\engine\
 ├── check_rem.py            v2.1  AI vs 去背 vs 贴图成品 对比预览
 ├── check_rem.js            v2.1  独立前端 JavaScript
+├── start_check_rem.bat     v2.1  check_rem.py 最小化启动器
 ├── _rembg_worker.py        v2.1  单张去背工作进程
 └── rename_dx_folders.py    v2.0  DX文件夹重命名
 
