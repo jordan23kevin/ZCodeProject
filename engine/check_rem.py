@@ -1,8 +1,17 @@
-"""01_CHECK_REM v2.1.5 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.1.7 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个 DX 款的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
+
+功能 v2.1.7：
+  - 日期选择下拉框样式与 WB 上款 页统一：加大 padding、圆角、字号
+  - toolbar 按钮/输入框样式同步调整，视觉更协调
+
+功能 v2.1.6：
+  - 根路径 / 直接重定向到最新日期页面，移除原来的日期分类 landing 页
+  - 页面顶部已存在日期选择下拉框，可直接切换日期
+  - Y2 控制台点击「去背预览」后直接进入最新日期的 AI 去背 贴图 OS 页面
 
 功能 v2.1.5：
   - 修复反相后 BW 合成图不生成的问题：_run_sticker_pipeline 现在会先清理旧的自动生成贴图/BW文件，再重新贴图+合成BW
@@ -33,7 +42,7 @@
 
 端口 8766（避开 01_CHECK 的 8765）。
 """
-__version__ = "2.1.5"
+__version__ = "2.1.7"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests
 from pathlib import Path
@@ -106,10 +115,10 @@ def file_md5(path):
 
 
 def _uid_map_exists(dx_dir):
-    """uid_map.json 存在且非空"""
+    """uid_map.json 存在且非空（位于 05_META）"""
     if wb_meta is None:
         return False
-    p = dx_dir / "uid_map.json"
+    p = wb_meta.uid_map_path(dx_dir)
     if not p.exists() or p.stat().st_size == 0:
         return False
     try:
@@ -120,7 +129,7 @@ def _uid_map_exists(dx_dir):
 
 
 def _need_migrate_dx(dx_dir):
-    """旧项目迁移条件：无 uid_map 或任意 AI/rembg 文件缺少 sidecar"""
+    """旧项目迁移条件：无 uid_map 或任意 AI/rembg 文件缺少 sidecar（sidecar 在 05_META）"""
     if wb_meta is None:
         return False
     if not _uid_map_exists(dx_dir):
@@ -804,7 +813,16 @@ class Handler(BaseHTTPRequestHandler):
         stem = qs.get("stem", [""])[0]
 
         if path == "/" or path == "":
-            self._serve_landing()
+            # 根路径直接重定向到最新日期页面，不再显示日期分类 landing
+            projects = scan_projects()
+            dates = list_dates(projects)
+            if dates:
+                latest = dates[0]
+                self.send_response(302)
+                self.send_header("Location", f"/{latest}/")
+                self.end_headers()
+            else:
+                self._send_html("<h2 style='background:#1a1a1a;color:#fff;padding:40px;'>还没有数据</h2>".encode("utf-8"))
         elif path == "/thumb":
             self._serve_thumb(dx, kind, file)
         elif path == "/original":
@@ -851,27 +869,6 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_index(m.group(1))
         else:
             self._send(404, b"NOT FOUND")
-
-    # 首页（日期列表 landing）
-    def _serve_landing(self):
-        projects = scan_projects()
-        dates = list_dates(projects)
-        if not dates:
-            self._send_html("<h2 style='background:#1a1a1a;color:#fff;padding:40px;'>还没有数据</h2>".encode("utf-8"))
-            return
-        rows = []
-        for dt in dates:
-            n = sum(1 for p in projects if p["date"] == dt)
-            rows.append(
-                f'<li style="margin:10px 0;font-size:18px;">'
-                f'<a href="/{dt}/" style="color:#4CAF50;">20{dt[:2]}-{dt[2:4]}-{dt[4:6]}</a>'
-                f' <span style="color:#888;font-size:14px;">({n} 款)</span></li>'
-            )
-        html = ("<html><body style='background:#1a1a1a;color:#fff;font-family:"
-                "Microsoft YaHei;padding:40px;'><h1>AI vs 去背 对比预览</h1>"
-                f"<p style='color:#888;'>共 {len(dates)} 个日期</p><ul>"
-                + "\n".join(rows) + "</ul></body></html>")
-        self._send_html(html.encode("utf-8"))
 
     # 按日期过滤的首页（date 为空则显示全部）
     def _serve_index(self, date=""):
@@ -1088,8 +1085,9 @@ body {{ margin:0; padding:22px; background:#1a1a1a; color:#eee;
 h1 {{ text-align:center; font-size:28px; margin:0 0 14px; }}
 h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .toolbar {{ text-align:center; margin-bottom:16px; position:sticky; top:0; background:#1a1a1a; padding:10px 0; z-index:10; }}
-.toolbar input {{ padding:10px 14px; font-size:16px; width:260px; border-radius:4px; border:1px solid #555; background:#2a2a2a; color:#eee; }}
-.toolbar button {{ padding:10px 18px; font-size:16px; cursor:pointer; background:#2196F3; color:#fff; border:none; border-radius:4px; margin-left:8px; }}
+.toolbar input {{ padding:11px 16px; font-size:16px; width:260px; border-radius:5px; border:1px solid #555; background:#2a2a2a; color:#eee; }}
+.toolbar select {{ padding:11px 16px; font-size:16px; border-radius:5px; border:1px solid #555; background:#2a2a2a; color:#eee; }}
+.toolbar button {{ padding:11px 20px; font-size:16px; cursor:pointer; background:#2196F3; color:#fff; border:none; border-radius:5px; margin-left:8px; font-weight:600; }}
 .toolbar button:hover {{ background:#1976D2; }}
 .toolbar .cnt {{ color:#888; margin-left:12px; font-size:14px; }}
 .grid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(520px,1fr)); gap:18px; max-width:1920px; margin:0 auto; }}
@@ -1182,7 +1180,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 </style></head><body>
 <h1>AI 去背 贴图 OS <span class="v">v{__version__}</span></h1>
 <div class="toolbar">
-  <select id="dateSel" onchange="switchDate(this.value)" style="border-radius:4px;border:1px solid #555;background:#2a2a2a;color:#eee;">
+  <select id="dateSel" onchange="switchDate(this.value)">
 {date_opts_html}
   </select>
 	  <input id="search" placeholder="搜索 DX号…" oninput="filterCards()">

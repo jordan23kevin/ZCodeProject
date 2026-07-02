@@ -15,7 +15,8 @@
 
 - **`lovart_bridge.py` v2.2.1**
   - 修复 `/upload` 页面款号日期全部归到 2026-07-03 的问题
-  - `_scan_upload_projects` 的 `date` 改为取 **AI 生成图最新 mtime**（无 AI 时退去背图 mtime）
+  - `_scan_upload_projects` 的 `date` 优先读取 `D:\Semems WB\已上款货号_wb.md` 中的记录日期
+  - 未记录的款回退到 **AI 生成图最新 mtime**（无 AI 时退去背图 mtime）
   - 与 `check_rem.py` 日期逻辑保持一致，避免 03_UPLOAD 成品被统一修改后日期失真
 
 ---
@@ -28,6 +29,12 @@
   - 从 INBOX 原图开始分配全局唯一 `uid`（如 `UID_20250703_0001`）和组 ID `group_id`（如 `G_00001`）。
   - `uid`/`group_id` 贯穿全链路：原图 → AI 图 → 去背图 → 贴图成品 → BW 合成图 → 上款图。
   - 新增 `wb_meta.py` 共享模块，提供 sidecar（`.meta.json`）和 `uid_map.json` 读写 API。
+  - 元数据统一放在 `D:\Semems WB\05_META\DXxxxx\`，与图片分离：
+    - `05_META/DXxxxx/uid_map.json`
+    - `05_META/DXxxxx/01_AI/xxx.png.meta.json`
+    - `05_META/DXxxxx/02_REM_BG/xxx_cut.png.meta.json`
+    - `05_META/DXxxxx/03_UPLOAD/xxx_白T.jpg.meta.json`
+  - `01_AI` / `02_REM_BG` / `03_UPLOAD` 只放图片，不放文档。
   - 即使文件重名、改名、移动，也能通过 `uid_map.json` 正确回溯同一组图片关系。
 
 - **Bridge 生图阶段写入元数据**
