@@ -1,5 +1,47 @@
 # Y2 一体化控制系统 — 更新日志
 
+## v2.2.0 (2026-07-03) — UID/group_id 全链路溯源（去背图不再依赖文件名匹配）
+
+### ✨ 新增
+
+- **UID/group_id 元数据系统**
+  - 从 INBOX 原图开始分配全局唯一 `uid`（如 `UID_20250703_0001`）和组 ID `group_id`（如 `G_00001`）。
+  - `uid`/`group_id` 贯穿全链路：原图 → AI 图 → 去背图 → 贴图成品 → BW 合成图 → 上款图。
+  - 新增 `wb_meta.py` 共享模块，提供 sidecar（`.meta.json`）和 `uid_map.json` 读写 API。
+  - 即使文件重名、改名、移动，也能通过 `uid_map.json` 正确回溯同一组图片关系。
+
+- **Bridge 生图阶段写入元数据**
+  - `lovart_bridge.py` 生图前写入 `.generation_uid_manifest.json`，传给 Lovart 管线。
+  - 生图后自动在 `02_PROJECTS/DXxxxx/` 下创建 `uid_map.json`，并为 AI 图生成 `.meta.json` sidecar。
+
+- **Lovart 管线回写 UID**
+  - `run_official_v53.py` 读取 `BRIDGE_UID_MANIFEST`，把 `uid`/`group_id` 写入 `source_map.json`。
+
+- **去背/贴图/上款全链路传播**
+  - `check_rem.py` / `wb_meitu_batch.py` / `WB去背 entrypoint/main.py`：去背输出自动注册到 `uid_map.json`。
+  - `wb_sticker_ps.py` / `ps_batch.py` / `process_black.py`：贴图成品与 BW 合成图自动注册。
+  - `wb_listing.py`：上款时优先按 `uid_map.json` 查找图片，fallback 到原文件名规则。
+
+- **check_rem 前端按 group 聚合展示**
+  - `check_rem.js` 读取 `group_id`，把 AI 图、去背图、贴图成品、BW 合成图、黑 T 变体按同一组展示。
+  - 黑版变体不再显示为「无独立 AI」的孤立卡片，而是归并到对应 group。
+
+- **迁移脚本**
+  - 新增 `migrate_uid_map.py`：一键为所有旧 DX 项目生成 `uid_map.json` 和 sidecar。
+  - `check_rem.py` 启动扫描时自动对缺失元数据的项目调用迁移。
+
+### 🔧 架构调整
+
+- **解决 Registry 双写冲突**
+  - `WB去背/registry.py` 改为写入独立的 `.wb_rembg_registry.json`，不再覆盖 Bridge 的 `.image_registry.json`。
+  - Bridge 的 `.image_registry.json` 成为唯一权威 v4 registry。
+
+### 🐛 修复
+
+- 去背图与 AI 图的关联不再依赖 `_cut.png` 文件名 stem，重命名后仍可正确配对。
+
+---
+
 ## v2.1.9 (2026-07-02) — 强制重新上款开关 + 稳定版配合
 
 ### ✨ 新增

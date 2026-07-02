@@ -1,4 +1,4 @@
-# Y2 系统架构文档 v2.1.9
+# Y2 系统架构文档 v2.2.0
 
 > 工程类型: 图像生产血缘数据库 + 控制面板 + 贴图成品流水线
 > 遵循: B+ 四层血缘闭环架构
@@ -18,9 +18,9 @@
             │ HTTP/JSON                   │ HTTP/JSON
             ▼                             ▼
 ┌──────────────────────┐     ┌────────────────────────────────────────┐
-│   lovart_bridge.py    │     │   check_rem.py v2.1.5                 │
-│   v2.1.7 (Flask Server)│    │   (预览 + 去背 + 贴图触发 + 批量反相) │
-│                       │     │   check_rem.js v2.1.5 (独立JS)        │
+│   lovart_bridge.py    │     │   check_rem.py v2.2.0                 │
+│   v2.2.0 (Flask Server)│    │   (预览 + 去背 + 贴图触发 + 批量反相) │
+│                       │     │   check_rem.js v2.2.0 (独立JS)        │
 │   API端点:            │     │                                        │
 │   /api/inbox          │     │   API端点:                             │
 │   /api/generate       │     │   /thumb, /original                    │
@@ -34,26 +34,40 @@
 └────────┬─────────────┘     └──────────┬─────────────────────────────┘
          │                              │
          │    POST /api/lineage/register│   子进程调用 (最小化窗口)
-         │                              ▼
+         │    (+ uid/group_id)          ▼
          │                 ┌────────────────────────────────────────┐
          │                 │      PS 贴图流水线（E:\Claude code\ps） │
          │                 │  ┌────────────────────────────────────┐  │
-         │                 │  │ 1. process_black.py  v2.1          │  │
+         │                 │  │ 1. process_black.py  v2.2          │  │
          │                 │  │    黑T专用贴图 + BW合成              │  │
          │                 │  ├────────────────────────────────────┤  │
          │                 │  │ 2. ps_sticker_one.py →             │  │
-         │                 │  │    wb_sticker_ps.py v2.1 通用白T贴图│  │
+         │                 │  │    wb_sticker_ps.py v2.2 通用白T贴图│  │
          │                 │  │    （检测到黑B/W/BW 时跳过黑T输出） │  │
          │                 │  ├────────────────────────────────────┤  │
          │                 │  │ 3. ps_batch_one.py →               │  │
-         │                 │  │    ps_batch.py v1.3.0 合成 BW       │  │
+         │                 │  │    ps_batch.py v2.2 合成 BW         │  │
          │                 │  └────────────────────────────────────┘  │
          │                 └────────────────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────────────────────────────────────────────┐
+│                     UID / group_id 元数据层                          │
+│  D:\Semems WB\02_PROJECTS\DXxxxx\uid_map.json                        │
+│    ├── groups:   { group_id → [uid, ...] }                           │
+│    └── images:   { uid → { stage, role, file, parent_uid } }         │
+│                                                                      │
+│  D:\Semems WB\02_PROJECTS\DXxxxx\01_AI\DXxxxx_B.png.meta.json        │
+│    └── { uid, group_id, stage, role, parent_uid, source_file }       │
+│                                                                      │
+│  共享模块: C:\Users\Administrator\ZCodeProject\wb_meta.py           │
+│  （同步部署到 WB去背、PS、wb上款各项目）                             │
+└─────────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────────┐
 │                          Registry (数据核心)                         │
-│  D:\Semems WB\.image_registry.json  (v4)                            │
+│  D:\Semems WB\.image_registry.json  (v4)  ← Bridge 唯一写入         │
 │    ├── images: { MD5 → entry }                                       │
 │    │     ├── source_md5, source_type (溯源)                           │
 │    │     ├── derived_md5s, lineage_status                            │
@@ -61,6 +75,8 @@
 │    │     └── uid, group_id, events                                   │
 │    ├── groups, uid_index, provenance.tree                            │
 │    └── version: 4                                                    │
+│                                                                      │
+│  D:\Semems WB\.wb_rembg_registry.json  ← WB去背 独立写入            │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -117,6 +133,26 @@ Hook(实时) → Bridge写入 → Scanner(推断) → Reconciler(修复)
 - **confirmed**: Hook 实时记录（去背成功后自动 POST）
 - **inferred**: Scanner 文件名 stem 推断
 - **missing**: 断链待修复
+
+### UID/group_id 全链路溯源（v2.2.0）
+
+**问题**: 原系统通过文件名 stem 匹配去背图与 AI 图（`DXxxxx_B.png` ↔ `DXxxxx_B_cut.png`），一旦重命名或出现重名就会断链。
+
+**解决方案**:
+1. **INBOX 阶段**：Bridge 为每张原图分配 `uid` + `group_id`，写入 INBOX sidecar 和 `.generation_uid_manifest.json`。
+2. **AI 阶段**：Lovart 读取 manifest，把 `uid`/`group_id` 写回 `source_map.json`，并为 AI 图生成 sidecar。
+3. **去背/贴图/BW 阶段**：各脚本读取输入图 sidecar，把输出图注册到同一 `uid`/`group_id`，写入自己的 sidecar。
+4. **展示阶段**：`check_rem.js` 按 `group_id` 聚合显示，不再依赖文件名解析。
+
+**数据文件**:
+- `02_PROJECTS/DXxxxx/uid_map.json`：该 DX 下所有图片的 UID 关系总表。
+- `02_PROJECTS/DXxxxx/01_AI/xxx.png.meta.json`：AI 图 sidecar。
+- `02_PROJECTS/DXxxxx/02_REM_BG/xxx_cut.png.meta.json`：去背图 sidecar。
+- `02_PROJECTS/DXxxxx/03_UPLOAD/xxx_白T.jpg.meta.json`：贴图成品 sidecar。
+
+**共享模块**: `wb_meta.py` 部署在 Bridge/WB去背/PS/wb上款各项目，统一 sidecar/uid_map 操作。
+
+**迁移**: 旧项目无 sidecar 时，自动调用 `wb_meta.migrate_dx(dx_dir)` 基于 `source_map.json` + 文件名推断补录。
 
 ### 关键经验总结
 

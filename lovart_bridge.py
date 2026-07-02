@@ -1,12 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.1.9
+Y2 Bridge Server v2.2.0
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.2.0：
+  - UID/group_id 全链路溯源：从 INBOX 开始绑定唯一 UID 和组 ID
+  - 生图阶段写入 .generation_uid_manifest.json 并传给 Lovart
+  - 为 AI 图、去背图、贴图成品、BW 合成图生成 .meta.json sidecar
+  - 每个 DX 目录维护 uid_map.json，不依赖文件名即可回溯同一组图片
+  - 解决 WB去背/registry.py 与 Bridge 双写 .image_registry.json 的冲突
+  - WB去背 registry 改为独立写入 .wb_rembg_registry.json
 
 变更 v2.1.9：
   - 新增「强制重新上款」开关
@@ -78,6 +86,16 @@ except ImportError:
     print("ERROR: Flask not installed. Run: pip install flask")
     sys.exit(1)
 
+# 加载 UID 元数据模块（优先用 Bridge 项目内版本）
+_WB_META_PATH = Path(__file__).parent
+if str(_WB_META_PATH) not in sys.path:
+    sys.path.insert(0, str(_WB_META_PATH))
+try:
+    import wb_meta
+except Exception as e:
+    print(f"WARN: wb_meta 模块加载失败: {e}")
+    wb_meta = None
+
 # ============================================================================
 # 路径常量
 # ============================================================================
@@ -92,6 +110,7 @@ PYTHON_EXE     = r"C:/Users/Administrator/AppData/Local/Programs/Python/Python31
 PYTHONPATH     = "E:/python_packages"
 
 HOVER_CACHE    = INBOX_DIR / "_hover_cache"  # 悬停预览缩略图缓存
+UID_MANIFEST_FILE = BASE_DIR / ".generation_uid_manifest.json"  # 传给 Lovart 的 UID 清单
 
 # ============================================================================
 # 工具函数：Windows 下最小化启动子进程（不抢焦点）
@@ -1376,6 +1395,9 @@ def api_lineage_register():
     child_path = data.get("child_path", "")
     parent_path = data.get("parent_path", "")
     stage = data.get("stage", "")
+    uid = data.get("uid", "")
+    group_id = data.get("group_id", "")
+    role = data.get("role", "")
 
     if not child_path or not parent_path or not stage:
         return jsonify({"ok": False, "error": "需要 child_path, parent_path, stage"}), 400
@@ -1420,6 +1442,35 @@ def api_lineage_register():
 
         _register_provenance(reg, child_md5, parent_md5, stage, lineage_status="confirmed")
         save_registry(reg)
+
+        # 同步更新 uid_map / sidecar（如果提供了 UID 或能从 sidecar 读取到）
+        if wb_meta:
+            try:
+                parent_meta = wb_meta.read_meta(parent_path)
+                effective_uid = uid or (parent_meta.get("uid") if parent_meta else "")
+                effective_gid = group_id or (parent_meta.get("group_id") if parent_meta else "")
+                effective_role = role or (parent_meta.get("role") if parent_meta else "")
+                if effective_uid and effective_gid:
+                    dx_dir = child_path.parent.parent
+                    if dx_dir.name.startswith("DX"):
+                        stage_key = stage  # rembg/upload/ai_gen
+                        if stage == "upload":
+                            stage_key = "sticker"
+                        wb_meta.register_image_in_map(
+                            dx_dir, effective_uid, effective_gid, stage_key,
+                            effective_role, str(child_path),
+                            parent_uid=effective_uid,
+                            source_file=str(parent_path),
+                        )
+                        wb_meta.ensure_meta(
+                            child_path, uid=effective_uid, group_id=effective_gid,
+                            stage=stage_key, role=effective_role,
+                            parent_uid=effective_uid, source_file=str(parent_path),
+                        )
+            except Exception as e:
+                # 不阻断原有血缘注册
+                print(f"[lineage/register] uid_map 同步失败: {e}")
+
         return jsonify({
             "ok": True,
             "msg": f"已记录 {stage} 血缘: {child_path.name} ← {parent_path.name}",
@@ -1743,6 +1794,38 @@ def _run_generation(selected_files: list, task_id: str):
         save_registry(reg)
         log(f"已分配 {len(uid_map)} 个 UID，{len(group_map)} 个 group_id")
 
+        # ── 1b. 写入 UID manifest 与 INBOX sidecar ─────────────────
+        try:
+            manifest = {"version": 1, "generated_at": datetime.now().isoformat(), "items": {}}
+            for fname, uid in uid_map.items():
+                gid = None
+                for g in matched:
+                    if any(img["filename"] == fname for img in g["images"]):
+                        gid = group_map[g["group_number"]]
+                        break
+                role = ""
+                for g in matched:
+                    for img in g["images"]:
+                        if img["filename"] == fname:
+                            role = img["suffix"]
+                            break
+                manifest["items"][fname] = {
+                    "uid": uid,
+                    "group_id": gid,
+                    "role": role,
+                }
+                # INBOX sidecar
+                if wb_meta:
+                    inbox_path = INBOX_DIR / fname
+                    if inbox_path.exists():
+                        wb_meta.ensure_meta(inbox_path, uid=uid, group_id=gid,
+                                            stage="inbox", role=role,
+                                            source_file=f"01_INBOX/{fname}")
+            UID_MANIFEST_FILE.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+            log(f"已写入 UID manifest: {UID_MANIFEST_FILE.name}")
+        except Exception as e:
+            log(f"WARN: UID manifest 写入失败: {e}")
+
             # ── 2. 运行 Lovart 管线（不移走未选中文件，Lovart 自带 SHA256 去重） ──
         task_state["status"] = "running"
         task_state["progress"] = "正在运行 Lovart 生图管线..."
@@ -1753,6 +1836,7 @@ def _run_generation(selected_files: list, task_id: str):
         env["PYTHONPATH"] = PYTHONPATH
         env["LOVART_INSECURE_SSL"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
+        env["BRIDGE_UID_MANIFEST"] = str(UID_MANIFEST_FILE)
 
         proc = subprocess.Popen(
             [get_python(), "run_official_v53.py"],
@@ -1814,25 +1898,58 @@ def _run_generation(selected_files: list, task_id: str):
                         src_id = src.get("src_id", "")
                         role = src.get("role", "")
                         target_file = src.get("file", "")
+                        uid = src.get("uid", "")
+                        gid = src.get("group_id", "")
 
-                        for md5_key, img_info in reg.get("images", {}).items():
-                            if img_info.get("role") == role and \
-                               img_info.get("group_id") in group_map.values():
-                                # 更新路径
-                                img_info["current_name"] = target_file
-                                img_info["current_path"] = f"02_PROJECTS/{d}/01_AI/{target_file}"
-                                img_info["src_id"] = src_id
-                                img_info["events"].append({
-                                    "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    "event": "bridge_generate_complete",
-                                    "detail": f"输出到 {d}/01_AI/{target_file}",
-                                })
-                                # 更新对应的 group
-                                gid = img_info.get("group_id")
-                                if gid in reg.get("groups", {}):
-                                    reg["groups"][gid]["dx_folder"] = d
-                                    reg["groups"][gid]["status"] = "generated"
-                                break
+                        # 优先按 uid 匹配注册表；否则回退 role+group_id
+                        img_info = None
+                        if uid:
+                            md5_key = reg.get("uid_index", {}).get(uid, "")
+                            img_info = reg.get("images", {}).get(md5_key)
+                        if not img_info and gid and role:
+                            for mk, info in reg.get("images", {}).items():
+                                if info.get("role") == role and info.get("group_id") == gid:
+                                    img_info = info
+                                    break
+                        if not img_info:
+                            for mk, info in reg.get("images", {}).items():
+                                if info.get("role") == role and \
+                                   info.get("group_id") in group_map.values():
+                                    img_info = info
+                                    break
+
+                        if img_info:
+                            # 更新注册表
+                            img_info["current_name"] = target_file
+                            img_info["current_path"] = f"02_PROJECTS/{d}/01_AI/{target_file}"
+                            img_info["src_id"] = src_id
+                            img_info["events"].append({
+                                "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "event": "bridge_generate_complete",
+                                "detail": f"输出到 {d}/01_AI/{target_file}",
+                            })
+                            # 更新对应的 group
+                            gid = img_info.get("group_id")
+                            if gid in reg.get("groups", {}):
+                                reg["groups"][gid]["dx_folder"] = d
+                                reg["groups"][gid]["status"] = "generated"
+
+                            # 写入 AI sidecar 与 uid_map
+                            if wb_meta:
+                                try:
+                                    ai_path = PROJECTS_DIR / d / "01_AI" / target_file
+                                    if ai_path.exists():
+                                        inbox_name = img_info.get("inbox_original_name", "")
+                                        wb_meta.register_ai(
+                                            ai_path,
+                                            uid=img_info.get("uid", uid),
+                                            group_id=img_info.get("group_id", gid),
+                                            role=role,
+                                            parent_uid=img_info.get("uid", uid),
+                                            inbox_file=f"01_INBOX/{inbox_name}" if inbox_name else None,
+                                        )
+                                except Exception as e:
+                                    log(f"WARN: AI sidecar 写入失败 {target_file}: {e}")
 
             # 建立溯源关系（AI 图 → INBOX 原图）
             lovart_reg_path = Path("D:/Semems WB/WB_REGISTRY/registry.json")
