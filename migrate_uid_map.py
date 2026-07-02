@@ -14,6 +14,12 @@ import sys
 import argparse
 from pathlib import Path
 
+# 设置 stdout 编码，避免 Windows cmd 默认 gbk 下打印 Unicode 失败
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace', line_buffering=True)
+except Exception:
+    pass
+
 _ZCODE = Path(__file__).parent
 if str(_ZCODE) not in sys.path:
     sys.path.insert(0, str(_ZCODE))
@@ -21,31 +27,31 @@ if str(_ZCODE) not in sys.path:
 try:
     import wb_meta
 except Exception as e:
-    print(f"❌ 无法导入 wb_meta: {e}")
+    print(f"[ERR] 无法导入 wb_meta: {e}")
     sys.exit(1)
 
 
 def migrate_dx(dx_name: str, dry_run: bool = False):
     dx_dir = Path("D:/Semems WB/02_PROJECTS") / dx_name
     if not dx_dir.is_dir():
-        print(f"❌ 不存在: {dx_dir}")
+        print(f"[ERR] 不存在: {dx_dir}")
         return False
     if dry_run:
         print(f"[dry-run] 将迁移 {dx_name}")
         return True
     try:
         wb_meta.migrate_dx(dx_dir)
-        print(f"✅ 迁移完成: {dx_name}")
+        print(f"[OK] 迁移完成: {dx_name}")
         return True
     except Exception as e:
-        print(f"❌ 迁移失败 {dx_name}: {e}")
+        print(f"[ERR] 迁移失败 {dx_name}: {e}")
         return False
 
 
 def migrate_all(dry_run: bool = False):
     projects_dir = Path("D:/Semems WB/02_PROJECTS")
     if not projects_dir.exists():
-        print(f"❌ 项目目录不存在: {projects_dir}")
+        print(f"[ERR] 项目目录不存在: {projects_dir}")
         return
     count = 0
     for d in sorted(projects_dir.iterdir()):
