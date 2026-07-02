@@ -1,4 +1,4 @@
-# Lovart-WB 系统架构文档 v2.1.2
+# Lovart-WB 系统架构文档 v2.1.3
 
 > 工程类型: 图像生产血缘数据库 + 控制面板 + 贴图成品流水线
 > 遵循: B+ 四层血缘闭环架构
@@ -18,9 +18,9 @@
             │ HTTP/JSON                   │ HTTP/JSON
             ▼                             ▼
 ┌──────────────────────┐     ┌────────────────────────────────────────┐
-│   lovart_bridge.py    │     │   check_rem.py v2.1.2                 │
-│   v2.1.2 (Flask Server)│    │   (预览 + 去背 + 贴图触发)            │
-│                       │     │   check_rem.js v2.1 (独立JS)          │
+│   lovart_bridge.py    │     │   check_rem.py v2.1.3                 │
+│   v2.1.2 (Flask Server)│    │   (预览 + 去背 + 贴图触发 + 批量反相) │
+│                       │     │   check_rem.js v2.1.3 (独立JS)        │
 │   API端点:            │     │                                        │
 │   /api/inbox          │     │   API端点:                             │
 │   /api/generate       │     │   /thumb, /original                    │

@@ -1,5 +1,16 @@
 # Lovart-WB 一体化控制系统 — 更新日志
 
+## v2.1.3 (2026-07-02) — 批量反相 + 自动贴图/BW合成
+
+### 🌑 批量反相
+
+- **check_rem.py v2.1.3** 新增「批量反相」按钮
+- 勾选多款后一键反相所有 B/W/BW 去背图，生成对应的 `DX_黑B/W/BW_cut.png` 黑版专用图
+- 反相完成后**自动跑完整贴图流水线**：黑T专用贴图 → 通用白T贴图 → BW 合成
+- 新增后端端点 `/batch-invert-rem` + `/batch-invert-result`，支持后台执行与前端进度轮询
+
+---
+
 ## v2.1.2 (2026-07-02) — Bridge 子进程最小化
 
 ### 🪟 后台静默运行
@@ -144,17 +155,17 @@
 ```
 C:\Users\Administrator\ZCodeProject\
 ├── lovart_bridge.py        v2.1.2  Flask HTTP Bridge
-├── lovart_control.html     v2.1.2  控制面板前端
+├── lovart_control.html     v2.1.3  控制面板前端
 ├── lovart_bridge.bat       v2.1.2  一键启动脚本
-├── CHANGELOG.md            v2.1.2  更新日志
-├── ARCHITECTURE.md         v2.1.2  系统架构文档
-├── SKILL.md                v2.1.2  技能定义
+├── CHANGELOG.md            v2.1.3  更新日志
+├── ARCHITECTURE.md         v2.1.3  系统架构文档
+├── SKILL.md                v2.1.3  技能定义
 └── .gitignore
 
 D:\Semems WB\04_OS\engine\
-├── check_rem.py            v2.1  AI vs 去背 vs 贴图成品 对比预览
-├── check_rem.js            v2.1  独立前端 JavaScript
-├── start_check_rem.bat     v2.1  check_rem.py 最小化启动器
+├── check_rem.py            v2.1.3  AI vs 去背 vs 贴图成品 对比预览
+├── check_rem.js            v2.1.3  独立前端 JavaScript
+├── start_check_rem.bat     v2.1.1  check_rem.py 最小化启动器
 ├── _rembg_worker.py        v2.1  单张去背工作进程
 └── rename_dx_folders.py    v2.0  DX文件夹重命名
 
