@@ -1,5 +1,16 @@
 # Lovart-WB 一体化控制系统 — 更新日志
 
+## v2.1.2 (2026-07-02) — Bridge 子进程最小化
+
+### 🪟 后台静默运行
+
+- **Bridge 内一键启动 check_rem.py**：点击控制面板的「去背预览」后，弹出的命令提示行窗口现在也是**最小化运行**
+- **PS 贴图 / BW 合成**：通过 Bridge 触发的贴图和 BW 合成子进程同样改为最小化窗口，不再突然弹出到前台
+- **统一工具函数 `run_minimized()`**：在 `lovart_bridge.py` 中集中管理 Windows 最小化启动逻辑（`STARTUPINFO` + `SW_SHOWMINNOACTIVE` + `CREATE_NEW_CONSOLE`）
+- **启动脚本版本同步**：`lovart_bridge.bat` 升级到 v2.1.2
+
+---
+
 ## v2.1 (2026-07-02) — 贴图流水线 + 反相黑版 + UI 重构
 
 ### 🎨 UI/UX 重构
@@ -132,12 +143,12 @@
 
 ```
 C:\Users\Administrator\ZCodeProject\
-├── lovart_bridge.py        v2.1  Flask HTTP Bridge
-├── lovart_control.html     v2.1  控制面板前端
-├── lovart_bridge.bat       v2.1  一键启动脚本
-├── CHANGELOG.md            v2.1  更新日志
-├── ARCHITECTURE.md         v2.1  系统架构文档
-├── SKILL.md                v2.1  技能定义
+├── lovart_bridge.py        v2.1.2  Flask HTTP Bridge
+├── lovart_control.html     v2.1.2  控制面板前端
+├── lovart_bridge.bat       v2.1.2  一键启动脚本
+├── CHANGELOG.md            v2.1.2  更新日志
+├── ARCHITECTURE.md         v2.1.2  系统架构文档
+├── SKILL.md                v2.1.2  技能定义
 └── .gitignore
 
 D:\Semems WB\04_OS\engine\

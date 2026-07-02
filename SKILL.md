@@ -1,6 +1,6 @@
 ---
 name: lovart-wb
-description: Lovart-WB 一体化 HTML 控制系统 v2.1 — 管理 AI 生图、去背、贴图成品的完整生产流程
+description: Lovart-WB 一体化 HTML 控制系统 v2.1.2 — 管理 AI 生图、去背、贴图成品的完整生产流程
 ---
 
 # Lovart-WB 控制面板
@@ -66,5 +66,6 @@ HTML 控制面板 ←HTTP→ Flask Bridge ←subprocess→ Lovart 管线
 - 生图消耗 Lovart API 积分（~16 积分/张）
 - 去背时美图秀秀接管屏幕，勿动键鼠
 - 贴图/BW合成时 PS 会隐藏/最小化，但仍会占用键鼠，请等待完成
+- 从 Bridge 控制面板启动「去背预览」「贴图」「BW合成」时，命令提示行窗口会最小化到任务栏，不抢焦点
 - 首次启动需安装依赖：`pip install flask Pillow requests pywin32 pythoncom numpy`
 - 确保 Photoshop 路径与 `config.py` / 脚本中的 `PS_EXE` 一致

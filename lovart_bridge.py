@@ -1,12 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Lovart-WB Bridge Server v2.1
-============================
+Lovart-WB Bridge Server v2.1.2
+==============================
 Flask HTTP 桥接服务 — 连接 HTML 控制面板与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.1.2：
+  - Bridge 内一键启动 check_rem.py / PS贴图 / BW合成 时，子进程窗口最小化，不抢焦点
+  - 新增 run_minimized() 工具函数，统一 Windows 最小化启动逻辑
 
 变更 v2.1：
   - 支持命令行参数 --port / --host，便于启动脚本自定义端口
@@ -55,6 +59,36 @@ PYTHON_EXE     = r"C:/Users/Administrator/AppData/Local/Programs/Python/Python31
 PYTHONPATH     = "E:/python_packages"
 
 HOVER_CACHE    = INBOX_DIR / "_hover_cache"  # 悬停预览缩略图缓存
+
+# ============================================================================
+# 工具函数：Windows 下最小化启动子进程（不抢焦点）
+# ============================================================================
+def run_minimized(cmd, cwd=None, wait=False):
+    """以最小化/不激活窗口启动子进程，用于 check_rem / PS 贴图等任务。"""
+    import subprocess
+    import ctypes
+    from ctypes import wintypes
+
+    STARTUPINFO = subprocess.STARTUPINFO
+    SW_SHOWMINNOACTIVE = 7
+    STARTF_USESHOWWINDOW = 1
+
+    si = STARTUPINFO()
+    si.dwFlags |= STARTF_USESHOWWINDOW
+    si.wShowWindow = SW_SHOWMINNOACTIVE
+
+    kwargs = {
+        "startupinfo": si,
+        "creationflags": subprocess.CREATE_NEW_CONSOLE,
+    }
+    if cwd:
+        kwargs["cwd"] = str(cwd)
+
+    proc = subprocess.Popen(cmd, **kwargs)
+    if wait:
+        proc.wait()
+        return proc
+    return proc
 
 # ============================================================================
 # Flask App
@@ -1292,11 +1326,10 @@ def api_launch_check_rem():
     if not script.exists():
         return jsonify({"ok": False, "error": "check_rem.py 不存在"}), 404
     try:
-        # 启动 check_rem.py（新窗口）
-        subprocess.Popen(
+        # 启动 check_rem.py（最小化窗口，不抢焦点）
+        run_minimized(
             [sys.executable, str(script)],
             cwd=str(script.parent),
-            creationflags=subprocess.CREATE_NEW_CONSOLE,
         )
         # 唯一一次浏览器打开
         import webbrowser
@@ -1324,9 +1357,8 @@ def api_ps_sticker():
     for dx in dx_list:
         dx_folder = PROJECTS_DIR / dx
         if dx_folder.exists() and (dx_folder / "02_REM_BG").exists():
-            subprocess.Popen(
+            run_minimized(
                 [sys.executable, str(ps_script), dx],
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
             count += 1
     return jsonify({"ok": True, "msg": f"已启动 PS贴图: {count} 款"})
@@ -1346,9 +1378,8 @@ def api_ps_batch():
     for dx in dx_list:
         dx_folder = PROJECTS_DIR / dx
         if dx_folder.exists() and (dx_folder / "03_UPLOAD").exists():
-            subprocess.Popen(
+            run_minimized(
                 [sys.executable, str(ps_script), dx],
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
             count += 1
     return jsonify({"ok": True, "msg": f"已启动 BW合成: {count} 款"})
@@ -1612,7 +1643,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Lovart-WB Bridge Server v2.1          ║")
+    print("║   Lovart-WB Bridge Server v2.1.2        ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")
