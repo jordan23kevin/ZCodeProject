@@ -1,12 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Lovart-WB Bridge Server v2.0
+Lovart-WB Bridge Server v2.1
 ============================
 Flask HTTP 桥接服务 — 连接 HTML 控制面板与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.1：
+  - 支持命令行参数 --port / --host，便于启动脚本自定义端口
+  - 启动时写入 bridge.pid，供 lovart_bridge.bat 优雅停止服务
+
+变更 v2.0：
+  - Registry v4 / 血缘引擎 / AutoScan / Lineage API
+  - lovart_control.html 控制面板 v2.0
 
 启动: python lovart_bridge.py  →  http://127.0.0.1:8765
 """
@@ -22,6 +30,7 @@ import threading
 import re
 import io
 import ctypes
+import argparse
 from ctypes import wintypes
 from pathlib import Path
 from datetime import datetime
@@ -1583,6 +1592,11 @@ def _run_generation(selected_files: list, task_id: str):
 # ============================================================================
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Lovart-WB Bridge Server")
+    parser.add_argument("--port", type=int, default=8765, help="Bridge 服务端口 (默认 8765)")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="监听地址 (默认 127.0.0.1)")
+    args = parser.parse_args()
+
     # 恢复上次的任务状态（如果是已完成/错误状态）
     _load_state()
 
@@ -1598,7 +1612,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Lovart-WB Bridge Server v2.0          ║")
+    print("║   Lovart-WB Bridge Server v2.1          ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")
@@ -1606,7 +1620,7 @@ if __name__ == '__main__':
     print(f"║   Output:  {PROJECTS_DIR}")
     print(f"║   Lovart:  {LOVART_SCRIPT}")
     print("║                                         ║")
-    print("║   Open:  http://127.0.0.1:8765          ║")
+    print(f"║   Open:  http://{args.host}:{args.port}")
     print("║   AutoScan: every 60s                   ║")
     print("╚══════════════════════════════════════════╝")
 
@@ -1624,4 +1638,18 @@ if __name__ == '__main__':
     t = threading.Thread(target=_auto_scan_loop, daemon=True)
     t.start()
 
-    app.run(host='127.0.0.1', port=8765, debug=False)
+    # 写入 PID 文件，供启动脚本优雅停止服务
+    pid_path = Path(__file__).resolve().parent / "bridge.pid"
+    try:
+        pid_path.write_text(str(os.getpid()), encoding="utf-8")
+    except Exception:
+        pass
+
+    try:
+        app.run(host=args.host, port=args.port, debug=False)
+    finally:
+        try:
+            if pid_path.exists():
+                pid_path.unlink()
+        except Exception:
+            pass

@@ -1,6 +1,74 @@
 # Lovart-WB 一体化控制系统 — 更新日志
 
+## v2.1 (2026-07-02) — 贴图流水线 + 反相黑版 + UI 重构
+
+### 🎨 UI/UX 重构
+
+- **整体放大**：卡片、缩略图、文字、按钮全部放大，清晰易点击
+- **去背缩略图完整显示**：不再叠加分辨率文字，图片完整展示
+- **放大镜位置固定**：分辨率低于 2000×2000 时才出现，固定在每个去背图按钮栏最右侧，旁边显示当前分辨率
+- **一键放大**：点击 🔍 自动将图片放大到 2046×2046（LANCZOS 插值）
+- **反相按钮**：每张去背缩略图增加「反相」按钮，一键生成 `DX_黑B/W/BW_cut.png`，并自动重跑该款全部贴图 + BW 合成
+- **成品展示重构**：`03_UPLOAD` 贴图成品按 BW / B / W 分组，一行两张缩略图，与 AI 图、去背图等宽，风格统一
+- **黑版变体独立展示**：`_黑B` / `_黑W` / `_黑BW` 不再占用 AI/REM 配对位，独立并列显示
+- **悬停放大图智能定位**：自动检测视口右/下边缘，放不下时向左/向上偏移，避免显示不全
+- **变体图过滤**：无独立 AI 的「变体图」不再显示缩略图，保持界面清爽
+
+### 📎 贴图流水线闭环
+
+- **贴图即合成 BW**：点击「贴图」或「批量贴图」不再只做 B/W 贴图，而是自动完成 BW 合成
+- **黑T专用优先**：`02_REM_BG` 中存在 `黑B/黑W/黑BW` 时，黑T贴图优先使用这些专用文件；没有时才 fallback 到通用 B/W/BW
+- **黑版联动反相**：反相生成黑版专用图后，自动调用 `process_black.py` 完成黑T贴图与 BW 合成
+- **流水线顺序**：黑T专用贴图 → 通用白T贴图 → BW 合成，全部通过 `/ps-sticker` 一键触发
+
+### 🪟 后台静默运行
+
+- **Photoshop 隐藏**：`wb_sticker_ps.py` / `process_black.py` / `ps_batch.py` 全部设置 `psApp.Visible = False`
+- **PS 最小化打开**：`ps_batch.py` 使用 `WScript.Shell.Run(..., 7, False)`（`SW_SHOWMINNOACTIVE`），不抢焦点
+- **去背/贴图 worker 最小化**：`check_rem.py` 通过 `run_minimized()` 启动子进程，命令行窗口不弹出到前台
+
+### 📦 新增/拆分脚本
+
+- `check_rem.js` v2.1 — 独立前端 JS，负责反相、放大、批量贴图、悬停定位等交互
+- `ps_sticker_one.py` v2.1 — PS 贴图单款入口
+- `ps_batch_one.py` v2.1 — BW 合成单款入口
+- `process_black.py` v2.1 — 黑T专用贴图 + BW 合成
+
+### 🔧 修复与改进
+
+- `lovart_bridge.py` v2.1：支持 `--port` / `--host`，启动时写入 `bridge.pid`，供启动脚本优雅停止
+- 启动脚本 `lovart_bridge.bat` v2.1：与 v2.1 Python 端对齐，防重复启动、日志轮转、优雅停止
+- `.gitignore`：忽略 `bridge.pid` 与 `bridge.log.*.bak`
+
+### 🐛 已解决疑难杂症
+
+| 问题 | 根因 | 解决方案 |
+|------|------|----------|
+| 去背缩略图一半显示分辨率 | 分辨率文字直接覆盖在图片上 | 移除图片内文字，分辨率改在按钮栏显示 |
+| 放大镜按钮位置混乱 | 按钮按 DOM 顺序排列 | 固定 🔍 为最后一个子元素 |
+| 贴图只做 B/W 没合成 BW | 前端只调用 wb_sticker_ps.py | `/ps-sticker` 改为完整流水线：黑T → 白T → BW合成 |
+| 黑T贴图用通用图导致错误 | 没有检测 `黑B/黑W/黑BW` 专用文件 | 存在黑版文件时通用图跳过黑T输出 |
+| PS 窗口弹出干扰工作 | 默认 Visible=True / shell.Run 前台 | 全链路设置隐藏/最小化 |
+| 已贴图缩略图太小 | 独立窄栏展示 | 与 AI/去背图等宽，一行两张 |
+| 悬停放大图被截断 | 固定 right+8 / top 定位 | 检测视口边界，自动左/上偏移 |
+| 反相后贴图未更新 | 只生成反相图，没触发后续流程 | 反相接口自动调用贴图+BW合成 |
+
+---
+
 ## v2.0 (2026-07-02) — 血缘引擎 + 批量去背 + JS独立化
+
+### 🚀 改进：启动脚本 `lovart_bridge.bat`
+
+- **版本号统一**：标题和启动信息都改为 `v2.0`
+- **防重复启动**：启动前检查 `http://127.0.0.1:8765/api/inbox`，若 Bridge 已在运行则直接打开浏览器并退出
+- **优雅停止**：关闭 CMD 窗口时读取 `bridge.pid` 停止对应 Python 进程，避免残留；无 PID 时按端口兜底停止
+- **日志轮转**：启动前自动备份旧 `bridge.log` 为 `bridge.log.YYYYMMDD_HHMMSS.bak`
+- **启动参数支持**：
+  - `--port <端口>`：自定义端口
+  - `--host <地址>`：自定义监听地址
+  - `--no-browser`：不自动打开 Chrome
+  - 其他参数透传给 `lovart_bridge.py`
+- **Python 端配合**：`lovart_bridge.py` 支持 `--port`/`--host`，启动时写入 `bridge.pid`
 
 ### 🧬 新增：数据血缘追踪系统（Lineage Engine）
 
@@ -57,17 +125,26 @@
 
 ```
 C:\Users\Administrator\ZCodeProject\
-├── lovart_bridge.py        v2.0  Flask HTTP Bridge
-├── lovart_control.html     v2.0  控制面板前端
-├── lovart_bridge.bat       v2.0  一键启动脚本
-├── CHANGELOG.md            v2.0  更新日志
-├── ARCHITECTURE.md         v2.0  系统架构文档
-├── SKILL.md                v2.0  技能定义
+├── lovart_bridge.py        v2.1  Flask HTTP Bridge
+├── lovart_control.html     v2.1  控制面板前端
+├── lovart_bridge.bat       v2.1  一键启动脚本
+├── CHANGELOG.md            v2.1  更新日志
+├── ARCHITECTURE.md         v2.1  系统架构文档
+├── SKILL.md                v2.1  技能定义
 └── .gitignore
 
 D:\Semems WB\04_OS\engine\
-├── check_rem.py            v2.0  AI vs 去背 对比预览
-└── check_rem.js            v2.0  独立 JavaScript（解决转义问题）
+├── check_rem.py            v2.1  AI vs 去背 vs 贴图成品 对比预览
+├── check_rem.js            v2.1  独立前端 JavaScript
+├── _rembg_worker.py        v2.1  单张去背工作进程
+└── rename_dx_folders.py    v2.0  DX文件夹重命名
+
+E:\Claude code\ps\
+├── wb_sticker_ps.py        v2.1  通用贴图（黑T优先检测）
+├── ps_batch.py             v1.3.0  BW合成
+├── ps_sticker_one.py       v2.1  单款贴图入口
+├── ps_batch_one.py         v2.1  单款BW合成入口
+└── process_black.py        v2.1  黑T专用贴图+BW合成
 ```
 
 ## v1.0 (2026-07-01) — 初始版本

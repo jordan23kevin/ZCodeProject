@@ -27,3 +27,5 @@ Thumbs.db
 
 # Project specific
 nul
+bridge.pid
+bridge.log.*.bak
