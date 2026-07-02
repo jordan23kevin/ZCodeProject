@@ -1,6 +1,6 @@
 ---
 name: lovart-wb
-description: Lovart-WB 一体化 HTML 控制系统 v2.1.6 — 管理 AI 生图、去背、贴图成品的完整生产流程
+description: Lovart-WB 一体化 HTML 控制系统 v2.1.7 — 管理 AI 生图、去背、贴图成品的完整生产流程
 ---
 
 # Lovart-WB 控制面板

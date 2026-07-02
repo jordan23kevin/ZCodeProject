@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.1.6</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.1.7</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -46,7 +46,7 @@
 </style>
 </head>
 <body>
-<h1>WB 上款 <span class="v">v2.1.6</span></h1>
+<h1>WB 上款 <span class="v">v2.1.7</span></h1>
 <div class="toolbar">
   <select id="dateSel" onchange="switchDate(this.value)">
     <option value="">全部日期</option>
@@ -87,11 +87,16 @@ function fillDateSel(){
   var sel=document.getElementById('dateSel');
   var dates={};
   allProjects.forEach(function(p){if(p.date)dates[p.date]=1;});
+  var sortedDates=Object.keys(dates).sort().reverse();
   var opts=['<option value="">全部日期</option>'];
-  Object.keys(dates).sort().reverse().forEach(function(dt){
+  sortedDates.forEach(function(dt){
     opts.push('<option value="'+dt+'">20'+dt.substr(0,2)+'-'+dt.substr(2,2)+'-'+dt.substr(4,2)+'</option>');
   });
   sel.innerHTML=opts.join('');
+  // 默认选中最新日期
+  if(sortedDates.length>0){
+    sel.value=sortedDates[0];
+  }
 }
 
 function upGroup(name,dx){
@@ -203,8 +208,7 @@ function batchUpload(){
       showToast(d.ok?'✅ '+d.msg:'❌ '+d.msg);
       btn.textContent='📤 批量上传 (0)';btn.disabled=false;
       if(d.ok){
-        console.log('upload script:',d.script,'dx:',d.dx_list);
-        setTimeout(function(){loadProjects();},3000);
+        console.log('upload script:',d.script,'start_dx:',d.start_dx,'selected:',d.selected);
       }
     }).catch(function(e){
       showToast('❌ 请求失败: '+e);

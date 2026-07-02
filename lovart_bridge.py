@@ -1,12 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Lovart-WB Bridge Server v2.1.6
+Lovart-WB Bridge Server v2.1.7
 ==============================
 Flask HTTP 桥接服务 — 连接 HTML 控制面板与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.1.7：
+  - /upload 页面默认选中最新日期
+  - 移除后台预生成缩略图（反而拖慢），改用 Flask threaded=True 并发处理缩略图请求
+  - 修复批量上传仍提示未配置脚本的问题（代码已更新，需重启 Bridge 生效）
+  - /api/batch-upload 改为只启动一次 wb_listing.py，以选中款中最早的 DX 为起点连续处理
+  - 修复 lovart_bridge.bat：Chrome 启动时 detached，关闭 CMD 后 Chrome 不再被关闭
 
 变更 v2.1.6：
   - /api/batch-upload 默认对接 E:\Claude code\wb上款\wb_listing.py
@@ -630,7 +637,6 @@ def _scan_upload_projects():
     projects = []
     if not PROJECTS_DIR.exists():
         return projects
-    all_files_to_thumb = []  # [(dx, filename), ...]
     for d in sorted(PROJECTS_DIR.iterdir()):
         if not d.is_dir() or not re.match(r"^DX\d+$", d.name):
             continue
@@ -645,24 +651,12 @@ def _scan_upload_projects():
             if ext not in ('.png', '.jpg', '.jpeg', '.webp'):
                 continue
             files.append({"name": f.name, "mtime": int(f.stat().st_mtime)})
-            all_files_to_thumb.append((d.name, f.name))
         if not files:
             continue
         # date = 该 DX 03_UPLOAD 最新 mtime 的 YYMMDD
         latest_mtime = max((f.stat().st_mtime for f in up_dir.iterdir() if f.is_file()), default=0)
         dx_date = time.strftime("%y%m%d", time.localtime(latest_mtime)) if latest_mtime else ""
         projects.append({"dx": d.name, "date": dx_date, "files": files})
-
-    # 后台预生成缩略图，避免页面加载时逐张生成导致卡顿
-    if all_files_to_thumb:
-        def _pre_gen():
-            for dx, name in all_files_to_thumb:
-                try:
-                    _get_upload_thumb(dx, name)
-                except Exception:
-                    pass
-        threading.Thread(target=_pre_gen, daemon=True).start()
-
     return projects
 
 
@@ -1528,22 +1522,31 @@ def api_batch_upload():
             "error": f"上款脚本不存在: {upload_script}"
         }), 404
 
-    # wb_listing.py 一次处理一个 DX，按顺序启动（避免浏览器状态冲突）
-    count = 0
+    # wb_listing.py 以第一个 DX 为起点连续处理后续未完成款，
+    # 为避免多实例抢浏览器 CDP，这里只启动一次脚本（取列表中最早的 DX 作为起点）
+    start_dx = None
     for dx in dx_list:
         dx_folder = PROJECTS_DIR / dx
         if dx_folder.exists() and (dx_folder / "03_UPLOAD").exists():
-            try:
-                run_minimized([sys.executable, str(script_path), dx], wait=False)
-                count += 1
-            except Exception as e:
-                print(f"[batch-upload] 启动 {dx} 失败: {e}", flush=True)
+            start_dx = dx
+            break
+
+    if not start_dx:
+        return jsonify({"ok": False, "error": "勾选的款均无 03_UPLOAD 成品"}), 400
+
+    try:
+        # wait=False: wb_listing.py 运行时间较长，API 立即返回，后台执行
+        run_minimized([sys.executable, str(script_path), start_dx], wait=False)
+    except Exception as e:
+        print(f"[batch-upload] 启动 {start_dx} 失败: {e}", flush=True)
+        return jsonify({"ok": False, "error": f"启动脚本失败: {e}"}), 500
 
     return jsonify({
         "ok": True,
-        "msg": f"已启动 wb上款脚本: {count}/{len(dx_list)} 款",
+        "msg": f"已启动 wb上款脚本，从 {start_dx} 开始处理（含后续未完成款）",
         "script": str(script_path),
-        "dx_list": dx_list[:count]
+        "start_dx": start_dx,
+        "selected": dx_list
     })
 
 
@@ -1796,7 +1799,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Lovart-WB Bridge Server v2.1.6        ║")
+    print("║   Lovart-WB Bridge Server v2.1.7        ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")
@@ -1830,7 +1833,7 @@ if __name__ == '__main__':
         pass
 
     try:
-        app.run(host=args.host, port=args.port, debug=False)
+        app.run(host=args.host, port=args.port, debug=False, threaded=True)
     finally:
         try:
             if pid_path.exists():

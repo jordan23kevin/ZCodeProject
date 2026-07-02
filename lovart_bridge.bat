@@ -7,7 +7,7 @@ if /I not "%~1"=="minimized" (
     exit /b 0
 )
 
-title Lovart-WB Bridge v2.1.6
+title Lovart-WB Bridge v2.1.7
 setlocal enabledelayedexpansion
 
 set PYTHON=C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe
@@ -63,9 +63,9 @@ if %ERRORLEVEL% EQU 0 (
     if "%OPEN_BROWSER%"=="1" (
         echo Opening Chrome...
         if exist "%CHROME%" (
-            start "" "%CHROME%" --new-window http://%HOST%:%PORT%
+            start "" cmd /c ""%CHROME%" --new-window "http://%HOST%:%PORT%" >nul 2>&1"
         ) else (
-            start http://%HOST%:%PORT%
+            start "" cmd /c "start http://%HOST%:%PORT% >nul 2>&1"
         )
     )
     pause
@@ -76,7 +76,7 @@ if %ERRORLEVEL% EQU 0 (
 call :rotate_log
 
 echo ========================================
-echo   Lovart-WB Bridge v2.1.6
+echo   Lovart-WB Bridge v2.1.7
 echo   Panel: http://%HOST%:%PORT%
 echo   INBOX: D:\Semems WB\01_INBOX\
 echo   Lovart: E:\Claude code\lovart-official\
@@ -109,9 +109,9 @@ if "%OPEN_BROWSER%"=="1" (
     echo.
     echo Opening Chrome...
     if exist "%CHROME%" (
-        start "" "%CHROME%" --new-window http://%HOST%:%PORT%
+        start "" cmd /c ""%CHROME%" --new-window "http://%HOST%:%PORT%" >nul 2>&1"
     ) else (
-        start http://%HOST%:%PORT%
+        start "" cmd /c "start http://%HOST%:%PORT% >nul 2>&1"
     )
 )
 

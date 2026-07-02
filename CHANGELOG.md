@@ -1,5 +1,19 @@
 # Lovart-WB 一体化控制系统 — 更新日志
 
+## v2.1.7 (2026-07-02) — 上款页面修复 + Chrome  detached
+
+### 🐛 修复
+
+- **上款页面默认最新日期**：打开 `/upload` 后日期下拉框自动选中最新日期
+- **预览图加载加速**：
+  - 移除后台全量预生成缩略图（反而占用资源拖慢服务器）
+  - Flask 启动改为 `threaded=True`，可并发处理多个缩略图请求
+- **批量上传未生效**：`/api/batch-upload` 已正确默认对接 `E:\Claude code\wb上款\wb_listing.py`，**需重启 Bridge 后生效**
+- **批量上传逻辑调整**：改为只启动一次 `wb_listing.py`，以选中款中最早的 DX 为起点连续处理（避免多实例抢 CDP）
+- **Chrome  detached**：`lovart_bridge.bat` 启动 Chrome 时通过 `cmd /c ... >nul 2>&1`  detach，关闭 CMD 窗口后 Chrome 不再被关闭
+
+---
+
 ## v2.1.6 (2026-07-02) — 上款对接 wb_listing.py + 预览图加速
 
 ### 📤 上款对接
@@ -215,13 +229,13 @@ C:\Users\Administrator\ZCodeProject\
 
 ```
 C:\Users\Administrator\ZCodeProject\
-├── lovart_bridge.py        v2.1.6  Flask HTTP Bridge
+├── lovart_bridge.py        v2.1.7  Flask HTTP Bridge
 ├── lovart_control.html     v2.1.4  控制面板前端
-├── upload.html             v2.1.6  上款页面
-├── lovart_bridge.bat       v2.1.6  一键启动脚本
-├── CHANGELOG.md            v2.1.6  更新日志
-├── ARCHITECTURE.md         v2.1.6  系统架构文档
-├── SKILL.md                v2.1.6  技能定义
+├── upload.html             v2.1.7  上款页面
+├── lovart_bridge.bat       v2.1.7  一键启动脚本
+├── CHANGELOG.md            v2.1.7  更新日志
+├── ARCHITECTURE.md         v2.1.7  系统架构文档
+├── SKILL.md                v2.1.7  技能定义
 └── .gitignore
 
 D:\Semems WB\04_OS\engine\
