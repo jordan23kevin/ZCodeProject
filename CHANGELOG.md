@@ -1,5 +1,18 @@
 # Lovart-WB 一体化控制系统 — 更新日志
 
+## v2.1.5 (2026-07-02) — 修复反相后 BW 合成图不生成
+
+### 🐛 修复
+
+- **check_rem.py v2.1.5**
+  - 修复：只反相单张图时，BW 合成图不会重新生成
+  - 根因：`ps_batch.py` 检测到 `DX_*BW.jpg` 已存在时会跳过合成
+  - 解决：`_run_sticker_pipeline()` 在运行前先清理旧的自动生成贴图/BW文件，确保每次反相或重跑都能重新贴图+合成BW
+  - 清理范围：`DX_白BW.jpg` / `DX_黑BW.jpg` / `DX_B_白T.jpg` / `DX_W_白T.jpg` / `DX_B_黑T.jpg` / `DX_W_黑T.jpg`
+  - 修复 `_ps_batch` 端点 DX 正则表达式错误（`DX\\d` → `DX\d`）
+
+---
+
 ## v2.1.4 (2026-07-02) — 上款页面替换 PS贴图控制台
 
 ### 📤 新增：WB 上款页面
@@ -194,8 +207,8 @@ C:\Users\Administrator\ZCodeProject\
 └── .gitignore
 
 D:\Semems WB\04_OS\engine\
-├── check_rem.py            v2.1.3  AI vs 去背 vs 贴图成品 对比预览
-├── check_rem.js            v2.1.3  独立前端 JavaScript
+├── check_rem.py            v2.1.5  AI vs 去背 vs 贴图成品 对比预览
+├── check_rem.js            v2.1.5  独立前端 JavaScript
 ├── start_check_rem.bat     v2.1.1  check_rem.py 最小化启动器
 ├── _rembg_worker.py        v2.1  单张去背工作进程
 └── rename_dx_folders.py    v2.0  DX文件夹重命名
