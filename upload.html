@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.1.6</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -46,7 +46,7 @@
 </style>
 </head>
 <body>
-<h1>WB 上款 <span class="v">v2.1.4</span></h1>
+<h1>WB 上款 <span class="v">v2.1.6</span></h1>
 <div class="toolbar">
   <select id="dateSel" onchange="switchDate(this.value)">
     <option value="">全部日期</option>
@@ -202,7 +202,10 @@ function batchUpload(){
     .then(function(d){
       showToast(d.ok?'✅ '+d.msg:'❌ '+d.msg);
       btn.textContent='📤 批量上传 (0)';btn.disabled=false;
-      if(d.ok)setTimeout(function(){loadProjects();},2000);
+      if(d.ok){
+        console.log('upload script:',d.script,'dx:',d.dx_list);
+        setTimeout(function(){loadProjects();},3000);
+      }
     }).catch(function(e){
       showToast('❌ 请求失败: '+e);
       btn.textContent='📤 批量上传 (0)';btn.disabled=false;

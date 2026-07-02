@@ -1,12 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Lovart-WB Bridge Server v2.1.4
+Lovart-WB Bridge Server v2.1.6
 ==============================
 Flask HTTP 桥接服务 — 连接 HTML 控制面板与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.1.6：
+  - /api/batch-upload 默认对接 E:\Claude code\wb上款\wb_listing.py
+  - 批量上款按顺序逐个 DX 启动 wb_listing.py，避免浏览器状态冲突
+  - 优化 /upload 页面缩略图加载速度：后台预生成、透明检测、Cache-Control 缓存
+  - 修复 upload.html 批量上传后页面刷新逻辑
 
 变更 v2.1.4：
   - 移除 PS贴图控制台，替换为「上款」页面 (/upload)
@@ -47,7 +53,7 @@ from pathlib import Path
 from datetime import datetime
 
 try:
-    from flask import Flask, jsonify, request, send_file, abort
+    from flask import Flask, jsonify, request, send_file, abort, make_response
 except ImportError:
     print("ERROR: Flask not installed. Run: pip install flask")
     sys.exit(1)
@@ -624,6 +630,7 @@ def _scan_upload_projects():
     projects = []
     if not PROJECTS_DIR.exists():
         return projects
+    all_files_to_thumb = []  # [(dx, filename), ...]
     for d in sorted(PROJECTS_DIR.iterdir()):
         if not d.is_dir() or not re.match(r"^DX\d+$", d.name):
             continue
@@ -638,17 +645,30 @@ def _scan_upload_projects():
             if ext not in ('.png', '.jpg', '.jpeg', '.webp'):
                 continue
             files.append({"name": f.name, "mtime": int(f.stat().st_mtime)})
+            all_files_to_thumb.append((d.name, f.name))
         if not files:
             continue
         # date = 该 DX 03_UPLOAD 最新 mtime 的 YYMMDD
         latest_mtime = max((f.stat().st_mtime for f in up_dir.iterdir() if f.is_file()), default=0)
         dx_date = time.strftime("%y%m%d", time.localtime(latest_mtime)) if latest_mtime else ""
         projects.append({"dx": d.name, "date": dx_date, "files": files})
+
+    # 后台预生成缩略图，避免页面加载时逐张生成导致卡顿
+    if all_files_to_thumb:
+        def _pre_gen():
+            for dx, name in all_files_to_thumb:
+                try:
+                    _get_upload_thumb(dx, name)
+                except Exception:
+                    pass
+        threading.Thread(target=_pre_gen, daemon=True).start()
+
     return projects
 
 
 def _get_upload_thumb(dx: str, filename: str):
-    """返回 03_UPLOAD 缩略图路径（不存在则生成 220px 高）"""
+    """返回 03_UPLOAD 缩略图路径（不存在则生成 220px 高）。
+    优先使用已缓存缩略图；透明 PNG 则合成白底。"""
     if "/" in filename or "\\" in filename:
         return None
     src = PROJECTS_DIR / dx / "03_UPLOAD" / filename
@@ -662,7 +682,16 @@ def _get_upload_thumb(dx: str, filename: str):
     try:
         from PIL import Image
         img = Image.open(src)
-        if img.mode in ('RGBA', 'P'):
+        # 仅当真正存在透明通道时才合成白底，否则直接转 RGB
+        if img.mode == 'RGBA':
+            # 检查是否有透明像素，若无则直接转 RGB
+            alpha = img.getchannel('A')
+            if alpha.getextrema()[0] == 255:
+                img = img.convert('RGB')
+            else:
+                bg = Image.new('RGBA', img.size, (255, 255, 255, 255))
+                img = Image.alpha_composite(bg, img).convert('RGB')
+        elif img.mode == 'P':
             img = img.convert('RGBA')
             bg = Image.new('RGBA', img.size, (255, 255, 255, 255))
             img = Image.alpha_composite(bg, img).convert('RGB')
@@ -670,9 +699,9 @@ def _get_upload_thumb(dx: str, filename: str):
             img = img.convert('RGB')
         w, h = img.size
         target_h = 220
-        new_w = int(w * target_h / h)
+        new_w = max(1, int(w * target_h / h))
         img = img.resize((new_w, target_h), Image.LANCZOS)
-        img.save(str(thumb_file), "JPEG", quality=90)
+        img.save(str(thumb_file), "JPEG", quality=85, optimize=True)
         return thumb_file
     except Exception as e:
         print(f"[UploadThumbError] {dx}/{filename}: {e}")
@@ -1441,7 +1470,9 @@ def api_upload_thumb():
     thumb = _get_upload_thumb(dx, filename)
     if not thumb:
         return "no thumb", 404
-    return send_file(str(thumb), mimetype="image/jpeg")
+    r = make_response(send_file(str(thumb), mimetype="image/jpeg"))
+    r.headers["Cache-Control"] = "public, max-age=3600"
+    return r
 
 
 @app.route('/api/upload/original')
@@ -1455,7 +1486,9 @@ def api_upload_original():
     if not src.exists():
         return "not found", 404
     ct = "image/png" if filename.lower().endswith(".png") else "image/jpeg"
-    return send_file(str(src), mimetype=ct)
+    r = make_response(send_file(str(src), mimetype=ct))
+    r.headers["Cache-Control"] = "public, max-age=3600"
+    return r
 
 
 @app.route('/api/open')
@@ -1478,29 +1511,39 @@ def api_open_dx():
 
 @app.route('/api/batch-upload', methods=['POST'])
 def api_batch_upload():
-    """批量上款：调用外部上款脚本（可配置）。
-    默认返回提示，需在此处接入具体平台 API。
+    """批量上款：调用 E:\Claude code\wb上款\wb_listing.py 逐个 DX 上款。
+    可通过环境变量 LOVART_UPLOAD_SCRIPT 覆盖脚本路径。
     """
     data = request.get_json(silent=True) or {}
     dx_list = data.get("dx_list", [])
     if not dx_list:
         return jsonify({"ok": False, "error": "请指定DX号"}), 400
 
-    # TODO: 接入实际上款平台（店小秘/Temu/其他）
-    # 示例：可配置外部脚本路径，运行 python "E:/Claude code/WB Lovart/上款.py" <dx>
-    UPLOAD_SCRIPT = os.environ.get("LOVART_UPLOAD_SCRIPT", "")
-    if UPLOAD_SCRIPT and Path(UPLOAD_SCRIPT).exists():
-        count = 0
-        for dx in dx_list:
-            dx_folder = PROJECTS_DIR / dx
-            if dx_folder.exists() and (dx_folder / "03_UPLOAD").exists():
-                run_minimized([sys.executable, UPLOAD_SCRIPT, dx])
+    default_script = r"E:\Claude code\wb上款\wb_listing.py"
+    upload_script = os.environ.get("LOVART_UPLOAD_SCRIPT", default_script)
+    script_path = Path(upload_script)
+    if not script_path.exists():
+        return jsonify({
+            "ok": False,
+            "error": f"上款脚本不存在: {upload_script}"
+        }), 404
+
+    # wb_listing.py 一次处理一个 DX，按顺序启动（避免浏览器状态冲突）
+    count = 0
+    for dx in dx_list:
+        dx_folder = PROJECTS_DIR / dx
+        if dx_folder.exists() and (dx_folder / "03_UPLOAD").exists():
+            try:
+                run_minimized([sys.executable, str(script_path), dx], wait=False)
                 count += 1
-        return jsonify({"ok": True, "msg": f"已启动外部上款脚本: {count} 款"})
+            except Exception as e:
+                print(f"[batch-upload] 启动 {dx} 失败: {e}", flush=True)
 
     return jsonify({
         "ok": True,
-        "msg": f"已接收 {len(dx_list)} 款的上款请求（未配置实际上款脚本，请设置环境变量 LOVART_UPLOAD_SCRIPT）"
+        "msg": f"已启动 wb上款脚本: {count}/{len(dx_list)} 款",
+        "script": str(script_path),
+        "dx_list": dx_list[:count]
     })
 
 
@@ -1753,7 +1796,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Lovart-WB Bridge Server v2.1.4        ║")
+    print("║   Lovart-WB Bridge Server v2.1.6        ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")

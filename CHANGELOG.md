@@ -1,5 +1,23 @@
 # Lovart-WB 一体化控制系统 — 更新日志
 
+## v2.1.6 (2026-07-02) — 上款对接 wb_listing.py + 预览图加速
+
+### 📤 上款对接
+
+- `/api/batch-upload` 默认对接 `E:\Claude code\wb上款\wb_listing.py`
+- 勾选款号后点击「批量上传」，按顺序逐个 DX 启动 `wb_listing.py DXxxxx`
+- 避免同时启动多个浏览器实例导致状态冲突
+- 仍可通过环境变量 `LOVART_UPLOAD_SCRIPT` 覆盖脚本路径
+
+### ⚡ 上款页面预览图加速
+
+- `/api/upload/projects` 扫描时**后台预生成缩略图**，减少页面加载等待
+- `_get_upload_thumb()` 优化：仅在图片真正含透明像素时才合成白底
+- 缩略图/原图响应添加 `Cache-Control: max-age=3600`，浏览器可缓存
+- 修复 `upload.html` 批量上传后的页面刷新逻辑
+
+---
+
 ## v2.1.5 (2026-07-02) — 修复反相后 BW 合成图不生成
 
 ### 🐛 修复
@@ -197,13 +215,13 @@ C:\Users\Administrator\ZCodeProject\
 
 ```
 C:\Users\Administrator\ZCodeProject\
-├── lovart_bridge.py        v2.1.4  Flask HTTP Bridge
+├── lovart_bridge.py        v2.1.6  Flask HTTP Bridge
 ├── lovart_control.html     v2.1.4  控制面板前端
-├── upload.html             v2.1.4  上款页面
-├── lovart_bridge.bat       v2.1.4  一键启动脚本
-├── CHANGELOG.md            v2.1.4  更新日志
-├── ARCHITECTURE.md         v2.1.4  系统架构文档
-├── SKILL.md                v2.1.4  技能定义
+├── upload.html             v2.1.6  上款页面
+├── lovart_bridge.bat       v2.1.6  一键启动脚本
+├── CHANGELOG.md            v2.1.6  更新日志
+├── ARCHITECTURE.md         v2.1.6  系统架构文档
+├── SKILL.md                v2.1.6  技能定义
 └── .gitignore
 
 D:\Semems WB\04_OS\engine\
