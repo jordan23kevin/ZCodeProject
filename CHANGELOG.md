@@ -25,17 +25,17 @@
 
 ### ✨ 新增
 
-- **UID/group_id 元数据系统**
+- **UID/group_id 元数据系统（v2.0，MD5 主键）**
   - 从 INBOX 原图开始分配全局唯一 `uid`（如 `UID_20250703_0001`）和组 ID `group_id`（如 `G_00001`）。
   - `uid`/`group_id` 贯穿全链路：原图 → AI 图 → 去背图 → 贴图成品 → BW 合成图 → 上款图。
-  - 新增 `wb_meta.py` 共享模块，提供 sidecar（`.meta.json`）和 `uid_map.json` 读写 API。
+  - 新增 `wb_meta.py` 共享模块，提供 sidecar 和 `uid_map.json` 读写 API。
+  - **以 MD5 为主键**：`uid_map.json` 新增 `md5_index: {md5 → uid}`，sidecar 按 UID 命名。
+    - 图片改名、移动、复制后，只要内容不变，仍可通过 MD5 找到元数据。
+    - `wb_meta.reconcile_dx(dx_dir)` 可扫描实际文件，用 MD5 修正 uid_map 中的路径。
   - 元数据统一放在 `D:\Semems WB\05_META\DXxxxx\`，与图片分离：
     - `05_META/DXxxxx/uid_map.json`
-    - `05_META/DXxxxx/01_AI/xxx.png.meta.json`
-    - `05_META/DXxxxx/02_REM_BG/xxx_cut.png.meta.json`
-    - `05_META/DXxxxx/03_UPLOAD/xxx_白T.jpg.meta.json`
+    - `05_META/DXxxxx/sidecars/UID_xxx.meta.json`
   - `01_AI` / `02_REM_BG` / `03_UPLOAD` 只放图片，不放文档。
-  - 即使文件重名、改名、移动，也能通过 `uid_map.json` 正确回溯同一组图片关系。
 
 - **Bridge 生图阶段写入元数据**
   - `lovart_bridge.py` 生图前写入 `.generation_uid_manifest.json`，传给 Lovart 管线。

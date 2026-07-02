@@ -201,6 +201,13 @@ def scan_projects():
             except Exception as e:
                 print(f"  [wb_meta] 迁移 {dx} 失败: {e}", flush=True)
 
+        # MD5 主键对账：图片改名/移动后，用 MD5 修正 uid_map 里的 file 路径
+        if wb_meta is not None:
+            try:
+                wb_meta.reconcile_dx(d)
+            except Exception as e:
+                print(f"  [wb_meta] 对账 {dx} 失败: {e}", flush=True)
+
         # 收集所有出现过的 stem（AI生成图 stem 与 REM_BG stem 去掉 _cut 后）
         ai_files = []
         if ai_dir.is_dir():

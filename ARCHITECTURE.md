@@ -54,11 +54,12 @@
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     UID / group_id 元数据层                          │
 │  D:\Semems WB\05_META\DXxxxx\uid_map.json                            │
-│    ├── groups:   { group_id → [uid, ...] }                           │
-│    └── images:   { uid → { stage, role, file, parent_uid } }         │
+│    ├── groups:    { group_id → [uid, ...] }                          │
+│    ├── images:    { uid → { stage, role, file, md5, parent_uid } }   │
+│    └── md5_index: { md5 → uid }                                      │
 │                                                                      │
-│  D:\Semems WB\05_META\DXxxxx\01_AI\DXxxxx_B.png.meta.json            │
-│    └── { uid, group_id, stage, role, parent_uid, source_file }       │
+│  D:\Semems WB\05_META\DXxxxx\sidecars\UID_xxx.meta.json              │
+│    └── { uid, group_id, stage, role, md5, parent_uid, source_file }  │
 │                                                                      │
 │  01_AI / 02_REM_BG / 03_UPLOAD 只放图片，不放元数据文档              │
 │                                                                      │
@@ -148,17 +149,22 @@ Hook(实时) → Bridge写入 → Scanner(推断) → Reconciler(修复)
 
 **数据文件**（统一放在 `D:\Semems WB\05_META\`，与图片分离）:
 - `05_META/DXxxxx/uid_map.json`：该 DX 下所有图片的 UID 关系总表。
-- `05_META/DXxxxx/01_AI/xxx.png.meta.json`：AI 图 sidecar。
-- `05_META/DXxxxx/02_REM_BG/xxx_cut.png.meta.json`：去背图 sidecar。
-- `05_META/DXxxxx/03_UPLOAD/xxx_白T.jpg.meta.json`：贴图成品 sidecar。
+  - `md5_index: {md5 → uid}`：以内容 MD5 为主键，图片改名/移动/复制后仍能找到。
+  - `images: {uid → entry}`：每个条目包含 `md5`、`file`、`stage`、`role`、`group_id`。
+- `05_META/DXxxxx/sidecars/UID_xxx.meta.json`：按 UID 命名的 sidecar，不依赖原文件名。
 
-**原则**: `01_AI` / `02_REM_BG` / `03_UPLOAD` 只放图片；所有元数据文档专门放 `05_META`，以后溯源去 `05_META` 找即可。
+**原则**:
+- `01_AI` / `02_REM_BG` / `03_UPLOAD` 只放图片，不放元数据文档。
+- 所有元数据文档专门放 `05_META`，以后溯源去 `05_META` 找即可。
+- **MD5 为主键**：即使图片被改名、移动、复制，只要内容不变，就能通过 `md5_index` 找到同一组关系。
 
 **共享模块**: `wb_meta.py` 位于 Bridge `lib/` 目录，并同步部署到 WB去背/PS/wb上款各项目根目录，统一 sidecar/uid_map 操作。
 
 **迁移脚本**: `tools/migrate_uid_map.py` 可一键为所有旧 DX 项目重建元数据到 `05_META`。
 
-**迁移**: 旧项目无 sidecar 时，自动调用 `wb_meta.migrate_dx(dx_dir)` 基于 `source_map.json` + 文件名推断补录到 `05_META`。
+**迁移/对账**:
+- 旧项目无 sidecar 时，自动调用 `wb_meta.migrate_dx(dx_dir)` 基于 `source_map.json` + 文件名推断补录到 `05_META`。
+- 图片改名/移动后，`wb_meta.reconcile_dx(dx_dir)` 会扫描实际文件，用 MD5 修正 uid_map 里的路径。
 
 ### 关键经验总结
 
