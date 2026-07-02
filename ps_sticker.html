@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PS 贴图 控制台</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#0f1117;color:#e1e4e8;padding:18px}
+  .container{max-width:1600px;margin:0 auto}
+  .header{display:flex;align-items:center;justify-content:space-between;padding:14px 22px;background:#161b22;border:1px solid #30363d;border-radius:8px;margin-bottom:16px}
+  .header h1{font-size:20px;font-weight:600;display:flex;align-items:center;gap:10px}
+  .header-right{display:flex;align-items:center;gap:14px}
+  .btn{display:inline-flex;align-items:center;gap:5px;padding:7px 16px;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;border:1px solid;transition:.1s;background:#21262d;color:#c9d1d9;border-color:#30363d;white-space:nowrap}
+  .btn:hover{background:#30363d}
+  .btn:active{transform:scale(.97)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .btn-primary{background:#238636;color:#fff;border-color:#2ea043}
+  .btn-primary:hover:not(:disabled){background:#2ea043}
+  .btn-sticker{background:#7b1fa2;color:#fff;border-color:#9c27b0}
+  .btn-sticker:hover:not(:disabled){background:#9c27b0}
+  .btn-batch{background:#e65100;color:#fff;border-color:#ff6d00}
+  .btn-batch:hover:not(:disabled){background:#ff6d00}
+  .section{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px 20px;margin-bottom:16px}
+  .section-title{font-size:15px;font-weight:600;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
+  .toolbar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+  .card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px}
+  .card{background:#0d1117;border:1px solid #30363d;border-radius:8px;overflow:hidden}
+  .card-head{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#161b22;border-bottom:1px solid #21262d}
+  .card-head .cb{width:16px;height:16px;accent-color:#238636;cursor:pointer}
+  .card-head .dx{font-weight:600;font-size:14px;color:#58a6ff}
+  .card-body{padding:10px}
+  .badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px}
+  .badge-done{background:#0d4420;color:#7ee787}
+  .badge-missing{background:#4d1a1a;color:#f87171}
+  .badge-pending{background:#442d0a;color:#f7c843}
+  .status-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;font-size:13px}
+  .status-label{color:#8b949e;min-width:60px}
+  .card-actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .card-actions .btn{font-size:11px;padding:4px 10px}
+  .file-list{font-size:11px;color:#8b949e;margin-top:6px;max-height:80px;overflow-y:auto}
+  .file-list .f{color:#c9d1d9;cursor:pointer;padding:0 4px}
+  .file-list .f:hover{color:#58a6ff;background:#30363d;border-radius:3px}
+  .log-box{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 12px;max-height:200px;overflow-y:auto;font-family:"Cascadia Code",monospace;font-size:12px;line-height:1.6}
+  .log-box .entry{color:#8b949e}
+  .log-box .entry.ok{color:#7ee787}
+  .log-box .entry.error{color:#f87171}
+  .log-box .entry.warn{color:#f7c843}
+  .empty{text-align:center;padding:40px;color:#8b949e}
+  ::-webkit-scrollbar{width:5px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px}
+  @media(max-width:768px){.card-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>📎 PS 贴图 控制台</h1>
+    <div class="header-right">
+      <button class="btn" onclick="location.reload()">🔄 刷新</button>
+      <a href="/" style="font-size:13px;color:#58a6ff">← Lovart-WB 控制台</a>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">
+      <span>📁 项目列表</span>
+      <span class="count" id="totalCount" style="font-size:12px;color:#8b949e;font-weight:400">加载中…</span>
+    </div>
+    <div class="toolbar">
+      <button class="btn" onclick="toggleAll()" id="selectAllBtn">☑ 全选</button>
+      <span style="color:#8b949e;font-size:13px" id="selectedCount">已选 0 款</span>
+      <span style="flex:1"></span>
+      <button class="btn btn-sticker" onclick="batchSticker()" id="stickerBtn" disabled>📎 PS贴图 (0)</button>
+      <button class="btn btn-batch" onclick="batchBatch()" id="batchBtn" disabled>🔄 BW合成 (0)</button>
+    </div>
+    <div class="card-grid" id="cardGrid"></div>
+    <div id="empty" class="empty" style="display:none"><div style="font-size:40px;margin-bottom:10px">📭</div><p>无项目数据</p></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title"><span>📊 日志</span></div>
+    <div class="log-box" id="logBox"></div>
+  </div>
+
+</div>
+
+<script>
+const STATE = {projects:[], selected:new Set()};
+
+async function loadProjects() {
+  try {
+    const res = await fetch('/api/projects');
+    const data = await res.json();
+    STATE.projects = data.projects || [];
+    document.getElementById('totalCount').textContent = STATE.projects.length + ' 个';
+    renderCards();
+    updateCounts();
+  } catch(e) {
+    document.getElementById('cardGrid').innerHTML = '<div class="empty">⚠️ 无法连接</div>';
+  }
+}
+
+function renderCards() {
+  const grid = document.getElementById('cardGrid');
+  const empty = document.getElementById('empty');
+  if (!STATE.projects.length) { grid.innerHTML = ''; empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+
+  grid.innerHTML = STATE.projects.map(function(p){
+    const checked = STATE.selected.has(p.dx_id) ? 'checked' : '';
+    const uploadFiles = (p.up_files||[]).slice(0,6);
+    const uploadList = uploadFiles.map(function(f){
+      return '<span class="f" onclick="openFolder(\''+p.dx_id+'/03_UPLOAD\')">'+esc(f)+'</span>';
+    }).join(' ') + ((p.up_files||[]).length>6 ? ' <span style="color:#8b949e">…+'+(p.up_files.length-6)+'</span>' : '');
+
+    return '<div class="card">' +
+      '<div class="card-head">' +
+        '<input type="checkbox" class="cb" '+checked+' onchange="toggleDx(\''+p.dx_id+'\')">' +
+        '<span class="dx">'+esc(p.dx_id)+'</span>' +
+        '<span class="badge '+(p.has_upload?'badge-done':'badge-missing')+'" style="margin-left:auto">'+(p.has_upload?'✅ 已贴图':'⏳ 未贴图')+'</span>' +
+      '</div>' +
+      '<div class="card-body">' +
+        '<div class="status-row"><span class="status-label">🎨 AI</span><span>'+(p.ai_gen||[]).length+' 张</span></div>' +
+        '<div class="status-row"><span class="status-label">✂️ 去背</span><span class="badge '+(p.has_rembg?'badge-done':'badge-missing')+'">'+(p.has_rembg?'✅':'❌')+'</span></div>' +
+        '<div class="status-row"><span class="status-label">📎 贴图</span><span class="badge '+(p.has_upload?'badge-done':'badge-pending')+'">'+(p.has_upload?'✅ '+p.up_files.length+' 张':'⏳ 未做')+'</span></div>' +
+        (uploadList ? '<div class="file-list">'+uploadList+'</div>' : '') +
+        '<div class="card-actions">' +
+          '<button class="btn btn-sticker" onclick="runSticker(\''+p.dx_id+'\',this)">📎 贴图</button>' +
+          '<button class="btn btn-batch" onclick="runBatch(\''+p.dx_id+'\',this)" '+(p.has_upload?'':'disabled')+'>🔄 BW合成</button>' +
+          '<button class="btn" onclick="openFolder(\''+p.dx_id+'/03_UPLOAD'\')">📂 打开</button>' +
+        '</div>' +
+      '</div></div>';
+  }).join('');
+}
+
+function toggleDx(dx) {
+  if (STATE.selected.has(dx)) STATE.selected.delete(dx); else STATE.selected.add(dx);
+  renderCards(); updateCounts();
+}
+function toggleAll() {
+  const allSelected = STATE.projects.every(function(p){return STATE.selected.has(p.dx_id);});
+  if (allSelected) { STATE.selected.clear(); }
+  else { STATE.projects.forEach(function(p){STATE.selected.add(p.dx_id);}); }
+  renderCards(); updateCounts();
+}
+function updateCounts() {
+  document.getElementById('selectedCount').textContent = '已选 '+STATE.selected.size+' 款';
+  document.getElementById('stickerBtn').disabled = STATE.selected.size === 0;
+  document.getElementById('batchBtn').disabled = STATE.selected.size === 0;
+  document.getElementById('stickerBtn').textContent = '📎 PS贴图 ('+STATE.selected.size+')';
+  document.getElementById('batchBtn').textContent = '🔄 BW合成 ('+STATE.selected.size+')';
+  document.getElementById('selectAllBtn').textContent =
+    STATE.selected.size === STATE.projects.length ? '☐ 取消全选' : '☑ 全选';
+}
+
+async function runSticker(dx, btn) {
+  if (!confirm('启动 PS贴图 '+dx+' ？PS将接管屏幕。')) return;
+  if (btn) { btn.disabled=true; btn.textContent='⏳…'; }
+  addLog('warn','📎 PS贴图: '+dx);
+  try {
+    const res = await fetch('/api/ps-sticker', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx_list:[dx]})});
+    const d = await res.json();
+    addLog(d.ok?'ok':'error', d.msg||d.error||'完成');
+  } catch(e) { addLog('error','错误: '+e.message); }
+  if (btn) { btn.textContent='📎 贴图'; btn.disabled=false; }
+}
+async function runBatch(dx, btn) {
+  if (!confirm('启动 BW合成 '+dx+' ？PS将接管屏幕。')) return;
+  if (btn) { btn.disabled=true; btn.textContent='⏳…'; }
+  addLog('warn','🔄 BW合成: '+dx);
+  try {
+    const res = await fetch('/api/ps-batch', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx_list:[dx]})});
+    const d = await res.json();
+    addLog(d.ok?'ok':'error', d.msg||d.error||'完成');
+  } catch(e) { addLog('error','错误: '+e.message); }
+  if (btn) { btn.textContent='🔄 BW合成'; btn.disabled=false; }
+}
+
+async function batchSticker() {
+  const list = [...STATE.selected];
+  if (!list.length) return;
+  if (!confirm('为 '+list.length+' 个款执行 PS贴图？\n'+list.slice(0,8).join(', ')+(list.length>8?'…':''))) return;
+  for (let i=0;i<list.length;i++) {
+    addLog('warn','📎 ('+(i+1)+'/'+list.length+') '+list[i]);
+    try {
+      const res = await fetch('/api/ps-sticker', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx_list:[list[i]]})});
+      const d = await res.json();
+      addLog(d.ok?'ok':'error', d.msg||d.error||'');
+    } catch(e) { addLog('error','错误: '+e.message); }
+  }
+  addLog('ok','✅ PS贴图全部启动');
+  setTimeout(function(){location.reload();},3000);
+}
+async function batchBatch() {
+  const list = [...STATE.selected];
+  if (!list.length) return;
+  if (!confirm('为 '+list.length+' 个款执行 BW合成？\n'+list.slice(0,8).join(', ')+(list.length>8?'…':''))) return;
+  for (let i=0;i<list.length;i++) {
+    addLog('warn','🔄 ('+(i+1)+'/'+list.length+') '+list[i]);
+    try {
+      const res = await fetch('/api/ps-batch', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx_list:[list[i]]})});
+      const d = await res.json();
+      addLog(d.ok?'ok':'error', d.msg||d.error||'');
+    } catch(e) { addLog('error','错误: '+e.message); }
+  }
+  addLog('ok','✅ BW合成全部启动');
+  setTimeout(function(){location.reload();},3000);
+}
+
+function openFolder(path) { fetch('/api/open/'+path).catch(function(){}); }
+function addLog(type, msg) {
+  const box = document.getElementById('logBox');
+  const cls = {error:'error',warn:'warn'}[type]||'ok';
+  box.innerHTML += '<div class="entry '+cls+'">'+esc(msg)+'</div>';
+  box.scrollTop = box.scrollHeight;
+}
+function esc(s) { var d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+document.addEventListener('DOMContentLoaded', loadProjects);
+</script>
+</body>
+</html>

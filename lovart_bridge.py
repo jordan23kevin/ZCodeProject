@@ -963,10 +963,10 @@ def api_open_folder(folder):
     if not target.exists():
         abort(404)
     try:
-        subprocess.Popen(["explorer.exe", str(target)])
+        os.startfile(str(target))
         return jsonify({"ok": True, "path": str(target)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        return jsonify({"error": "打开失败"}), 500
 
 
 @app.route('/api/delete', methods=['POST'])
@@ -1075,7 +1075,7 @@ def api_open_recycle():
     """打开本地回收站目录"""
     try:
         TRASH_DIR.mkdir(parents=True, exist_ok=True)
-        subprocess.Popen(["explorer.exe", str(TRASH_DIR)])
+        subprocess.Popen(f'start "" "{TRASH_DIR}"', shell=True)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1299,6 +1299,59 @@ def api_launch_check_rem():
         return jsonify({"ok": True, "msg": "已启动 AI vs 去背 对比预览 (端口 8766)"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route('/api/ps-sticker', methods=['POST'])
+def api_ps_sticker():
+    """启动 PS贴图：将已去背的图贴到T恤 → 03_UPLOAD"""
+    ps_script = Path(r"E:\Claude code\ps\ps_sticker_one.py")
+    if not ps_script.exists():
+        return jsonify({"ok": False, "error": "PS贴图脚本不存在"}), 404
+    data = request.get_json(silent=True) or {}
+    dx_list = data.get("dx_list", [])
+    if not dx_list:
+        return jsonify({"ok": False, "error": "请指定DX号"}), 400
+    count = 0
+    for dx in dx_list:
+        dx_folder = PROJECTS_DIR / dx
+        if dx_folder.exists() and (dx_folder / "02_REM_BG").exists():
+            subprocess.Popen(
+                [sys.executable, str(ps_script), dx],
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
+            count += 1
+    return jsonify({"ok": True, "msg": f"已启动 PS贴图: {count} 款"})
+
+
+@app.route('/api/ps-batch', methods=['POST'])
+def api_ps_batch():
+    """启动 PS BW合成（正背合成）"""
+    ps_script = Path(r"E:\Claude code\ps\ps_batch_one.py")
+    if not ps_script.exists():
+        return jsonify({"ok": False, "error": "BW合成脚本不存在"}), 404
+    data = request.get_json(silent=True) or {}
+    dx_list = data.get("dx_list", [])
+    if not dx_list:
+        return jsonify({"ok": False, "error": "请指定DX号"}), 400
+    count = 0
+    for dx in dx_list:
+        dx_folder = PROJECTS_DIR / dx
+        if dx_folder.exists() and (dx_folder / "03_UPLOAD").exists():
+            subprocess.Popen(
+                [sys.executable, str(ps_script), dx],
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
+            count += 1
+    return jsonify({"ok": True, "msg": f"已启动 BW合成: {count} 款"})
+
+
+@app.route('/ps-sticker')
+def ps_sticker_page():
+    """提供 PS贴图 控制面板"""
+    html_file = Path(__file__).parent / "ps_sticker.html"
+    if html_file.exists():
+        return send_file(str(html_file))
+    return "<h1>ps_sticker.html not found</h1>", 404
 
 
 # ============================================================================
