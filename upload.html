@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WB 上款 — 03_UPLOAD 批量上传</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
+  h1{text-align:center;font-size:28px;margin:0 0 14px}
+  h1 .v{font-size:14px;color:#666;font-weight:normal}
+  .toolbar{text-align:center;margin-bottom:16px;position:sticky;top:0;background:#1a1a1a;padding:10px 0;z-index:10}
+  .toolbar input,.toolbar select{padding:10px 14px;font-size:16px;border-radius:4px;border:1px solid #555;background:#2a2a2a;color:#eee;margin-left:8px}
+  .toolbar button{padding:10px 18px;font-size:16px;cursor:pointer;background:#2196F3;color:#fff;border:none;border-radius:4px;margin-left:8px;font-weight:600}
+  .toolbar button:hover{background:#1976D2}
+  .toolbar button:disabled{opacity:.4;cursor:not-allowed}
+  .toolbar .cnt{color:#888;margin-left:12px;font-size:14px}
+  .toolbar label{color:#eee;cursor:pointer;user-select:none;margin-left:8px}
+  .btn-upload{background:#4CAF50 !important}
+  .btn-upload:hover:not(:disabled){background:#388e3c !important}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(520px,1fr));gap:18px;max-width:1920px;margin:0 auto}
+  .card{background:#1e1e1e;border-radius:10px;border:1px solid #333;overflow:hidden}
+  .card-head{display:flex;align-items:center;gap:10px;padding:12px 16px;background:#252525;border-bottom:1px solid #333}
+  .dx-check{width:18px;height:18px;accent-color:#4CAF50;cursor:pointer}
+  .dxname{font-weight:700;font-size:18px;color:#4CAF50;letter-spacing:.3px;cursor:pointer}
+  .dxname:hover{text-decoration:underline}
+  .pcount{color:#666;font-size:13px;margin-left:auto}
+  .up-gallery{padding:10px 12px 6px;display:flex;flex-direction:column;gap:12px}
+  .up-group{display:flex;flex-direction:column;gap:5px}
+  .up-group-header{display:flex;align-items:center;gap:8px}
+  .up-group-imgs{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .up-item{display:flex;flex-direction:column;align-items:center}
+  .up-thumb{width:100%;height:220px;border-radius:6px;overflow:hidden;background:#fff;cursor:pointer;position:relative;border:1px solid #333}
+  .up-thumb img{width:100%;height:100%;object-fit:contain;transition:transform .15s}
+  .up-thumb:hover img{transform:scale(1.06)}
+  .up-label{color:#aaa;font-size:13px;margin-top:6px;text-align:center;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .badge{display:inline-block;font-size:12px;font-weight:bold;padding:2px 7px;border-radius:3px;margin-right:4px}
+  .badge-bw{background:#9c27b0;color:#fff}
+  .badge-b{background:#555;color:#fff}
+  .badge-w{background:#e0e0e0;color:#333}
+  .badge-other{background:#424242;color:#fff}
+  .empty{text-align:center;color:#888;margin-top:40px;font-size:16px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:14px 26px;border-radius:8px;font-size:16px;display:none;z-index:999;max-width:80%}
+  .preview{position:fixed;z-index:9999;pointer-events:none;display:none;max-width:900px;max-height:90vh;border:2px solid #555;border-radius:6px;box-shadow:0 4px 25px rgba(0,0,0,.85);background:#00b300}
+  .preview img{display:block;max-width:900px;max-height:90vh;object-fit:contain}
+</style>
+</head>
+<body>
+<h1>WB 上款 <span class="v">v2.1.4</span></h1>
+<div class="toolbar">
+  <select id="dateSel" onchange="switchDate(this.value)">
+    <option value="">全部日期</option>
+  </select>
+  <input id="search" placeholder="搜索 DX号…" oninput="filterCards()">
+  <button onclick="filterCards()">🔍 搜索</button>
+  <button onclick="refreshAll()">🔄 刷新</button>
+  <label>
+    <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)" style="width:18px;height:18px;accent-color:#4CAF50;vertical-align:middle;"> 全选
+  </label>
+  <button class="btn-upload" onclick="batchUpload()" id="uploadBtn" disabled>📤 批量上传 (0)</button>
+  <span class="cnt" id="cnt">0 款</span>
+</div>
+<div class="grid" id="grid"><p class="empty">加载中…</p></div>
+<div id="toast" class="toast"></div>
+<div id="preview" class="preview"><img id="previewImg" src=""></div>
+
+<script>
+function showToast(m){
+  var t=document.getElementById('toast');
+  t.textContent=m;t.style.display='block';
+  setTimeout(function(){t.style.display='none';},3500);
+}
+
+var allProjects=[];
+
+function loadProjects(){
+  fetch('/api/upload/projects').then(function(r){return r.json();}).then(function(d){
+    allProjects=d.projects||[];
+    fillDateSel();
+    renderCards();
+  }).catch(function(e){
+    document.getElementById('grid').innerHTML='<p class="empty">加载失败: '+e+'</p>';
+  });
+}
+
+function fillDateSel(){
+  var sel=document.getElementById('dateSel');
+  var dates={};
+  allProjects.forEach(function(p){if(p.date)dates[p.date]=1;});
+  var opts=['<option value="">全部日期</option>'];
+  Object.keys(dates).sort().reverse().forEach(function(dt){
+    opts.push('<option value="'+dt+'">20'+dt.substr(0,2)+'-'+dt.substr(2,2)+'-'+dt.substr(4,2)+'</option>');
+  });
+  sel.innerHTML=opts.join('');
+}
+
+function upGroup(name,dx){
+  var stem=name.replace(/\.[^.]+$/,'');
+  if(stem.indexOf('BW')>=0)return 'BW';
+  if(stem.indexOf(dx+'_B_')===0||stem.endsWith('_B'))return 'B';
+  if(stem.indexOf(dx+'_W_')===0||stem.endsWith('_W'))return 'W';
+  return '其他';
+}
+function upLabel(name,dx){
+  var stem=name.replace(/\.[^.]+$/,'');
+  var label=stem.indexOf(dx+'_')===0?stem.substr(dx.length+1):stem;
+  label=label.replace(/^(B|W)_/,'').replace(/_?(BW)$/,'').replace(/_/g,' ').trim();
+  return label||'成品';
+}
+
+function renderCards(){
+  var q=document.getElementById('search').value.toUpperCase().trim();
+  var date=document.getElementById('dateSel').value;
+  var terms=q?q.split(',').map(function(t){return t.trim();}).filter(function(t){return t;}):[];
+  var cards=[];
+  allProjects.forEach(function(p){
+    if(date && p.date!==date)return;
+    var show=false;
+    if(!terms.length)show=true;
+    else for(var i=0;i<terms.length;i++){if(p.dx.indexOf(terms[i])>=0){show=true;break;}}
+    if(!show)return;
+
+    var groups={};
+    (p.files||[]).forEach(function(f){
+      var g=upGroup(f.name,p.dx);
+      if(!groups[g])groups[g]=[];
+      groups[g].push(f);
+    });
+    var order=['BW','B','W','其他'];
+    var rows=[];
+    order.forEach(function(g){
+      if(!groups[g])return;
+      var thumbs=groups[g].map(function(f){
+        var ts=f.mtime;
+        return '<div class="up-item">'
+          +'<div class="up-thumb cell" data-src="/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'">'
+          +'<img src="/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts+'">'
+          +'</div>'
+          +'<div class="up-label" title="'+f.name+'">'+upLabel(f.name,p.dx)+'</div>'
+          +'</div>';
+      }).join('');
+      var cls={'BW':'badge-bw','B':'badge-b','W':'badge-w'}[g]||'badge-other';
+      rows.push('<div class="up-group"><div class="up-group-header"><span class="badge '+cls+'">'+g+'</span></div><div class="up-group-imgs">'+thumbs+'</div></div>');
+    });
+
+    cards.push('<div class="card" data-dx="'+p.dx+'">'
+      +'<div class="card-head">'
+      +'<input type="checkbox" class="dx-check" data-dx="'+p.dx+'" onchange="updateUploadBtn()">'
+      +'<span class="dxname" onclick="openDxFolder(\''+p.dx+'\')">'+p.dx+'</span>'
+      +'<span class="pcount">'+(p.files?p.files.length:0)+' 张</span>'
+      +'</div>'
+      +'<div class="up-gallery">'+(rows.length?rows.join(''):'<p class="empty">03_UPLOAD 为空</p>')+'</div>'
+      +'</div>');
+  });
+  document.getElementById('grid').innerHTML=cards.join('')||'<p class="empty">暂无数据</p>';
+  document.getElementById('cnt').textContent=cards.length+' 款';
+  bindPreview();
+  updateUploadBtn();
+}
+
+function filterCards(){renderCards();}
+function switchDate(d){renderCards();}
+
+function toggleSelectAll(checked){
+  document.querySelectorAll('.card').forEach(function(card){
+    if(card.style.display!=='none'){
+      var cb=card.querySelector('.dx-check');
+      if(cb)cb.checked=checked;
+    }
+  });
+  updateUploadBtn();
+}
+
+function updateUploadBtn(){
+  var n=0;
+  document.querySelectorAll('.dx-check:checked').forEach(function(){n++;});
+  var btn=document.getElementById('uploadBtn');
+  btn.disabled=n===0;
+  btn.textContent='📤 批量上传 ('+n+')';
+}
+
+function openDxFolder(dx){
+  fetch('/api/open?dx='+dx+'&which=up').then(function(){});
+}
+
+function refreshAll(){
+  showToast('🔄 刷新中…');
+  loadProjects();
+}
+
+function batchUpload(){
+  var checked=document.querySelectorAll('.dx-check:checked');
+  if(!checked.length){showToast('请先勾选需要上传的款');return;}
+  var list=[];
+  checked.forEach(function(cb){list.push(cb.getAttribute('data-dx'));});
+  if(!confirm('批量上传 '+list.length+' 个款？\n将调用外部上款接口。'))return;
+  var btn=document.getElementById('uploadBtn');
+  btn.disabled=true;btn.textContent='⏳ 上传中…';
+  showToast('⏳ 启动批量上传 '+list.length+' 款…');
+  fetch('/api/batch-upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx_list:list})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      showToast(d.ok?'✅ '+d.msg:'❌ '+d.msg);
+      btn.textContent='📤 批量上传 (0)';btn.disabled=false;
+      if(d.ok)setTimeout(function(){loadProjects();},2000);
+    }).catch(function(e){
+      showToast('❌ 请求失败: '+e);
+      btn.textContent='📤 批量上传 (0)';btn.disabled=false;
+    });
+}
+
+// 悬停放大
+var prevEl=document.getElementById('preview');
+var prevImg=document.getElementById('previewImg');
+function bindPreview(){
+  document.querySelectorAll('.up-thumb').forEach(function(cell){
+    cell.addEventListener('mouseenter',function(){
+      var src=this.getAttribute('data-src');
+      prevImg.src=src;
+      prevEl.style.display='block';
+      var r=this.getBoundingClientRect();
+      var previewW=900, previewH=window.innerHeight*0.9;
+      var left=r.right+8, top=r.top;
+      if(left+previewW>window.innerWidth-8) left=r.left-previewW-8;
+      if(left<8) left=8;
+      if(top+previewH>window.innerHeight-8) top=window.innerHeight-previewH-8;
+      if(top<8) top=8;
+      prevEl.style.left=left+'px';prevEl.style.top=top+'px';
+    });
+    cell.addEventListener('mouseleave',function(){prevEl.style.display='none';});
+  });
+}
+
+loadProjects();
+</script>
+</body>
+</html>

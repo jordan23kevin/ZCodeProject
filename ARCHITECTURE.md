@@ -1,4 +1,4 @@
-# Lovart-WB 系统架构文档 v2.1.3
+# Lovart-WB 系统架构文档 v2.1.4
 
 > 工程类型: 图像生产血缘数据库 + 控制面板 + 贴图成品流水线
 > 遵循: B+ 四层血缘闭环架构
@@ -19,7 +19,7 @@
             ▼                             ▼
 ┌──────────────────────┐     ┌────────────────────────────────────────┐
 │   lovart_bridge.py    │     │   check_rem.py v2.1.3                 │
-│   v2.1.2 (Flask Server)│    │   (预览 + 去背 + 贴图触发 + 批量反相) │
+│   v2.1.4 (Flask Server)│    │   (预览 + 去背 + 贴图触发 + 批量反相) │
 │                       │     │   check_rem.js v2.1.3 (独立JS)        │
 │   API端点:            │     │                                        │
 │   /api/inbox          │     │   API端点:                             │
@@ -27,7 +27,10 @@
 │   /api/provenance     │     │   /rembg, /batch-rembg                │
 │   /api/lineage/*      │     │   /invert-rem, /upscale-rem           │
 │   /api/projects       │     │   /ps-sticker, /ps-batch              │
-│   ...                 │     │   /refresh-thumb, /check_rem.js       │
+│   /upload             │     │   /refresh-thumb, /check_rem.js       │
+│   /api/upload/*       │     │                                        │
+│   /api/batch-upload   │     │                                        │
+│   ...                 │     │                                        │
 └────────┬─────────────┘     └──────────┬─────────────────────────────┘
          │                              │
          │    POST /api/lineage/register│   子进程调用 (最小化窗口)
@@ -84,6 +87,12 @@ check_rem.py 的 HTML 模板使用 Python f-string 生成，JS 代码中的 `{}`
 
 `02_REM_BG` 中若存在黑版专用文件，黑T贴图必须用它；没有才 fallback 到通用 `_cut.png`。
 实现位置：`wb_sticker_ps.py::black_counterpart()` + `process_black.py`。
+
+### 上款页面（v2.1.4）
+
+原 Bridge 内的 PS贴图控制台使用率低，且贴图功能已在 `check_rem.py` 中通过 `/ps-sticker` 提供。
+**解决方案**: 将 `/ps-sticker` 控制台替换为 `/upload` 上款页面，直接展示 `03_UPLOAD` 成品，
+提供勾选 + 批量上传入口，后续可对接 `LOVART_UPLOAD_SCRIPT` 环境变量指向的外部上款脚本。
 
 ### 后台静默运行
 

@@ -1,12 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Lovart-WB Bridge Server v2.1.2
+Lovart-WB Bridge Server v2.1.4
 ==============================
 Flask HTTP 桥接服务 — 连接 HTML 控制面板与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.1.4：
+  - 移除 PS贴图控制台，替换为「上款」页面 (/upload)
+  - 上款页面展示每款 03_UPLOAD 成品缩略图，按 BW/B/W 分组
+  - 支持勾选款号，批量上传按钮，对接 /api/batch-upload
+  - 新增 /api/upload/projects、/api/upload/thumb、/api/upload/original 端点
+  - 图片显示逻辑与 AI 去背 贴图 页一致：缩略图 + 鼠标悬停放大
 
 变更 v2.1.2：
   - Bridge 内一键启动 check_rem.py / PS贴图 / BW合成 时，子进程窗口最小化，不抢焦点
@@ -604,6 +611,72 @@ def rename_to_bw(filename: str) -> tuple:
         return False, "", f"{new_name} 已存在"
     src.rename(dst)
     return True, new_name, f"{safe} → {new_name}"
+
+
+# ---------------------------------------------------------------------------
+# 上款（Upload）：扫描 03_UPLOAD 并提供缩略图
+# ---------------------------------------------------------------------------
+
+UPLOAD_THUMB_DIR = BASE_DIR / "_upload_thumbs"
+
+def _scan_upload_projects():
+    """扫描所有 DX 的 03_UPLOAD，返回 [{dx, date, files:[{name,mtime}]}]"""
+    projects = []
+    if not PROJECTS_DIR.exists():
+        return projects
+    for d in sorted(PROJECTS_DIR.iterdir()):
+        if not d.is_dir() or not re.match(r"^DX\d+$", d.name):
+            continue
+        up_dir = d / "03_UPLOAD"
+        if not up_dir.is_dir():
+            continue
+        files = []
+        for f in sorted(up_dir.iterdir()):
+            if not f.is_file():
+                continue
+            ext = f.suffix.lower()
+            if ext not in ('.png', '.jpg', '.jpeg', '.webp'):
+                continue
+            files.append({"name": f.name, "mtime": int(f.stat().st_mtime)})
+        if not files:
+            continue
+        # date = 该 DX 03_UPLOAD 最新 mtime 的 YYMMDD
+        latest_mtime = max((f.stat().st_mtime for f in up_dir.iterdir() if f.is_file()), default=0)
+        dx_date = time.strftime("%y%m%d", time.localtime(latest_mtime)) if latest_mtime else ""
+        projects.append({"dx": d.name, "date": dx_date, "files": files})
+    return projects
+
+
+def _get_upload_thumb(dx: str, filename: str):
+    """返回 03_UPLOAD 缩略图路径（不存在则生成 220px 高）"""
+    if "/" in filename or "\\" in filename:
+        return None
+    src = PROJECTS_DIR / dx / "03_UPLOAD" / filename
+    if not src.exists():
+        return None
+    UPLOAD_THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    safe_name = filename.replace("/", "_").replace("\\", "_")
+    thumb_file = UPLOAD_THUMB_DIR / f"{dx}__{safe_name}.jpg"
+    if thumb_file.exists():
+        return thumb_file
+    try:
+        from PIL import Image
+        img = Image.open(src)
+        if img.mode in ('RGBA', 'P'):
+            img = img.convert('RGBA')
+            bg = Image.new('RGBA', img.size, (255, 255, 255, 255))
+            img = Image.alpha_composite(bg, img).convert('RGB')
+        else:
+            img = img.convert('RGB')
+        w, h = img.size
+        target_h = 220
+        new_w = int(w * target_h / h)
+        img = img.resize((new_w, target_h), Image.LANCZOS)
+        img.save(str(thumb_file), "JPEG", quality=90)
+        return thumb_file
+    except Exception as e:
+        print(f"[UploadThumbError] {dx}/{filename}: {e}")
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -1343,55 +1416,92 @@ def api_launch_check_rem():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
-@app.route('/api/ps-sticker', methods=['POST'])
-def api_ps_sticker():
-    """启动 PS贴图：将已去背的图贴到T恤 → 03_UPLOAD"""
-    ps_script = Path(r"E:\Claude code\ps\ps_sticker_one.py")
-    if not ps_script.exists():
-        return jsonify({"ok": False, "error": "PS贴图脚本不存在"}), 404
-    data = request.get_json(silent=True) or {}
-    dx_list = data.get("dx_list", [])
-    if not dx_list:
-        return jsonify({"ok": False, "error": "请指定DX号"}), 400
-    count = 0
-    for dx in dx_list:
-        dx_folder = PROJECTS_DIR / dx
-        if dx_folder.exists() and (dx_folder / "02_REM_BG").exists():
-            run_minimized(
-                [sys.executable, str(ps_script), dx],
-            )
-            count += 1
-    return jsonify({"ok": True, "msg": f"已启动 PS贴图: {count} 款"})
-
-
-@app.route('/api/ps-batch', methods=['POST'])
-def api_ps_batch():
-    """启动 PS BW合成（正背合成）"""
-    ps_script = Path(r"E:\Claude code\ps\ps_batch_one.py")
-    if not ps_script.exists():
-        return jsonify({"ok": False, "error": "BW合成脚本不存在"}), 404
-    data = request.get_json(silent=True) or {}
-    dx_list = data.get("dx_list", [])
-    if not dx_list:
-        return jsonify({"ok": False, "error": "请指定DX号"}), 400
-    count = 0
-    for dx in dx_list:
-        dx_folder = PROJECTS_DIR / dx
-        if dx_folder.exists() and (dx_folder / "03_UPLOAD").exists():
-            run_minimized(
-                [sys.executable, str(ps_script), dx],
-            )
-            count += 1
-    return jsonify({"ok": True, "msg": f"已启动 BW合成: {count} 款"})
-
-
-@app.route('/ps-sticker')
-def ps_sticker_page():
-    """提供 PS贴图 控制面板"""
-    html_file = Path(__file__).parent / "ps_sticker.html"
+@app.route('/upload')
+def upload_page():
+    """上款页面：展示 03_UPLOAD 成品并批量上传"""
+    html_file = Path(__file__).parent / "upload.html"
     if html_file.exists():
         return send_file(str(html_file))
-    return "<h1>ps_sticker.html not found</h1>", 404
+    return "<h1>upload.html not found</h1>", 404
+
+
+@app.route('/api/upload/projects')
+def api_upload_projects():
+    """返回所有含 03_UPLOAD 成品的 DX 列表"""
+    return jsonify({"ok": True, "projects": _scan_upload_projects()})
+
+
+@app.route('/api/upload/thumb')
+def api_upload_thumb():
+    """返回 03_UPLOAD 缩略图"""
+    dx = request.args.get("dx", "")
+    filename = request.args.get("file", "")
+    if not re.match(r"^DX\d+$", dx) or not filename:
+        return "bad params", 400
+    thumb = _get_upload_thumb(dx, filename)
+    if not thumb:
+        return "no thumb", 404
+    return send_file(str(thumb), mimetype="image/jpeg")
+
+
+@app.route('/api/upload/original')
+def api_upload_original():
+    """返回 03_UPLOAD 原图（供悬停放大）"""
+    dx = request.args.get("dx", "")
+    filename = request.args.get("file", "")
+    if not re.match(r"^DX\d+$", dx) or not filename:
+        return "bad params", 400
+    src = PROJECTS_DIR / dx / "03_UPLOAD" / filename
+    if not src.exists():
+        return "not found", 404
+    ct = "image/png" if filename.lower().endswith(".png") else "image/jpeg"
+    return send_file(str(src), mimetype=ct)
+
+
+@app.route('/api/open')
+def api_open_dx():
+    """打开指定 DX 的子文件夹（ai/rem/up）"""
+    dx = request.args.get("dx", "")
+    which = request.args.get("which", "")
+    if not re.match(r"^DX\d+$", dx) or which not in ("ai", "rem", "up"):
+        return jsonify({"ok": False, "error": "参数非法"}), 400
+    sub = {"ai": "01_AI", "rem": "02_REM_BG", "up": "03_UPLOAD"}[which]
+    folder = PROJECTS_DIR / dx / sub
+    if folder.exists():
+        try:
+            os.startfile(str(folder))
+        except Exception:
+            subprocess.Popen(f'explorer.exe "{folder}"', shell=True)
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "文件夹不存在"}), 404
+
+
+@app.route('/api/batch-upload', methods=['POST'])
+def api_batch_upload():
+    """批量上款：调用外部上款脚本（可配置）。
+    默认返回提示，需在此处接入具体平台 API。
+    """
+    data = request.get_json(silent=True) or {}
+    dx_list = data.get("dx_list", [])
+    if not dx_list:
+        return jsonify({"ok": False, "error": "请指定DX号"}), 400
+
+    # TODO: 接入实际上款平台（店小秘/Temu/其他）
+    # 示例：可配置外部脚本路径，运行 python "E:/Claude code/WB Lovart/上款.py" <dx>
+    UPLOAD_SCRIPT = os.environ.get("LOVART_UPLOAD_SCRIPT", "")
+    if UPLOAD_SCRIPT and Path(UPLOAD_SCRIPT).exists():
+        count = 0
+        for dx in dx_list:
+            dx_folder = PROJECTS_DIR / dx
+            if dx_folder.exists() and (dx_folder / "03_UPLOAD").exists():
+                run_minimized([sys.executable, UPLOAD_SCRIPT, dx])
+                count += 1
+        return jsonify({"ok": True, "msg": f"已启动外部上款脚本: {count} 款"})
+
+    return jsonify({
+        "ok": True,
+        "msg": f"已接收 {len(dx_list)} 款的上款请求（未配置实际上款脚本，请设置环境变量 LOVART_UPLOAD_SCRIPT）"
+    })
 
 
 # ============================================================================
@@ -1643,7 +1753,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Lovart-WB Bridge Server v2.1.2        ║")
+    print("║   Lovart-WB Bridge Server v2.1.4        ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")

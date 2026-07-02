@@ -1,5 +1,35 @@
 # Lovart-WB 一体化控制系统 — 更新日志
 
+## v2.1.4 (2026-07-02) — 上款页面替换 PS贴图控制台
+
+### 📤 新增：WB 上款页面
+
+- **移除 PS贴图控制台**：原 `/ps-sticker` 页面及相关 API 已移除
+- **新增 `/upload` 上款页面**：
+  - 展示每款 `03_UPLOAD` 目录下的成品图片
+  - 按 **BW / B / W** 分组显示，与 AI 去背 贴图 页面风格一致
+  - 缩略图 220px 高度，等比缩放，白底合成
+  - **鼠标悬停放大**：最大 900px，智能避让屏幕边缘
+  - 每款卡片带勾选框，支持「全选」
+  - **批量上传按钮**：勾选款号后点击，调用 `/api/batch-upload`
+- **新增 API 端点**：
+  - `GET /api/upload/projects` — 返回含 03_UPLOAD 成品的 DX 列表
+  - `GET /api/upload/thumb?dx=DXxxx&file=...` — 返回缩略图
+  - `GET /api/upload/original?dx=DXxxx&file=...` — 返回原图（悬停放大用）
+  - `POST /api/batch-upload` — 接收 `{dx_list: [...]}`, 批量上款
+  - `GET /api/open?dx=DXxxx&which=up` — 打开指定 DX 的 03_UPLOAD 文件夹
+- **批量上传对接**：默认提示未配置脚本；可通过环境变量 `LOVART_UPLOAD_SCRIPT` 指定外部上款脚本路径
+
+### 🏗️ 项目文件更新
+
+```
+C:\Users\Administrator\ZCodeProject\
+├── upload.html             v2.1.4  上款页面（新增）
+└── ps_sticker.html         已移除
+```
+
+---
+
 ## v2.1.3 (2026-07-02) — 批量反相 + 自动贴图/BW合成
 
 ### 🌑 批量反相
@@ -154,12 +184,13 @@
 
 ```
 C:\Users\Administrator\ZCodeProject\
-├── lovart_bridge.py        v2.1.2  Flask HTTP Bridge
-├── lovart_control.html     v2.1.3  控制面板前端
-├── lovart_bridge.bat       v2.1.2  一键启动脚本
-├── CHANGELOG.md            v2.1.3  更新日志
-├── ARCHITECTURE.md         v2.1.3  系统架构文档
-├── SKILL.md                v2.1.3  技能定义
+├── lovart_bridge.py        v2.1.4  Flask HTTP Bridge
+├── lovart_control.html     v2.1.4  控制面板前端
+├── upload.html             v2.1.4  上款页面
+├── lovart_bridge.bat       v2.1.4  一键启动脚本
+├── CHANGELOG.md            v2.1.4  更新日志
+├── ARCHITECTURE.md         v2.1.4  系统架构文档
+├── SKILL.md                v2.1.4  技能定义
 └── .gitignore
 
 D:\Semems WB\04_OS\engine\
