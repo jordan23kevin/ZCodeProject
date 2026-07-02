@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.1.8</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.1.9</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -59,7 +59,7 @@
 </style>
 </head>
 <body>
-<h1>WB 上款 <span class="v">v2.1.8</span></h1>
+<h1>WB 上款 <span class="v">v2.1.9</span></h1>
 <div class="toolbar">
   <select id="dateSel" onchange="switchDate(this.value)">
     <option value="">全部日期</option>
@@ -69,6 +69,9 @@
   <button onclick="refreshAll()">🔄 刷新</button>
   <label>
     <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)" style="width:20px;height:20px;accent-color:#4CAF50;vertical-align:middle;"> 全选
+  </label>
+  <label>
+    <input type="checkbox" id="forceReupload" style="width:20px;height:20px;accent-color:#ff9800;vertical-align:middle;"> 强制重新上款
   </label>
   <button class="btn-upload" onclick="batchUpload()" id="uploadBtn" disabled>📤 批量上传 (0)</button>
   <span class="cnt" id="cnt">0 款</span>
@@ -335,14 +338,18 @@ function batchUpload(){
   if(!checked.length){showToast('请先勾选需要上传的款');return;}
   var list=[];
   checked.forEach(function(cb){list.push(cb.getAttribute('data-dx'));});
-  if(!confirm('批量上传 '+list.length+' 个款？\n将精确处理勾选的款号，不会继续后续款。'))return;
+  var force=document.getElementById('forceReupload').checked;
+  var confirmMsg='批量上传 '+list.length+' 个款？\n将精确处理勾选的款号，不会继续后续款。';
+  if(force) confirmMsg='【强制重新上款】\n将先从已上款记录中删除 '+list.length+' 个款，\n然后重新上款。是否继续？';
+  if(!confirm(confirmMsg))return;
   var btn=document.getElementById('uploadBtn');
   btn.disabled=true;btn.textContent='⏳ 上传中…';
   showToast('⏳ 启动批量上传 '+list.length+' 款…');
-  fetch('/api/batch-upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx_list:list})})
+  fetch('/api/batch-upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx_list:list, force: force})})
     .then(function(r){return r.json();})
     .then(function(d){
-      showToast(d.ok?'✅ '+d.msg:'❌ '+d.msg);
+      var msg=d.msg||d.error||JSON.stringify(d)||'未知错误';
+      showToast(d.ok?'✅ '+msg:'❌ '+msg);
       if(d.ok){
         startPolling();
       }else{

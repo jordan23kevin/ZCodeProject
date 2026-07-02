@@ -1,12 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Lovart-WB Bridge Server v2.1.8
-==============================
+Lovart-WB Bridge Server v2.1.9
+===============================
 Flask HTTP 桥接服务 — 连接 HTML 控制面板与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.1.9：
+  - 新增「强制重新上款」开关
+  - /api/batch-upload 支持 force=true，自动从 已上款货号_wb.md 删除对应款号后再启动 wb_listing.py
+  - 不修改 wb_listing.py 内部逻辑，保持 v1.3.0 稳定版本不变
 
 变更 v2.1.8：
   - /api/batch-upload 改为 --only 精确上款：勾选哪款就上哪款，不会继续后续款
@@ -1512,6 +1517,35 @@ def _read_completed_md():
         return set()
 
 
+def _remove_from_completed_md(dx_list):
+    """强制重新上款时，从 已上款货号_wb.md 中删除指定 DX 货号行。
+    返回实际删除了哪些款号。"""
+    md = BASE_DIR / "已上款货号_wb.md"
+    if not md.exists():
+        return []
+    targets = set(dx_list)
+    removed = []
+    try:
+        with open(md, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        new_lines = []
+        for line in lines:
+            stripped = line.strip()
+            # 匹配 '- DXxxxx' 或 '* DXxxxx'
+            if stripped.startswith("- DX") or stripped.startswith("* DX"):
+                dx = stripped.lstrip("- *").strip()
+                if dx in targets:
+                    removed.append(dx)
+                    continue
+            new_lines.append(line)
+        if removed:
+            with open(md, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+    except Exception as e:
+        print(f"[batch-upload] 删除已上款记录失败: {e}", flush=True)
+    return removed
+
+
 @app.route('/api/upload/progress')
 def api_upload_progress():
     """返回 wb_listing.py 写入的上款进度 JSON，并合并历史已完成记录"""
@@ -1577,6 +1611,7 @@ def api_batch_upload():
     """
     data = request.get_json(silent=True) or {}
     dx_list = data.get("dx_list", [])
+    force = data.get("force", False)
     if not dx_list:
         return jsonify({"ok": False, "error": "请指定DX号"}), 400
 
@@ -1588,6 +1623,11 @@ def api_batch_upload():
             "ok": False,
             "error": f"上款脚本不存在: {upload_script}"
         }), 404
+
+    # 强制重新上款：先从已上款记录中删除对应款号，让 wb_listing.py 正常执行
+    removed = []
+    if force:
+        removed = _remove_from_completed_md(dx_list)
 
     # wb_listing.py --only 模式：只处理勾选的确切款号，不会继续后续款
     valid_dx = []
@@ -1610,11 +1650,16 @@ def api_batch_upload():
         print(f"[batch-upload] 启动 {valid_dx} 失败: {e}", flush=True)
         return jsonify({"ok": False, "error": f"启动脚本失败: {e}"}), 500
 
+    msg = f"已启动 wb上款脚本，精确处理 {len(valid_dx)} 个款：{', '.join(valid_dx)}"
+    if force:
+        msg = f"【强制重新上款】已删除已上款记录中的 {len(removed)} 个款，并启动处理：{', '.join(valid_dx)}"
     return jsonify({
         "ok": True,
-        "msg": f"已启动 wb上款脚本，精确处理 {len(valid_dx)} 个款：{', '.join(valid_dx)}",
+        "msg": msg,
         "script": str(script_path),
-        "selected": valid_dx
+        "selected": valid_dx,
+        "force": force,
+        "removed": removed,
     })
 
 
