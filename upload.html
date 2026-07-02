@@ -3,50 +3,63 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.1.7</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.1.8</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
-  h1{text-align:center;font-size:28px;margin:0 0 14px}
-  h1 .v{font-size:14px;color:#666;font-weight:normal}
-  .toolbar{text-align:center;margin-bottom:16px;position:sticky;top:0;background:#1a1a1a;padding:10px 0;z-index:10}
-  .toolbar input,.toolbar select{padding:10px 14px;font-size:16px;border-radius:4px;border:1px solid #555;background:#2a2a2a;color:#eee;margin-left:8px}
-  .toolbar button{padding:10px 18px;font-size:16px;cursor:pointer;background:#2196F3;color:#fff;border:none;border-radius:4px;margin-left:8px;font-weight:600}
+  h1{text-align:center;font-size:32px;margin:0 0 16px}
+  h1 .v{font-size:15px;color:#666;font-weight:normal;margin-left:8px}
+  .toolbar{text-align:center;margin-bottom:18px;position:sticky;top:0;background:#1a1a1a;padding:12px 0;z-index:20;border-bottom:1px solid #333}
+  .toolbar input,.toolbar select{padding:11px 16px;font-size:16px;border-radius:5px;border:1px solid #555;background:#2a2a2a;color:#eee;margin-left:8px}
+  .toolbar button{padding:11px 20px;font-size:16px;cursor:pointer;background:#2196F3;color:#fff;border:none;border-radius:5px;margin-left:8px;font-weight:600}
   .toolbar button:hover{background:#1976D2}
-  .toolbar button:disabled{opacity:.4;cursor:not-allowed}
-  .toolbar .cnt{color:#888;margin-left:12px;font-size:14px}
-  .toolbar label{color:#eee;cursor:pointer;user-select:none;margin-left:8px}
+  .toolbar button:disabled{opacity:.45;cursor:not-allowed}
+  .toolbar label{color:#eee;cursor:pointer;user-select:none;margin-left:10px;font-size:16px}
   .btn-upload{background:#4CAF50 !important}
   .btn-upload:hover:not(:disabled){background:#388e3c !important}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(520px,1fr));gap:18px;max-width:1920px;margin:0 auto}
-  .card{background:#1e1e1e;border-radius:10px;border:1px solid #333;overflow:hidden}
-  .card-head{display:flex;align-items:center;gap:10px;padding:12px 16px;background:#252525;border-bottom:1px solid #333}
-  .dx-check{width:18px;height:18px;accent-color:#4CAF50;cursor:pointer}
-  .dxname{font-weight:700;font-size:18px;color:#4CAF50;letter-spacing:.3px;cursor:pointer}
+  .toolbar .cnt{color:#aaa;margin-left:14px;font-size:15px}
+
+  .progress-panel{display:none;background:#252525;border:1px solid #444;border-radius:10px;padding:16px 20px;margin:0 auto 22px;max-width:1200px}
+  .progress-panel.active{display:block}
+  .progress-row{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:10px}
+  .progress-title{font-size:18px;font-weight:700}
+  .progress-meta{font-size:14px;color:#bbb;white-space:nowrap}
+  .progress-bar-wrap{width:100%;height:22px;background:#333;border-radius:11px;overflow:hidden;margin-top:6px}
+  .progress-bar{height:100%;width:0%;background:linear-gradient(90deg,#4CAF50,#8BC34A);transition:width .4s ease}
+  .progress-detail{display:flex;gap:20px;flex-wrap:wrap;margin-top:10px;font-size:14px;color:#bbb}
+
+  .section-title{font-size:22px;font-weight:700;margin:26px 0 14px;padding-bottom:8px;border-bottom:2px solid #333}
+  .section-title .sub{font-size:14px;color:#888;font-weight:normal;margin-left:10px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(560px,1fr));gap:20px;max-width:1920px;margin:0 auto}
+  .card{background:#1e1e1e;border-radius:12px;border:1px solid #333;overflow:hidden}
+  .card.completed{opacity:.72;border-color:#2e4a2e}
+  .card-head{display:flex;align-items:center;gap:12px;padding:14px 18px;background:#252525;border-bottom:1px solid #333}
+  .dx-check{width:20px;height:20px;accent-color:#4CAF50;cursor:pointer}
+  .dxname{font-weight:800;font-size:20px;color:#4CAF50;letter-spacing:.3px;cursor:pointer}
   .dxname:hover{text-decoration:underline}
-  .pcount{color:#666;font-size:13px;margin-left:auto}
-  .up-gallery{padding:10px 12px 6px;display:flex;flex-direction:column;gap:12px}
-  .up-group{display:flex;flex-direction:column;gap:5px}
+  .pcount{color:#888;font-size:14px;margin-left:auto}
+  .up-gallery{padding:12px 14px 8px;display:flex;flex-direction:column;gap:14px}
+  .up-group{display:flex;flex-direction:column;gap:6px}
   .up-group-header{display:flex;align-items:center;gap:8px}
-  .up-group-imgs{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .up-group-imgs{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   .up-item{display:flex;flex-direction:column;align-items:center}
-  .up-thumb{width:100%;height:220px;border-radius:6px;overflow:hidden;background:#fff;cursor:pointer;position:relative;border:1px solid #333}
+  .up-thumb{width:100%;height:260px;border-radius:8px;overflow:hidden;background:#fff;cursor:pointer;position:relative;border:1px solid #333}
   .up-thumb img{width:100%;height:100%;object-fit:contain;transition:transform .15s}
-  .up-thumb:hover img{transform:scale(1.06)}
-  .up-label{color:#aaa;font-size:13px;margin-top:6px;text-align:center;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .badge{display:inline-block;font-size:12px;font-weight:bold;padding:2px 7px;border-radius:3px;margin-right:4px}
+  .up-thumb:hover img{transform:scale(1.05)}
+  .up-label{color:#aaa;font-size:15px;margin-top:7px;text-align:center;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .badge{display:inline-block;font-size:13px;font-weight:bold;padding:3px 9px;border-radius:4px;margin-right:5px}
   .badge-bw{background:#9c27b0;color:#fff}
   .badge-b{background:#555;color:#fff}
   .badge-w{background:#e0e0e0;color:#333}
   .badge-other{background:#424242;color:#fff}
-  .empty{text-align:center;color:#888;margin-top:40px;font-size:16px}
+  .empty{text-align:center;color:#888;margin-top:40px;font-size:17px}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:14px 26px;border-radius:8px;font-size:16px;display:none;z-index:999;max-width:80%}
-  .preview{position:fixed;z-index:9999;pointer-events:none;display:none;max-width:900px;max-height:90vh;border:2px solid #555;border-radius:6px;box-shadow:0 4px 25px rgba(0,0,0,.85);background:#00b300}
+  .preview{position:fixed;z-index:9999;pointer-events:none;display:none;max-width:900px;max-height:90vh;border:2px solid #555;border-radius:8px;box-shadow:0 4px 25px rgba(0,0,0,.85);background:#000}
   .preview img{display:block;max-width:900px;max-height:90vh;object-fit:contain}
 </style>
 </head>
 <body>
-<h1>WB 上款 <span class="v">v2.1.7</span></h1>
+<h1>WB 上款 <span class="v">v2.1.8</span></h1>
 <div class="toolbar">
   <select id="dateSel" onchange="switchDate(this.value)">
     <option value="">全部日期</option>
@@ -55,12 +68,38 @@
   <button onclick="filterCards()">🔍 搜索</button>
   <button onclick="refreshAll()">🔄 刷新</button>
   <label>
-    <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)" style="width:18px;height:18px;accent-color:#4CAF50;vertical-align:middle;"> 全选
+    <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)" style="width:20px;height:20px;accent-color:#4CAF50;vertical-align:middle;"> 全选
   </label>
   <button class="btn-upload" onclick="batchUpload()" id="uploadBtn" disabled>📤 批量上传 (0)</button>
   <span class="cnt" id="cnt">0 款</span>
 </div>
-<div class="grid" id="grid"><p class="empty">加载中…</p></div>
+
+<div id="progressPanel" class="progress-panel">
+  <div class="progress-row">
+    <span class="progress-title" id="progressTitle">上款进度</span>
+    <span class="progress-meta" id="progressMeta">0 / 0</span>
+  </div>
+  <div class="progress-bar-wrap"><div id="progressBar" class="progress-bar"></div></div>
+  <div class="progress-detail">
+    <span id="progressCurrent">当前：-</span>
+    <span id="progressElapsed">已用：-</span>
+    <span id="progressAvg">平均：-</span>
+    <span id="progressEta">预计剩余：-</span>
+  </div>
+</div>
+
+<div id="pendingSection" style="display:none">
+  <div class="section-title">未上款 <span class="sub" id="pendingSub"></span></div>
+  <div class="grid" id="pendingGrid"></div>
+</div>
+
+<div id="completedSection" style="display:none">
+  <div class="section-title">已上款 <span class="sub" id="completedSub"></span></div>
+  <div class="grid" id="completedGrid"></div>
+</div>
+
+<div id="emptyState"><p class="empty">加载中…</p></div>
+
 <div id="toast" class="toast"></div>
 <div id="preview" class="preview"><img id="previewImg" src=""></div>
 
@@ -72,15 +111,26 @@ function showToast(m){
 }
 
 var allProjects=[];
+var progressData=null;
+var pollTimer=null;
 
 function loadProjects(){
   fetch('/api/upload/projects').then(function(r){return r.json();}).then(function(d){
     allProjects=d.projects||[];
     fillDateSel();
+    return loadProgress();
+  }).then(function(){
     renderCards();
   }).catch(function(e){
-    document.getElementById('grid').innerHTML='<p class="empty">加载失败: '+e+'</p>';
+    document.getElementById('emptyState').innerHTML='<p class="empty">加载失败: '+e+'</p>';
   });
+}
+
+function loadProgress(){
+  return fetch('/api/upload/progress').then(function(r){return r.json();}).then(function(d){
+    progressData=d||{};
+    updateProgressPanel();
+  }).catch(function(e){console.log('progress load failed',e);});
 }
 
 function fillDateSel(){
@@ -93,7 +143,6 @@ function fillDateSel(){
     opts.push('<option value="'+dt+'">20'+dt.substr(0,2)+'-'+dt.substr(2,2)+'-'+dt.substr(4,2)+'</option>');
   });
   sel.innerHTML=opts.join('');
-  // 默认选中最新日期
   if(sortedDates.length>0){
     sel.value=sortedDates[0];
   }
@@ -113,52 +162,81 @@ function upLabel(name,dx){
   return label||'成品';
 }
 
+function formatDuration(sec){
+  if(!sec && sec!==0)return '-';
+  if(sec<60)return sec+'s';
+  var m=Math.floor(sec/60), s=sec%60;
+  if(m<60)return m+'m '+s+'s';
+  var h=Math.floor(m/60); m=m%60;
+  return h+'h '+m+'m';
+}
+
+function buildCard(p){
+  var groups={};
+  (p.files||[]).forEach(function(f){
+    var g=upGroup(f.name,p.dx);
+    if(!groups[g])groups[g]=[];
+    groups[g].push(f);
+  });
+  var order=['BW','B','W','其他'];
+  var rows=[];
+  order.forEach(function(g){
+    if(!groups[g])return;
+    var thumbs=groups[g].map(function(f){
+      var ts=f.mtime;
+      return '<div class="up-item">'
+        +'<div class="up-thumb cell" data-src="/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'">'
+        +'<img src="/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts+'">'
+        +'</div>'
+        +'<div class="up-label" title="'+f.name+'">'+upLabel(f.name,p.dx)+'</div>'
+        +'</div>';
+    }).join('');
+    var cls={'BW':'badge-bw','B':'badge-b','W':'badge-w'}[g]||'badge-other';
+    rows.push('<div class="up-group"><div class="up-group-header"><span class="badge '+cls+'">'+g+'</span></div><div class="up-group-imgs">'+thumbs+'</div></div>');
+  });
+  var doneInfo='';
+  if(progressData && progressData.per_dx && progressData.per_dx[p.dx] && progressData.per_dx[p.dx].duration){
+    doneInfo=' <span style="color:#8bc34a;font-size:13px">('+formatDuration(progressData.per_dx[p.dx].duration)+')</span>';
+  }
+  return '<div class="card" data-dx="'+p.dx+'" id="card-'+p.dx+'">'
+    +'<div class="card-head">'
+    +'<input type="checkbox" class="dx-check" data-dx="'+p.dx+'" onchange="updateUploadBtn()">'
+    +'<span class="dxname" onclick="openDxFolder(\''+p.dx+'\')">'+p.dx+'</span>'
+    +'<span class="pcount">'+(p.files?p.files.length:0)+' 张'+doneInfo+'</span>'
+    +'</div>'
+    +'<div class="up-gallery">'+(rows.length?rows.join(''):'<p class="empty">03_UPLOAD 为空</p>')+'</div>'
+    +'</div>';
+}
+
 function renderCards(){
   var q=document.getElementById('search').value.toUpperCase().trim();
   var date=document.getElementById('dateSel').value;
   var terms=q?q.split(',').map(function(t){return t.trim();}).filter(function(t){return t;}):[];
-  var cards=[];
+
+  var completedSet={};
+  if(progressData && progressData.completed){
+    progressData.completed.forEach(function(dx){completedSet[dx]=true;});
+  }
+
+  var pending=[], completed=[];
   allProjects.forEach(function(p){
     if(date && p.date!==date)return;
     var show=false;
     if(!terms.length)show=true;
     else for(var i=0;i<terms.length;i++){if(p.dx.indexOf(terms[i])>=0){show=true;break;}}
     if(!show)return;
-
-    var groups={};
-    (p.files||[]).forEach(function(f){
-      var g=upGroup(f.name,p.dx);
-      if(!groups[g])groups[g]=[];
-      groups[g].push(f);
-    });
-    var order=['BW','B','W','其他'];
-    var rows=[];
-    order.forEach(function(g){
-      if(!groups[g])return;
-      var thumbs=groups[g].map(function(f){
-        var ts=f.mtime;
-        return '<div class="up-item">'
-          +'<div class="up-thumb cell" data-src="/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'">'
-          +'<img src="/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts+'">'
-          +'</div>'
-          +'<div class="up-label" title="'+f.name+'">'+upLabel(f.name,p.dx)+'</div>'
-          +'</div>';
-      }).join('');
-      var cls={'BW':'badge-bw','B':'badge-b','W':'badge-w'}[g]||'badge-other';
-      rows.push('<div class="up-group"><div class="up-group-header"><span class="badge '+cls+'">'+g+'</span></div><div class="up-group-imgs">'+thumbs+'</div></div>');
-    });
-
-    cards.push('<div class="card" data-dx="'+p.dx+'">'
-      +'<div class="card-head">'
-      +'<input type="checkbox" class="dx-check" data-dx="'+p.dx+'" onchange="updateUploadBtn()">'
-      +'<span class="dxname" onclick="openDxFolder(\''+p.dx+'\')">'+p.dx+'</span>'
-      +'<span class="pcount">'+(p.files?p.files.length:0)+' 张</span>'
-      +'</div>'
-      +'<div class="up-gallery">'+(rows.length?rows.join(''):'<p class="empty">03_UPLOAD 为空</p>')+'</div>'
-      +'</div>');
+    if(completedSet[p.dx])completed.push(p);
+    else pending.push(p);
   });
-  document.getElementById('grid').innerHTML=cards.join('')||'<p class="empty">暂无数据</p>';
-  document.getElementById('cnt').textContent=cards.length+' 款';
+
+  document.getElementById('pendingGrid').innerHTML=pending.map(buildCard).join('')||'<p class="empty">暂无未上款数据</p>';
+  document.getElementById('completedGrid').innerHTML=completed.map(buildCard).join('')||'<p class="empty">暂无已上款数据</p>';
+  document.getElementById('pendingSection').style.display='block';
+  document.getElementById('completedSection').style.display='block';
+  document.getElementById('pendingSub').textContent='('+pending.length+')';
+  document.getElementById('completedSub').textContent='('+completed.length+')';
+  document.getElementById('emptyState').style.display=(pending.length+completed.length)?'none':'block';
+  document.getElementById('cnt').textContent=(pending.length+completed.length)+' 款';
   bindPreview();
   updateUploadBtn();
 }
@@ -167,7 +245,7 @@ function filterCards(){renderCards();}
 function switchDate(d){renderCards();}
 
 function toggleSelectAll(checked){
-  document.querySelectorAll('.card').forEach(function(card){
+  document.querySelectorAll('#pendingGrid .card').forEach(function(card){
     if(card.style.display!=='none'){
       var cb=card.querySelector('.dx-check');
       if(cb)cb.checked=checked;
@@ -193,12 +271,71 @@ function refreshAll(){
   loadProjects();
 }
 
+function startPolling(){
+  if(pollTimer)clearInterval(pollTimer);
+  pollTimer=setInterval(function(){
+    loadProgress().then(function(){
+      renderCards();
+      if(progressData && !progressData.running && progressData.pending && progressData.pending.length===0){
+        clearInterval(pollTimer);pollTimer=null;
+        showToast('✅ 上款任务完成');
+        document.getElementById('uploadBtn').textContent='📤 批量上传 (0)';
+        document.getElementById('uploadBtn').disabled=false;
+      }
+    });
+  },2000);
+}
+
+function updateProgressPanel(){
+  var panel=document.getElementById('progressPanel');
+  if(!progressData || (!progressData.running && (!progressData.selected || !progressData.selected.length))){
+    panel.classList.remove('active');
+    return;
+  }
+  panel.classList.add('active');
+  var total=progressData.total_count||0;
+  var done=(progressData.done_count||0)+(progressData.fail_count||0);
+  var pct=total?Math.round(done/total*100):0;
+  document.getElementById('progressBar').style.width=pct+'%';
+  document.getElementById('progressMeta').textContent=done+' / '+total+' ('+pct+'%)';
+
+  var current=progressData.current;
+  var currentText=current?'正在上款：'+current:'等待中…';
+  document.getElementById('progressCurrent').textContent=currentText;
+
+  var elapsed='-';
+  if(progressData.started_at){
+    var start=new Date(progressData.started_at).getTime();
+    var now=Date.now();
+    if(!isNaN(start))elapsed=formatDuration(Math.floor((now-start)/1000));
+  }
+  document.getElementById('progressElapsed').textContent='已用：'+elapsed;
+
+  var avg='-', eta='-';
+  if(progressData.per_dx){
+    var times=[];
+    Object.keys(progressData.per_dx).forEach(function(dx){
+      var d=progressData.per_dx[dx];
+      if(d.duration)times.push(d.duration);
+    });
+    if(times.length){
+      var sum=times.reduce(function(a,b){return a+b;},0);
+      avg=formatDuration(Math.round(sum/times.length));
+      var remain=total-done;
+      if(remain>0)eta=formatDuration(Math.round(sum/times.length*remain));
+      else eta='0s';
+    }
+  }
+  document.getElementById('progressAvg').textContent='平均：'+avg;
+  document.getElementById('progressEta').textContent='预计剩余：'+eta;
+}
+
 function batchUpload(){
   var checked=document.querySelectorAll('.dx-check:checked');
   if(!checked.length){showToast('请先勾选需要上传的款');return;}
   var list=[];
   checked.forEach(function(cb){list.push(cb.getAttribute('data-dx'));});
-  if(!confirm('批量上传 '+list.length+' 个款？\n将调用外部上款接口。'))return;
+  if(!confirm('批量上传 '+list.length+' 个款？\n将精确处理勾选的款号，不会继续后续款。'))return;
   var btn=document.getElementById('uploadBtn');
   btn.disabled=true;btn.textContent='⏳ 上传中…';
   showToast('⏳ 启动批量上传 '+list.length+' 款…');
@@ -206,9 +343,10 @@ function batchUpload(){
     .then(function(r){return r.json();})
     .then(function(d){
       showToast(d.ok?'✅ '+d.msg:'❌ '+d.msg);
-      btn.textContent='📤 批量上传 (0)';btn.disabled=false;
       if(d.ok){
-        console.log('upload script:',d.script,'start_dx:',d.start_dx,'selected:',d.selected);
+        startPolling();
+      }else{
+        btn.textContent='📤 批量上传 (0)';btn.disabled=false;
       }
     }).catch(function(e){
       showToast('❌ 请求失败: '+e);
@@ -216,23 +354,32 @@ function batchUpload(){
     });
 }
 
-// 悬停放大
+// 悬停放大（改进：下方空间不足时显示在上方）
 var prevEl=document.getElementById('preview');
 var prevImg=document.getElementById('previewImg');
 function bindPreview(){
   document.querySelectorAll('.up-thumb').forEach(function(cell){
-    cell.addEventListener('mouseenter',function(){
+    cell.addEventListener('mouseenter',function(e){
       var src=this.getAttribute('data-src');
       prevImg.src=src;
       prevEl.style.display='block';
       var r=this.getBoundingClientRect();
-      var previewW=900, previewH=window.innerHeight*0.9;
-      var left=r.right+8, top=r.top;
-      if(left+previewW>window.innerWidth-8) left=r.left-previewW-8;
-      if(left<8) left=8;
-      if(top+previewH>window.innerHeight-8) top=window.innerHeight-previewH-8;
-      if(top<8) top=8;
+      var previewW=Math.min(900,window.innerWidth-40);
+      var previewH=Math.min(window.innerHeight*0.85, window.innerHeight-40);
+      var left=r.right+10, top=r.top;
+      if(left+previewW>window.innerWidth-10) left=r.left-previewW-10;
+      if(left<10) left=10;
+      // 如果缩略图在屏幕下半部，预览图放上方
+      if(r.top>window.innerHeight/2){
+        top=r.bottom-previewH;
+        if(top<10) top=10;
+      }else{
+        if(top+previewH>window.innerHeight-10) top=window.innerHeight-previewH-10;
+        if(top<10) top=10;
+      }
       prevEl.style.left=left+'px';prevEl.style.top=top+'px';
+      prevEl.style.maxWidth=previewW+'px';
+      prevEl.style.maxHeight=previewH+'px';
     });
     cell.addEventListener('mouseleave',function(){prevEl.style.display='none';});
   });

@@ -1,12 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Lovart-WB Bridge Server v2.1.7
+Lovart-WB Bridge Server v2.1.8
 ==============================
 Flask HTTP 桥接服务 — 连接 HTML 控制面板与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.1.8：
+  - /api/batch-upload 改为 --only 精确上款：勾选哪款就上哪款，不会继续后续款
+  - 新增 /api/upload/progress 端点，读取 wb_listing.py 写入的 .wb_upload_progress.json
+  - /upload 页面拆分为「未上款 / 已上款」两个区域，已上款自动沉底
+  - 上款页面新增进度条、当前款、已用时间、平均耗时、预计剩余时间
+  - 默认选中最新日期，勾选框仅对未上款卡片生效
+  - 修复缩略放大图在屏幕下方时显示不全的问题
 
 变更 v2.1.7：
   - /upload 页面默认选中最新日期
@@ -631,6 +639,7 @@ def rename_to_bw(filename: str) -> tuple:
 # ---------------------------------------------------------------------------
 
 UPLOAD_THUMB_DIR = BASE_DIR / "_upload_thumbs"
+UPLOAD_PROGRESS_FILE = BASE_DIR / ".wb_upload_progress.json"
 
 def _scan_upload_projects():
     """扫描所有 DX 的 03_UPLOAD，返回 [{dx, date, files:[{name,mtime}]}]"""
@@ -1485,6 +1494,63 @@ def api_upload_original():
     return r
 
 
+def _read_completed_md():
+    """读取 已上款货号_wb.md 中的所有 DX 货号"""
+    md = BASE_DIR / "已上款货号_wb.md"
+    if not md.exists():
+        return set()
+    try:
+        with open(md, "r", encoding="utf-8") as f:
+            return set(
+                line.strip().lstrip("- ").strip()
+                for line in f
+                if line.strip().startswith("DX")
+                or line.strip().startswith("- DX")
+            )
+    except Exception:
+        return set()
+
+
+@app.route('/api/upload/progress')
+def api_upload_progress():
+    """返回 wb_listing.py 写入的上款进度 JSON，并合并历史已完成记录"""
+    data = {
+        "ok": True,
+        "running": False,
+        "started_at": None,
+        "finished_at": None,
+        "selected": [],
+        "pending": [],
+        "completed": [],
+        "failed": [],
+        "current": None,
+        "current_start": None,
+        "total_count": 0,
+        "done_count": 0,
+        "fail_count": 0,
+        "per_dx": {},
+    }
+    if UPLOAD_PROGRESS_FILE.exists():
+        try:
+            with open(UPLOAD_PROGRESS_FILE, "r", encoding="utf-8") as f:
+                data.update(json.load(f))
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    # 历史已完成作为权威基准
+    historical = _read_completed_md()
+    completed_set = set(data.get("completed", [])) | historical
+    data["completed"] = sorted(completed_set)
+    data["done_count"] = len(data["completed"])
+
+    # pending = selected - completed - failed
+    selected_set = set(data.get("selected", []))
+    failed_set = set(data.get("failed", []))
+    data["pending"] = sorted(selected_set - completed_set - failed_set)
+
+    return jsonify(data)
+
+
 @app.route('/api/open')
 def api_open_dx():
     """打开指定 DX 的子文件夹（ai/rem/up）"""
@@ -1522,31 +1588,32 @@ def api_batch_upload():
             "error": f"上款脚本不存在: {upload_script}"
         }), 404
 
-    # wb_listing.py 以第一个 DX 为起点连续处理后续未完成款，
-    # 为避免多实例抢浏览器 CDP，这里只启动一次脚本（取列表中最早的 DX 作为起点）
-    start_dx = None
+    # wb_listing.py --only 模式：只处理勾选的确切款号，不会继续后续款
+    valid_dx = []
     for dx in dx_list:
         dx_folder = PROJECTS_DIR / dx
         if dx_folder.exists() and (dx_folder / "03_UPLOAD").exists():
-            start_dx = dx
-            break
+            valid_dx.append(dx)
 
-    if not start_dx:
+    if not valid_dx:
         return jsonify({"ok": False, "error": "勾选的款均无 03_UPLOAD 成品"}), 400
+
+    args = [sys.executable, str(script_path)]
+    for dx in valid_dx:
+        args.extend(["--only", dx])
 
     try:
         # wait=False: wb_listing.py 运行时间较长，API 立即返回，后台执行
-        run_minimized([sys.executable, str(script_path), start_dx], wait=False)
+        run_minimized(args, wait=False)
     except Exception as e:
-        print(f"[batch-upload] 启动 {start_dx} 失败: {e}", flush=True)
+        print(f"[batch-upload] 启动 {valid_dx} 失败: {e}", flush=True)
         return jsonify({"ok": False, "error": f"启动脚本失败: {e}"}), 500
 
     return jsonify({
         "ok": True,
-        "msg": f"已启动 wb上款脚本，从 {start_dx} 开始处理（含后续未完成款）",
+        "msg": f"已启动 wb上款脚本，精确处理 {len(valid_dx)} 个款：{', '.join(valid_dx)}",
         "script": str(script_path),
-        "start_dx": start_dx,
-        "selected": dx_list
+        "selected": valid_dx
     })
 
 
@@ -1799,7 +1866,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Lovart-WB Bridge Server v2.1.7        ║")
+    print("║   Lovart-WB Bridge Server v2.1.8        ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")
