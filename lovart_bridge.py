@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Lovart-WB Bridge Server v2.1.9
-===============================
-Flask HTTP 桥接服务 — 连接 HTML 控制面板与本地 Lovart 管线 + 文件系统
+Y2 Bridge Server v2.1.9
+=======================
+Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
@@ -1892,7 +1892,7 @@ def _run_generation(selected_files: list, task_id: str):
 # ============================================================================
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Lovart-WB Bridge Server")
+    parser = argparse.ArgumentParser(description="Y2 Bridge Server")
     parser.add_argument("--port", type=int, default=8765, help="Bridge 服务端口 (默认 8765)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="监听地址 (默认 127.0.0.1)")
     args = parser.parse_args()
@@ -1912,7 +1912,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Lovart-WB Bridge Server v2.1.8        ║")
+    print("║   Y2 Bridge Server v2.1.9               ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")

@@ -7,7 +7,7 @@ if /I not "%~1"=="minimized" (
     exit /b 0
 )
 
-title Lovart-WB Bridge v2.1.9
+title Y2 Bridge v2.1.9
 setlocal enabledelayedexpansion
 
 set PYTHON=C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe
@@ -76,7 +76,7 @@ if %ERRORLEVEL% EQU 0 (
 call :rotate_log
 
 echo ========================================
-echo   Lovart-WB Bridge v2.1.9
+echo   Y2 Bridge v2.1.9
 echo   Panel: http://%HOST%:%PORT%
 echo   INBOX: D:\Semems WB\01_INBOX\
 echo   Lovart: E:\Claude code\lovart-official\
