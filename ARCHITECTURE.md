@@ -60,8 +60,8 @@
 │  D:\Semems WB\02_PROJECTS\DXxxxx\01_AI\DXxxxx_B.png.meta.json        │
 │    └── { uid, group_id, stage, role, parent_uid, source_file }       │
 │                                                                      │
-│  共享模块: C:\Users\Administrator\ZCodeProject\wb_meta.py           │
-│  （同步部署到 WB去背、PS、wb上款各项目）                             │
+│  共享模块: C:\Users\Administrator\ZCodeProject\lib\wb_meta.py      │
+│  （同步部署到 WB去背、PS、wb上款各项目根目录）                       │
 └─────────────────────────────────────────────────────────────────────┘
          │
          ▼
@@ -150,7 +150,9 @@ Hook(实时) → Bridge写入 → Scanner(推断) → Reconciler(修复)
 - `02_PROJECTS/DXxxxx/02_REM_BG/xxx_cut.png.meta.json`：去背图 sidecar。
 - `02_PROJECTS/DXxxxx/03_UPLOAD/xxx_白T.jpg.meta.json`：贴图成品 sidecar。
 
-**共享模块**: `wb_meta.py` 部署在 Bridge/WB去背/PS/wb上款各项目，统一 sidecar/uid_map 操作。
+**共享模块**: `wb_meta.py` 位于 Bridge `lib/` 目录，并同步部署到 WB去背/PS/wb上款各项目根目录，统一 sidecar/uid_map 操作。
+
+**迁移脚本**: `tools/migrate_uid_map.py` 可一键为所有旧 DX 项目重建元数据。
 
 **迁移**: 旧项目无 sidecar 时，自动调用 `wb_meta.migrate_dx(dx_dir)` 基于 `source_map.json` + 文件名推断补录。
 

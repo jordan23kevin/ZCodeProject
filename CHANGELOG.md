@@ -1,14 +1,22 @@
 # Y2 一体化控制系统 — 更新日志
 
-## v2.2.1 (2026-07-03) — 去背预览入口优化
+## v2.2.1 (2026-07-03) — 去背预览入口优化 + 上款日期修复
 
 ### 🔧 调整
 
-- **`check_rem.py` v2.1.6**
+- **`check_rem.py` v2.1.7**
   - 移除原来的日期分类 landing 页（`/` 路径）
   - 根路径 `/` 直接 302 重定向到最新日期页面（如 `/260703/`）
   - 保留 `/<日期>/` 路由，页面顶部日期下拉框可切换日期
   - Y2 控制台点击「去背预览」后直接进入最新日期的 AI 去背 贴图 OS 页面
+  - 日期下拉框样式与 WB 上款 页统一：加大 padding、圆角、字号，视觉更协调
+
+### 🐛 修复
+
+- **`lovart_bridge.py` v2.2.1**
+  - 修复 `/upload` 页面款号日期全部归到 2026-07-03 的问题
+  - `_scan_upload_projects` 的 `date` 改为取 **AI 生成图最新 mtime**（无 AI 时退去背图 mtime）
+  - 与 `check_rem.py` 日期逻辑保持一致，避免 03_UPLOAD 成品被统一修改后日期失真
 
 ---
 
@@ -39,8 +47,14 @@
   - 黑版变体不再显示为「无独立 AI」的孤立卡片，而是归并到对应 group。
 
 - **迁移脚本**
-  - 新增 `migrate_uid_map.py`：一键为所有旧 DX 项目生成 `uid_map.json` 和 sidecar。
+  - 新增 `tools/migrate_uid_map.py`：一键为所有旧 DX 项目生成 `uid_map.json` 和 sidecar。
   - `check_rem.py` 启动扫描时自动对缺失元数据的项目调用迁移。
+
+- **项目目录整理**
+  - 辅助模块/脚本不再堆在仓库根目录：
+    - `lib/wb_meta.py` — 共享元数据模块
+    - `tools/migrate_uid_map.py` — 迁移脚本
+    - `engine/check_rem.py` / `engine/check_rem.js` — 去背预览引擎副本（版本控制用）
 
 ### 🔧 架构调整
 

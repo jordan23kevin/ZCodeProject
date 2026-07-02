@@ -20,9 +20,10 @@ try:
 except Exception:
     pass
 
-_ZCODE = Path(__file__).parent
-if str(_ZCODE) not in sys.path:
-    sys.path.insert(0, str(_ZCODE))
+_REPO = Path(__file__).parent.parent
+_LIB = _REPO / "lib"
+if str(_LIB) not in sys.path:
+    sys.path.insert(0, str(_LIB))
 
 try:
     import wb_meta

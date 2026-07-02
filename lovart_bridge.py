@@ -1,12 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.2.0
+Y2 Bridge Server v2.2.1
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.2.1：
+  - 修复 /upload 页面款号日期全部归到同一天的问题
+  - _scan_upload_projects 的 date 改为取 AI 生成图最新 mtime（无 AI 时退去背图 mtime）
+  - 与 check_rem.py 日期逻辑保持一致，避免 03_UPLOAD 成品被统一修改后日期失真
 
 变更 v2.2.0：
   - UID/group_id 全链路溯源：从 INBOX 开始绑定唯一 UID 和组 ID
@@ -86,8 +91,8 @@ except ImportError:
     print("ERROR: Flask not installed. Run: pip install flask")
     sys.exit(1)
 
-# 加载 UID 元数据模块（优先用 Bridge 项目内版本）
-_WB_META_PATH = Path(__file__).parent
+# 加载 UID 元数据模块（Bridge 项目内 lib/ 目录）
+_WB_META_PATH = Path(__file__).parent / "lib"
 if str(_WB_META_PATH) not in sys.path:
     sys.path.insert(0, str(_WB_META_PATH))
 try:
