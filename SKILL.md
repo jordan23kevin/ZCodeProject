@@ -1,9 +1,9 @@
 ---
 name: lovart-wb
-description: Y2 控制台 v2.3.0 — 管理 AI 生图、去背、贴图成品的完整生产流程（UID/group_id 全链路溯源 + AI 生图对比）
+description: Y2 控制台 v2.3.1 — 管理 AI 生图、去背、贴图成品的完整生产流程（UID/group_id 全链路溯源 + AI 生图对比 + DX建立日期分类）
 ---
 
-# Y2 控制台 v2.3.0
+# Y2 控制台 v2.3.1
 
 ## 用途
 

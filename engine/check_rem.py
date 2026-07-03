@@ -1,8 +1,11 @@
-"""01_CHECK_REM v2.1.7 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.1.8 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个 DX 款的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
+
+功能 v2.1.8：
+  - 日期分类统一按 DX 文件夹建立日期（st_ctime），不再按 AI/去背图最后更新时间
 
 功能 v2.1.7：
   - 日期选择下拉框样式与 WB 上款 页统一：加大 padding、圆角、字号
@@ -327,11 +330,11 @@ def scan_projects():
                 "role": m.get("role") or _role_from_name(rf, dx),
             })
 
-        # 该款的日期 = AI 生成图最新 mtime（YYMMDD）；无AI图则用去背图mtime
-        ai_paths = [ai_dir / f for f in ai_files]
-        date_paths = ai_paths if ai_paths else [rem_dir / f for f in rem_files]
-        latest_mtime = max((p.stat().st_mtime for p in date_paths if p.exists()), default=0)
-        dx_date = time.strftime("%y%m%d", time.localtime(latest_mtime)) if latest_mtime else ""
+        # 该款的日期统一按 DX 文件夹建立日期（YYMMDD）分类，不按文件 mtime
+        try:
+            dx_date = time.strftime("%y%m%d", time.localtime(d.stat().st_ctime))
+        except Exception:
+            dx_date = ""
 
         projects.append({"dx": dx, "date": dx_date, "pairs": pairs, "black_variants": black_variants})
     return projects

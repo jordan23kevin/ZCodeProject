@@ -1,6 +1,6 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.3.0` + `run_official_v53.py v6.1`
+> 对应版本: `lovart_bridge.py v2.3.1` + `run_official_v53.py v6.1`
 > 最后更新: 2026-07-04
 
 ---
@@ -104,7 +104,7 @@ git reset --hard HEAD~1
 # ZCodeProject
 cd C:\Users\Administrator\ZCodeProject
 git fetch origin --tags
-git checkout v2.3.0
+git checkout v2.3.1
 
 # lovart-official
 cd "E:\Claude code\lovart-official"
@@ -122,7 +122,7 @@ git checkout v6.1
 
 ---
 
-## 5. 本次更新关键点（v2.3.0 / v6.1）
+## 5. 本次更新关键点（v2.3.1 / v6.1）
 
 | 问题 | 根因 | 解决方案 | 文件位置 |
 |------|------|----------|----------|
@@ -132,6 +132,7 @@ git checkout v6.1
 | 重新生图覆盖旧 AI 图 | 输出文件名固定 | 自动递增 `_B2.png` / `_BW2.png` | `lovart_bridge.py` |
 | 批量重新生图跨 DX 同名冲突 | `LOVART_REGEN_DX_MAP` 以文件名为 key | key 改为 `(dx, source_file)`，入参校验同名 | `lovart_bridge.py` |
 | AI 生图对比页默认显示全部日期 | 前端未按最新日期过滤 | 默认显示最新日期，下拉可选 | `lovart_bridge.py` / `ai_review.html` |
+| 日期分类随文件更新乱跳 | 按 AI/去背/贴图文件 mtime 判断日期 | 统一按 DX 文件夹建立日期 `st_ctime` 分类 | `lovart_bridge.py` / `check_rem.py` |
 
 ---
 

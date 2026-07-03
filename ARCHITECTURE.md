@@ -1,4 +1,4 @@
-# Y2 系统架构文档 v2.3.0
+# Y2 系统架构文档 v2.3.1
 
 > 工程类型: 图像生产血缘数据库 + 控制面板 + 贴图成品流水线 + AI 生图对比复审
 > 遵循: B+ 四层血缘闭环架构
@@ -114,6 +114,16 @@ check_rem.py 的 HTML 模板使用 Python f-string 生成，JS 代码中的 `{}`
 原 Bridge 内的 PS贴图控制台使用率低，且贴图功能已在 `check_rem.py` 中通过 `/ps-sticker` 提供。
 **解决方案**: 将 `/ps-sticker` 控制台替换为 `/upload` 上款页面，直接展示 `03_UPLOAD` 成品，
 提供勾选 + 批量上传入口，后续可对接 `LOVART_UPLOAD_SCRIPT` 环境变量指向的外部上款脚本。
+
+### 日期分类按 DX 文件夹建立日期（v2.3.1）
+
+**问题**: 原系统按 `01_AI` / `02_REM_BG` / `03_UPLOAD` 内文件的最新 `mtime` 判断款号所属日期。
+重新生图、去背、贴图等操作会更新文件 `mtime`，导致款号被错误归到最新日期。
+
+**解决方案**:
+- 所有页面的日期分类统一使用 `DXxxxx` 文件夹的 `st_ctime`（建立时间）。
+- 实现位置：`lovart_bridge.py::_dx_dir_date()`、`check_rem.py::scan_projects()`。
+- 移除 `_load_upload_date_map()`，上款记录仅用于「已上款 / 未上款」状态判断。
 
 ### 后台静默运行
 
