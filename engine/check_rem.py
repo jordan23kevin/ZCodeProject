@@ -1,8 +1,11 @@
-"""01_CHECK_REM v2.2.0 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.2.1 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个 DX 款的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
+
+功能 v2.2.1：
+  - 启动后 1 秒后台自动预扫描，把结果 warming 到缓存，用户首次打开首页无需等待
 
 功能 v2.2.0：
   - 新增 scan_projects 30 秒缓存，避免每次刷新首页都全量扫描，大幅提升页面加载速度
@@ -52,7 +55,7 @@
 
 端口 8766（避开 01_CHECK 的 8765）。
 """
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading
 from pathlib import Path
@@ -2034,6 +2037,19 @@ def main():
     print(f"  AI vs 去背 对比预览  →  {url}")
     print(f"  点缩略图：打开文件夹   x：送回收站   [重新去背]：驱动美图")
     print(f"  关闭此窗口停止服务")
+
+    # 后台预扫描：启动后 1 秒开始全量扫描，把结果 warming 到缓存，
+    # 这样用户首次打开首页时就是热缓存，几乎秒开。
+    def _warm_cache():
+        time.sleep(1)
+        try:
+            t0 = time.time()
+            scan_projects()
+            print(f"  [warm] 扫描完成，耗时 {time.time()-t0:.2f}s，结果已缓存", flush=True)
+        except Exception as e:
+            print(f"  [warm] 预扫描失败: {e}", flush=True)
+    threading.Thread(target=_warm_cache, daemon=True).start()
+
     try:
         ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
     except KeyboardInterrupt:

@@ -1,6 +1,6 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.3.5` + `run_official_v53.py v6.1`
+> 对应版本: `lovart_bridge.py v2.3.6` + `run_official_v53.py v6.1`
 > 最后更新: 2026-07-04
 
 ---
@@ -104,7 +104,7 @@ git reset --hard HEAD~1
 # ZCodeProject
 cd C:\Users\Administrator\ZCodeProject
 git fetch origin --tags
-git checkout v2.3.5
+git checkout v2.3.6
 
 # lovart-official
 cd "E:\Claude code\lovart-official"
@@ -122,7 +122,7 @@ git checkout v6.1
 
 ---
 
-## 5. 本次更新关键点（v2.3.5 / v6.1）
+## 5. 本次更新关键点（v2.3.6 / v6.1）
 
 | 问题 | 根因 | 解决方案 | 文件位置 |
 |------|------|----------|----------|
@@ -140,6 +140,7 @@ git checkout v6.1
 | 去背预览打开慢 | 点击后才启动 check_rem.py | Bridge 启动时守护 check_rem.py 常驻 | `lovart_bridge.py` |
 | 去背预览首页加载慢 | 每次请求都全量扫描 | scan_projects 增加 30 秒缓存 | `check_rem.py` |
 | 上款页面首屏卡顿 | 1600+ 张缩略图同时加载 | 缩略图 lazy loading + async decoding | `upload.html` |
+| 去背预览首次加载慢 | check_rem 冷启动需 16s 全量扫描 | 启动后后台预扫描 warming 缓存 | `check_rem.py` |
 
 ---
 

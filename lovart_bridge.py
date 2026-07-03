@@ -1,12 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.5
+Y2 Bridge Server v2.3.6
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.6：
+  - check_rem.py 启动后 1 秒自动后台预扫描，把 scan_projects 结果 warming 到缓存
+  - 用户首次打开去背预览首页时即可享受热缓存，无需等待 10+ 秒扫描
 
 变更 v2.3.5：
   - Bridge 启动时后台守护 check_rem.py（端口 8766），「去背预览」点击即开
@@ -3170,7 +3174,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.5               ║")
+    print("║   Y2 Bridge Server v2.3.6               ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")
