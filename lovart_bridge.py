@@ -1,12 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.4
+Y2 Bridge Server v2.3.5
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.5：
+  - Bridge 启动时后台守护 check_rem.py（端口 8766），「去背预览」点击即开
+  - 简化 /api/launch-check-rem：不再启动进程/等待扫描，只兜底确认端口就绪
+  - 去背预览按钮改为直接 window.open，与 AI 对比按钮一致，瞬时响应
+  - 上款页面图片增加 loading="lazy" + decoding="async"，减少初始加载压力
+  - 上款页面加载时显示「加载中…」提示，避免空白等待
+  - check_rem.py scan_projects 增加 30 秒缓存，大幅提升首页刷新速度
 
 变更 v2.3.4：
   - 修复去背预览页面悬停放大图位置乱跳：
@@ -234,6 +242,36 @@ def run_minimized(cmd, cwd=None, wait=False):
         proc.wait()
         return proc
     return proc
+
+
+def _port_ready(host, port, timeout=2):
+    """检查指定端口是否已监听。"""
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            with socket.create_connection((host, port), timeout=1):
+                return True
+        except Exception:
+            time.sleep(0.2)
+    return False
+
+
+def _check_rem_daemon():
+    """后台守护线程：Bridge 启动后保持 check_rem.py（端口 8766）常驻运行。"""
+    script = Path("D:/Semems WB/04_OS/engine/check_rem.py")
+    if not script.exists():
+        return
+    while True:
+        try:
+            if not _port_ready("127.0.0.1", 8766, timeout=2):
+                try:
+                    run_minimized([sys.executable, str(script)], cwd=str(script.parent))
+                except Exception as e:
+                    print(f"  [check_rem daemon] 启动失败: {e}", flush=True)
+            time.sleep(20)
+        except Exception:
+            time.sleep(20)
+
 
 # ============================================================================
 # Flask App
@@ -2543,64 +2581,15 @@ def api_lineage_register():
 
 @app.route('/api/launch-check-rem', methods=['POST'])
 def api_launch_check_rem():
-    """一键启动去背预览服务（端口 8766），确认端口可用后立即打开浏览器。
+    """确保去背预览服务（端口 8766）已就绪，并返回状态。
 
-    流程：
-      1. 若 8766 端口未监听，最小化启动 check_rem.py。
-      2. 轮询等待 8766 端口 ready（最多 15 秒）。
-      3. 快速 ping 首页确认服务已响应（最多 3 秒，不阻塞等待扫描完成）。
-      4. 立即用 Chrome / 系统默认浏览器打开，页面自行渲染；扫描在后台完成。
+    实际页面打开由前端直接执行 window.open，这里只负责兜底拉起 check_rem.py。
+    check_rem.py 通常由 Bridge 启动时的守护线程保持常驻。
     """
-    script = Path("D:/Semems WB/04_OS/engine/check_rem.py")
-    chrome = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
-    if not script.exists():
-        return jsonify({"ok": False, "error": "check_rem.py 不存在"}), 404
-
-    def _port_ready(host, port, timeout):
-        start = time.time()
-        while time.time() - start < timeout:
-            try:
-                with socket.create_connection((host, port), timeout=1):
-                    return True
-            except Exception:
-                time.sleep(0.3)
-        return False
-
-    try:
-        # 检查是否已有服务在跑
-        already_running = _port_ready("127.0.0.1", 8766, timeout=2)
-
-        if not already_running:
-            # 启动 check_rem.py（最小化窗口，不抢焦点）
-            run_minimized(
-                [sys.executable, str(script)],
-                cwd=str(script.parent),
-            )
-            # 等待服务监听端口
-            if not _port_ready("127.0.0.1", 8766, timeout=15):
-                return jsonify({"ok": False, "error": "check_rem.py 启动超时（15秒未监听端口）"}), 500
-
-        # 快速确认服务已能响应（不等待完整扫描，避免长时间阻塞）
-        try:
-            urlopen("http://127.0.0.1:8766/", timeout=3).read()
-        except Exception:
-            pass
-
-        # 打开浏览器：优先用 Chrome，尝试在已有窗口的新标签页打开
-        url = "http://127.0.0.1:8766/"
-        import webbrowser
-        if chrome.exists():
-            try:
-                # new=2 表示请求在现有浏览器窗口中打开新标签页
-                webbrowser.register('chrome', None, webbrowser.BackgroundBrowser(str(chrome)))
-                webbrowser.get('chrome').open(url, new=2)
-            except Exception:
-                subprocess.Popen([str(chrome), url])
-        else:
-            webbrowser.open(url, new=2)
-        return jsonify({"ok": True, "msg": "已启动 AI vs 去背 对比预览 (端口 8766)"})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    # 兜底：若守护线程还没把 check_rem 拉起来，等最多 2 秒
+    if not _port_ready("127.0.0.1", 8766, timeout=2):
+        return jsonify({"ok": False, "error": "去背预览服务未就绪，请稍后再试"}), 503
+    return jsonify({"ok": True, "msg": "去背预览服务已就绪"})
 
 
 @app.route('/upload')
@@ -3181,7 +3170,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.4               ║")
+    print("║   Y2 Bridge Server v2.3.5               ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")
@@ -3206,6 +3195,10 @@ if __name__ == '__main__':
 
     t = threading.Thread(target=_auto_scan_loop, daemon=True)
     t.start()
+
+    # 后台守护 check_rem.py（端口 8766），让「去背预览」点击即开
+    t2 = threading.Thread(target=_check_rem_daemon, daemon=True)
+    t2.start()
 
     # 写入 PID 文件，供启动脚本优雅停止服务
     pid_path = Path(__file__).resolve().parent / "bridge.pid"

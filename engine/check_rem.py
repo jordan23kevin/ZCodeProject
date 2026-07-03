@@ -1,8 +1,12 @@
-"""01_CHECK_REM v2.1.9 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.2.0 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个 DX 款的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
+
+功能 v2.2.0：
+  - 新增 scan_projects 30 秒缓存，避免每次刷新首页都全量扫描，大幅提升页面加载速度
+  - 刷新全部（/refresh）时清空缓存，确保立即看到最新结果
 
 功能 v2.1.9：
   - 修复悬停放大图位置乱跳：等原图加载后用实际尺寸定位，不再按固定 900x90vh 预判
@@ -48,9 +52,9 @@
 
 端口 8766（避开 01_CHECK 的 8765）。
 """
-__version__ = "2.1.9"
+__version__ = "2.2.0"
 VERSION = __version__
-import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io
+import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading
 from pathlib import Path
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, quote
@@ -90,6 +94,10 @@ IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
 
 CHECK.mkdir(parents=True, exist_ok=True)
 THUMB_DIR.mkdir(parents=True, exist_ok=True)
+
+# scan_projects 结果缓存（避免每次请求都全量扫描）
+_SCAN_PROJECTS_CACHE = {"projects": None, "timestamp": 0, "lock": threading.Lock()}
+_SCAN_PROJECTS_TTL = 30  # 秒
 
 
 # ── 回收站删除（与 check_sync.py 一致，可撤销）─────
@@ -196,10 +204,16 @@ def _new_uid(path):
         return None
 
 
-def scan_projects():
+def scan_projects(force=False):
     """返回 [{dx, pairs:[{stem, ai_file, rem_file, group_id, ai_uid, rem_uid,
                           ai_stage, rem_stage, role}],
               black_variants:[{stem, rem_file, group_id, rem_uid, rem_stage}]}]"""
+    global _SCAN_PROJECTS_CACHE
+    with _SCAN_PROJECTS_CACHE["lock"]:
+        if not force and _SCAN_PROJECTS_CACHE["projects"] is not None:
+            if time.time() - _SCAN_PROJECTS_CACHE["timestamp"] < _SCAN_PROJECTS_TTL:
+                return _SCAN_PROJECTS_CACHE["projects"]
+
     projects = []
     for d in sorted(BASE.iterdir()):
         if not d.is_dir() or not re.match(r"^DX\d+$", d.name):
@@ -348,7 +362,19 @@ def scan_projects():
             dx_date = ""
 
         projects.append({"dx": dx, "date": dx_date, "pairs": pairs, "black_variants": black_variants})
+
+    with _SCAN_PROJECTS_CACHE["lock"]:
+        _SCAN_PROJECTS_CACHE["projects"] = projects
+        _SCAN_PROJECTS_CACHE["timestamp"] = time.time()
     return projects
+
+
+def _invalidate_scan_cache():
+    """文件变更后清空 scan_projects 缓存，下次请求重新扫描。"""
+    global _SCAN_PROJECTS_CACHE
+    with _SCAN_PROJECTS_CACHE["lock"]:
+        _SCAN_PROJECTS_CACHE["projects"] = None
+        _SCAN_PROJECTS_CACHE["timestamp"] = 0
 
 
 def list_dates(projects):
@@ -1443,12 +1469,16 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             self._send_json({"done": True, "ok": True, "msg": "无结果", "results": []})
 
     # 刷新全部（重新扫描）
-    # 刷新全部：清空缩略图缓存 → 重新扫描 → 前端刷新页面
+    # 刷新全部：清空缩略图缓存与 scan_projects 缓存 → 重新扫描 → 前端刷新页面
     def _refresh(self):
         import shutil
+        global _SCAN_PROJECTS_CACHE
         if THUMB_DIR.exists():
             shutil.rmtree(str(THUMB_DIR))
         THUMB_DIR.mkdir(parents=True, exist_ok=True)
+        with _SCAN_PROJECTS_CACHE["lock"]:
+            _SCAN_PROJECTS_CACHE["projects"] = None
+            _SCAN_PROJECTS_CACHE["timestamp"] = 0
         self._send_json({"ok": True, "msg": "已清空缩略图并重新扫描，刷新页面查看"})
 
     @staticmethod

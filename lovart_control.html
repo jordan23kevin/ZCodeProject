@@ -906,21 +906,11 @@ async function scanProvenance() {
   btn.textContent = '🔗 溯源扫描'; btn.disabled = false;
 }
 
-async function launchCheckRem() {
-  const btn = event.target;
-  btn.textContent = '⏳ 启动中…'; btn.disabled = true;
-  try {
-    const res = await fetch('/api/launch-check-rem', { method: 'POST' });
-    const data = await res.json();
-    if (data.ok) {
-      addLog('ok', data.msg);
-    } else {
-      addLog('error', data.error || '启动失败');
-    }
-  } catch (e) {
-    addLog('error', '网络错误: ' + e.message);
-  }
-  btn.textContent = '🔍 去背预览'; btn.disabled = false;
+function launchCheckRem() {
+  // 与 AI 对比按钮一致：直接开新标签，瞬时响应
+  window.open('http://127.0.0.1:8766/', '_blank');
+  // 后台通知 Bridge 兜底（若守护线程还没拉起 check_rem，Bridge 会尝试启动）
+  fetch('/api/launch-check-rem', { method: 'POST' }).catch(() => {});
 }
 
 async function fixMismatch(dxId, btn) {

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.1.9</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.2.0</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -59,7 +59,7 @@
 </style>
 </head>
 <body>
-<h1>WB 上款 <span class="v">v2.1.9</span></h1>
+<h1>WB 上款 <span class="v">v2.2.0</span></h1>
 <div class="toolbar">
   <select id="dateSel" onchange="switchDate(this.value)">
     <option value="">全部日期</option>
@@ -118,6 +118,8 @@ var progressData=null;
 var pollTimer=null;
 
 function loadProjects(){
+  document.getElementById('pendingGrid').innerHTML='<p class="empty">加载中…</p>';
+  document.getElementById('completedGrid').innerHTML='<p class="empty">加载中…</p>';
   fetch('/api/upload/projects').then(function(r){return r.json();}).then(function(d){
     allProjects=d.projects||[];
     fillDateSel();
@@ -189,7 +191,7 @@ function buildCard(p){
       var ts=f.mtime;
       return '<div class="up-item">'
         +'<div class="up-thumb cell" data-src="/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'">'
-        +'<img src="/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts+'">'
+        +'<img src="/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts+'" loading="lazy" decoding="async">'
         +'</div>'
         +'<div class="up-label" title="'+f.name+'">'+upLabel(f.name,p.dx)+'</div>'
         +'</div>';
