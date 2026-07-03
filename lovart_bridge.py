@@ -1,12 +1,22 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.2.1
+Y2 Bridge Server v2.3.0
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.0：
+  - 新增 AI 生图对比页面 (/ai-review)：在同一界面并排对比原图与 AI 生成图
+  - 支持单张重新生图，输出到原 DX 文件夹（新图自动命名 DXxxxx_B2.png 等，不覆盖旧图）
+  - 支持批量重新生图：勾选多张原图一键并发重跑，调用 Lovart 正常并发能力
+  - 重新生图使用 MD5 检测 INBOX 同名冲突，避免错用旧批次原图
+  - 状态面板实时显示：款号、Key、已用时间、成功/失败张数、进度、可展开原始日志
+  - 状态面板区分「已完成」「部分失败」「失败」，避免 completed + fail_count>0 误导
+  - 重新生图与 Lovart 管线统一读取 config/POD AI VIRAL FACTORY v3.md 提示词文件
+  - AI 生图对比页默认显示最新日期
 
 变更 v2.2.1：
   - 修复 /upload 页面款号日期全部归到同一天的问题
@@ -82,6 +92,9 @@ import re
 import io
 import ctypes
 import argparse
+import socket
+from urllib.request import urlopen
+from urllib.error import URLError
 from ctypes import wintypes
 from pathlib import Path
 from datetime import datetime
@@ -117,6 +130,60 @@ PYTHONPATH     = "E:/python_packages"
 
 HOVER_CACHE    = INBOX_DIR / "_hover_cache"  # 悬停预览缩略图缓存
 UID_MANIFEST_FILE = BASE_DIR / ".generation_uid_manifest.json"  # 传给 Lovart 的 UID 清单
+
+AI_TRASH_DIR   = BASE_DIR / "_ai_trash"        # AI 图回收站
+AI_THUMB_DIR   = BASE_DIR / "_ai_review_thumbs"  # AI 对比页缩略图缓存
+
+# Lovart 处理记录文件：重新生图时需要清除对应 hash，否则 Lovart 会跳过
+LOVART_TRACK_FILE = Path("E:/Claude code/lovart-official/.processed_track.json")
+
+# ============================================================================
+# 工具函数：处理 Lovart 去重记录
+# ============================================================================
+def _compute_sha256(path: str) -> str:
+    """计算文件 SHA256（与 Lovart run_official_v53.py 一致）"""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _load_lovart_track() -> list:
+    """读取 Lovart 处理记录 track 文件"""
+    if not LOVART_TRACK_FILE.exists():
+        return []
+    try:
+        return json.loads(LOVART_TRACK_FILE.read_text(encoding='utf-8'))
+    except Exception:
+        return []
+
+
+def _save_lovart_track(track: list):
+    """写入 Lovart 处理记录 track 文件"""
+    try:
+        LOVART_TRACK_FILE.write_text(json.dumps(track, indent=2, ensure_ascii=False), encoding='utf-8')
+    except Exception as e:
+        print(f"[WARN] 保存 Lovart track 失败: {e}", flush=True)
+
+
+def _remove_from_lovart_track(img_path: Path) -> int:
+    """从 Lovart track 中移除指定图片的 hash 记录，强制下次重新处理。
+    返回移除的条目数。"""
+    if not img_path.exists():
+        return 0
+    try:
+        img_hash = _compute_sha256(str(img_path))
+    except Exception:
+        return 0
+    track = _load_lovart_track()
+    orig_len = len(track)
+    track = [e for e in track if e.get("hash") != img_hash]
+    removed = orig_len - len(track)
+    if removed:
+        _save_lovart_track(track)
+    return removed
+
 
 # ============================================================================
 # 工具函数：Windows 下最小化启动子进程（不抢焦点）
@@ -640,6 +707,132 @@ def empty_trash_to_system_recycle() -> int:
 
 
 # ---------------------------------------------------------------------------
+# AI 图回收站（用于 ai-review 页面临时删除/还原）
+# ---------------------------------------------------------------------------
+
+def _ai_trash_meta_path(dx: str) -> Path:
+    """返回某 DX 的回收站元数据文件路径"""
+    return AI_TRASH_DIR / dx / ".trash_meta.json"
+
+
+def move_ai_to_trash(dx: str, filename: str) -> tuple:
+    """将 AI 图从 01_AI 移到回收站。返回 (ok, msg)"""
+    if not re.match(r"^DX\d+$", dx):
+        return False, "无效的 DX 编号"
+    safe = os.path.basename(filename)
+    src = PROJECTS_DIR / dx / "01_AI" / safe
+    if not src.exists():
+        return False, f"文件不存在: {dx}/01_AI/{safe}"
+
+    AI_TRASH_DIR.mkdir(parents=True, exist_ok=True)
+    trash_dx = AI_TRASH_DIR / dx
+    trash_dx.mkdir(parents=True, exist_ok=True)
+    dst = trash_dx / safe
+
+    # 防重名
+    if dst.exists():
+        stem, ext = os.path.splitext(safe)
+        dst = trash_dx / f"{stem}_{int(time.time())}{ext}"
+
+    try:
+        shutil.move(str(src), str(dst))
+    except Exception as e:
+        return False, f"移动失败: {e}"
+
+    # 记录元数据
+    meta = {}
+    meta_path = _ai_trash_meta_path(dx)
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            meta = {}
+    meta[dst.name] = {
+        "original_path": f"02_PROJECTS/{dx}/01_AI/{safe}",
+        "deleted_at": datetime.now().isoformat(),
+        "dx": dx,
+    }
+    try:
+        meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+    # 清理 AI 对比缩略图缓存
+    for tf in AI_THUMB_DIR.glob(f"{dx}__{safe}.*"):
+        try:
+            tf.unlink()
+        except Exception:
+            pass
+
+    return True, f"{safe} 已移入 AI 回收站"
+
+
+def restore_ai_from_trash(dx: str, filename: str) -> tuple:
+    """从回收站还原 AI 图到 01_AI。返回 (ok, msg)"""
+    if not re.match(r"^DX\d+$", dx):
+        return False, "无效的 DX 编号"
+    safe = os.path.basename(filename)
+    src = AI_TRASH_DIR / dx / safe
+    if not src.exists():
+        return False, f"回收站中不存在: {safe}"
+
+    ai_dir = PROJECTS_DIR / dx / "01_AI"
+    ai_dir.mkdir(parents=True, exist_ok=True)
+    dst = ai_dir / safe
+
+    # 防重名
+    if dst.exists():
+        stem, ext = os.path.splitext(safe)
+        dst = ai_dir / f"{stem}_restored{ext}"
+
+    try:
+        shutil.move(str(src), str(dst))
+    except Exception as e:
+        return False, f"还原失败: {e}"
+
+    # 清理元数据
+    meta_path = _ai_trash_meta_path(dx)
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta.pop(safe, None)
+            meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    return True, f"{safe} 已还原到 {dx}/01_AI"
+
+
+def list_ai_trash() -> list:
+    """列出 AI 回收站中的所有文件"""
+    items = []
+    if not AI_TRASH_DIR.exists():
+        return items
+    for dx_dir in sorted(AI_TRASH_DIR.iterdir()):
+        if not dx_dir.is_dir() or not re.match(r"^DX\d+$", dx_dir.name):
+            continue
+        dx = dx_dir.name
+        meta = {}
+        meta_path = _ai_trash_meta_path(dx)
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {}
+        for f in sorted(dx_dir.iterdir()):
+            if not f.is_file() or f.name.startswith("."):
+                continue
+            info = meta.get(f.name, {})
+            items.append({
+                "dx": dx,
+                "filename": f.name,
+                "deleted_at": info.get("deleted_at", ""),
+                "preview_url": f"/api/ai-review/trash-thumb?dx={dx}&file={f.name}",
+            })
+    return items
+
+
+# ---------------------------------------------------------------------------
 # INBOX 重命名：B/W → BW（如 2B.png → 2BW.png）
 # ---------------------------------------------------------------------------
 
@@ -744,6 +937,266 @@ def _scan_upload_projects():
     return projects
 
 
+def _scan_ai_review_projects():
+    """扫描所有 DX 项目的 01_AI 目录，直接在同一目录内配对原图与 AI 生成图。
+
+    约定：每个 DX/01_AI 中同时存放原图（如 1BW.png）和生成图（如 DX0283_BW.png）。
+    配对方式：
+      1. 优先读取 source_map.json，并用 Lovart registry 根据 src_id 找到 original_name。
+      2. 回退到 uid_map / sidecar 元数据。
+      3. 再回退按 role 后缀从 01_AI 中找同 role 的原图。
+
+    返回结构：
+    [
+      {
+        "dx": "DX0287",
+        "date": "260703",
+        "groups": [
+          {
+            "group_id": "G_00123",
+            "design_number": 1,
+            "role": "BW",
+            "source_file": "1BW.png",
+            "ai_file": "DX0287_BW.png",
+            "ai_exists": True,
+            "paired": True
+          }
+        ]
+      }
+    ]
+    """
+    projects = []
+    if not PROJECTS_DIR.exists():
+        return projects
+
+    INBOX_NAME_RE = re.compile(r'^(\d+)(B|W|BW|WB)\.(png|jpg|jpeg|webp)$', re.IGNORECASE)
+
+    for d in sorted(PROJECTS_DIR.iterdir()):
+        if not d.is_dir() or not re.match(r"^DX\d+$", d.name):
+            continue
+        dx = d.name
+        ai_dir = d / "01_AI"
+        if not ai_dir.is_dir():
+            continue
+
+        # 读取目录内所有图片
+        all_files = []
+        for f in sorted(ai_dir.iterdir()):
+            if not f.is_file():
+                continue
+            if not f.name.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                continue
+            if '_副本' in f.name or '已归档' in f.name or '原图' in f.name:
+                continue
+            all_files.append(f.name)
+
+        # 分离原图与 AI 生成图
+        source_files = [f for f in all_files if INBOX_NAME_RE.match(f)]
+        ai_files = [f for f in all_files if not INBOX_NAME_RE.match(f) and f.startswith(f"{dx}_")]
+
+        if not ai_files:
+            continue
+
+        # 加载 source_map + Lovart registry，建立 ai_file -> source_file
+        sm_map = {}
+        sm_path = d / "source_map.json"
+        if sm_path.exists():
+            try:
+                lovart_reg_path = Path("D:/Semems WB/WB_REGISTRY/registry.json")
+                lovart_reg = {}
+                if lovart_reg_path.exists():
+                    try:
+                        with open(lovart_reg_path, 'r', encoding='utf-8') as lf:
+                            lovart_reg = json.load(lf)
+                    except Exception:
+                        lovart_reg = {}
+
+                with open(sm_path, 'r', encoding='utf-8') as f:
+                    sm = json.load(f)
+                for src in sm.get("sources", []):
+                    ai_file = src.get("file", "")
+                    orig = src.get("original_name", "")
+                    src_id = src.get("src_id", "")
+                    if not orig and src_id and src_id in lovart_reg:
+                        orig = lovart_reg[src_id].get("original_name", "")
+                    if ai_file:
+                        sm_map[ai_file] = orig
+            except Exception:
+                pass
+
+        groups = []
+        paired_ai = set()
+
+        # 1. source_map / Lovart registry 精确配对
+        for ai_file in ai_files:
+            source_name = sm_map.get(ai_file, "")
+            role = _role_from_ai_name(ai_file, dx)
+            if source_name and source_name in source_files:
+                paired_ai.add(ai_file)
+                groups.append({
+                    "group_id": "",
+                    "design_number": _design_number_from_inbox(source_name),
+                    "role": role,
+                    "source_file": source_name,
+                    "ai_file": ai_file,
+                    "ai_exists": True,
+                    "paired": True,
+                })
+
+        # 2. uid_map / sidecar 配对（覆盖或补充）
+        if wb_meta is not None:
+            try:
+                uid_map_data = wb_meta.read_uid_map(d)
+                images = uid_map_data.get("images", {})
+                source_entries = {}
+                ai_entries = {}
+                for uid, info in images.items():
+                    stage = info.get("stage", "")
+                    file_path = Path(info.get("file", "")).name
+                    role = info.get("role", "")
+                    group_id = info.get("group_id", "")
+                    if stage in ("inbox",) and file_path and INBOX_NAME_RE.match(file_path):
+                        source_entries[uid] = {"role": role, "group_id": group_id, "file": file_path}
+                    elif stage in ("ai", "ai_gen") and file_path:
+                        ai_entries[uid] = {"role": role, "group_id": group_id, "file": file_path}
+
+                for uid, src_info in source_entries.items():
+                    ai_info = ai_entries.get(uid)
+                    if not ai_info:
+                        continue
+                    source_name = src_info["file"]
+                    ai_file = ai_info["file"]
+                    if ai_file not in ai_files or source_name not in source_files:
+                        continue
+                    if ai_file in paired_ai:
+                        # 更新已有条目
+                        for g in groups:
+                            if g["ai_file"] == ai_file:
+                                g["source_file"] = source_name
+                                g["group_id"] = src_info.get("group_id", "")
+                                g["paired"] = True
+                                break
+                    else:
+                        paired_ai.add(ai_file)
+                        groups.append({
+                            "group_id": src_info.get("group_id", ""),
+                            "design_number": _design_number_from_inbox(source_name),
+                            "role": src_info.get("role", ""),
+                            "source_file": source_name,
+                            "ai_file": ai_file,
+                            "ai_exists": True,
+                            "paired": True,
+                        })
+            except Exception as e:
+                print(f"[AIReview] {dx} uid_map 配对失败: {e}")
+
+        # 3. 把仍未配对的 AI 图按 role 后缀找同 role 原图（最后的回退）
+        for ai_file in ai_files:
+            if ai_file in paired_ai:
+                continue
+            role = _role_from_ai_name(ai_file, dx)
+            candidates = [f for f in source_files if _role_from_inbox(f) == role]
+            source_name = candidates[0] if candidates else ""
+            if source_name:
+                paired_ai.add(ai_file)
+            groups.append({
+                "group_id": "",
+                "design_number": _design_number_from_inbox(source_name),
+                "role": role,
+                "source_file": source_name,
+                "ai_file": ai_file,
+                "ai_exists": True,
+                "paired": source_name != "",
+            })
+
+        if not groups:
+            continue
+
+        # 合并同一 source_file + role 的多个 AI 变体
+        merged = {}
+        for g in groups:
+            key = (g.get("source_file", ""), g.get("role", "").upper())
+            if key not in merged:
+                merged[key] = {
+                    "group_id": g.get("group_id", ""),
+                    "design_number": g.get("design_number", 0),
+                    "role": g.get("role", ""),
+                    "source_file": g.get("source_file", ""),
+                    "ai_files": [],
+                    "paired": False,
+                    "ai_exists": False,
+                }
+            mg = merged[key]
+            if g.get("ai_file"):
+                mg["ai_files"].append(g["ai_file"])
+            if g.get("paired"):
+                mg["paired"] = True
+            if g.get("ai_exists"):
+                mg["ai_exists"] = True
+            if g.get("group_id") and not mg["group_id"]:
+                mg["group_id"] = g["group_id"]
+        groups = list(merged.values())
+
+        # 排序：已配对在前，再按编号、role
+        role_order = {"BW": 0, "B": 1, "W": 2, "WB": 3}
+        groups.sort(key=lambda g: (
+            0 if g["paired"] else 1,
+            g["design_number"],
+            role_order.get(g["role"].upper(), 99)
+        ))
+
+        # 日期取 AI 图最新 mtime
+        latest_mtime = max((ai_dir / f).stat().st_mtime for f in ai_files if (ai_dir / f).exists())
+        dx_date = time.strftime("%y%m%d", time.localtime(latest_mtime)) if latest_mtime else ""
+
+        projects.append({
+            "dx": dx,
+            "date": dx_date,
+            "groups": groups,
+        })
+
+    # 排序：未配对/缺图的排前面，其次按日期降序
+    projects.sort(key=lambda p: (
+        0 if any(not g["paired"] or not g["ai_exists"] for g in p["groups"]) else 1,
+        p["date"]
+    ), reverse=True)
+
+    return projects
+
+
+def _role_from_inbox(filename: str) -> str:
+    """从 INBOX 文件名提取 role，如 12BW.png -> BW"""
+    if not filename:
+        return ""
+    m = re.match(r'^(\d+)(B|W|BW|WB)\.(png|jpg|jpeg|webp)$', filename, re.IGNORECASE)
+    if m:
+        return m.group(2).upper()
+    return ""
+
+def _design_number_from_inbox(filename: str) -> int:
+    """从 INBOX 文件名提取编号，如 12B.png -> 12"""
+    if not filename:
+        return 0
+    m = re.match(r"^(\d+)(B|W|BW|WB)\.png$", filename, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    return 0
+
+
+def _role_from_ai_name(filename: str, dx: str) -> str:
+    """从 AI 文件名推断 role，如 DX0287_BW.png -> BW, DX0287_B2.png -> B"""
+    if not filename:
+        return ""
+    stem, _ = os.path.splitext(filename)
+    prefix = f"{dx}_"
+    if stem.startswith(prefix):
+        suffix = stem[len(prefix):]
+        m = re.match(r'^([BW]+)\d*$', suffix, re.IGNORECASE)
+        if m:
+            return m.group(1).upper()
+    return ""
+
+
 def _get_upload_thumb(dx: str, filename: str):
     """返回 03_UPLOAD 缩略图路径（不存在则生成 220px 高）。
     优先使用已缓存缩略图；透明 PNG 则合成白底。"""
@@ -784,6 +1237,59 @@ def _get_upload_thumb(dx: str, filename: str):
     except Exception as e:
         print(f"[UploadThumbError] {dx}/{filename}: {e}")
         return None
+
+
+def _get_ai_thumb(dx: str, filename: str, source: str = "01_AI"):
+    """返回 01_AI 或回收站中 AI 图的缩略图路径（不存在则生成 300px 高）。
+    source: '01_AI' 或 'trash'"""
+    if "/" in filename or "\\" in filename or not re.match(r"^DX\d+$", dx):
+        return None
+    if source == "trash":
+        src = AI_TRASH_DIR / dx / filename
+    else:
+        src = PROJECTS_DIR / dx / "01_AI" / filename
+    if not src.exists():
+        return None
+    AI_THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    safe_name = filename.replace("/", "_").replace("\\", "_")
+    thumb_file = AI_THUMB_DIR / f"{dx}__{safe_name}.jpg"
+    if thumb_file.exists() and thumb_file.stat().st_mtime >= src.stat().st_mtime:
+        return thumb_file
+    try:
+        from PIL import Image
+        img = Image.open(src)
+        if img.mode == 'RGBA':
+            alpha = img.getchannel('A')
+            if alpha.getextrema()[0] == 255:
+                img = img.convert('RGB')
+            else:
+                bg = Image.new('RGBA', img.size, (255, 255, 255, 255))
+                img = Image.alpha_composite(bg, img).convert('RGB')
+        elif img.mode == 'P':
+            img = img.convert('RGBA')
+            bg = Image.new('RGBA', img.size, (255, 255, 255, 255))
+            img = Image.alpha_composite(bg, img).convert('RGB')
+        else:
+            img = img.convert('RGB')
+        w, h = img.size
+        target_h = 300
+        new_w = max(1, int(w * target_h / h))
+        img = img.resize((new_w, target_h), Image.LANCZOS)
+        img.save(str(thumb_file), "JPEG", quality=85, optimize=True)
+        return thumb_file
+    except Exception as e:
+        print(f"[AIReviewThumbError] {dx}/{filename}: {e}")
+        return None
+
+
+def _get_ai_original(dx: str, filename: str):
+    """返回 01_AI 中 AI 图的原图路径"""
+    if "/" in filename or "\\" in filename or not re.match(r"^DX\d+$", dx):
+        return None
+    src = PROJECTS_DIR / dx / "01_AI" / filename
+    if not src.exists():
+        return None
+    return src
 
 
 # ---------------------------------------------------------------------------
@@ -1038,8 +1544,96 @@ def api_generate():
 
 @app.route('/api/status')
 def api_status():
-    """返回当前任务状态"""
-    resp = jsonify(task_state)
+    """返回当前任务状态（含派生字段，便于前端展示）"""
+    data = dict(task_state)
+
+    # 运行时长
+    started = data.get("started_at")
+    completed = data.get("completed_at")
+    now = datetime.now()
+    elapsed = 0
+    if started:
+        try:
+            start_dt = datetime.fromisoformat(started)
+            end_dt = datetime.fromisoformat(completed) if completed else now
+            elapsed = max(0, (end_dt - start_dt).total_seconds())
+        except Exception:
+            pass
+    data["elapsed_seconds"] = int(elapsed)
+
+    # 从日志解析成功/失败数量
+    success_count = 0
+    fail_count = 0
+    current_key = ""
+    current_dx = ""
+    output_folder = ""
+    for line in data.get("log", []):
+        m = re.search(r'生成\s*(\d+)\s*张[,，]\s*失败\s*(\d+)\s*张', line)
+        if m:
+            success_count = int(m.group(1))
+            fail_count = int(m.group(2))
+        m = re.search(r'Key#(\d+)', line)
+        if m:
+            current_key = f"Key#{m.group(1)}"
+        # 当前 DX：从输出路径或任务进度里找
+        m = re.search(r'输出到\s+(DX\d+)/01_AI', line)
+        if m:
+            current_dx = m.group(1)
+        # Lovart 输出日志：name -> DXxxx/01_AI/name.png
+        m = re.search(r'->\s*(DX\d+)/01_AI/', line)
+        if m:
+            current_dx = m.group(1)
+
+    # 目标 DX：重新生图时 Bridge 已指定，优先使用，避免同名文件猜错
+    # reuse_dx 可能是 str（单文件）或 dict（批量）。批量时跳过单 DX 输出文件夹逻辑。
+    target_dx = data.get("reuse_dx") or data.get("target_dx") or ""
+    if target_dx and isinstance(target_dx, str) and (PROJECTS_DIR / target_dx / "01_AI").exists():
+        output_folder = target_dx
+        if not current_dx:
+            current_dx = target_dx
+
+    # 兜底：根据 selected_files + source_map 找到最终输出 DX。
+    # 批量重新生图时跳过此猜测，避免返回无关 DX。
+    is_batch = data.get("batch") is True
+    if data.get("status") in ("completed", "error") and not output_folder and not is_batch:
+        for dx in sorted(os.listdir(PROJECTS_DIR)) if PROJECTS_DIR.exists() else []:
+            if not dx.startswith("DX"):
+                continue
+            ai_dir = PROJECTS_DIR / dx / "01_AI"
+            if not ai_dir.exists():
+                continue
+            for src in data.get("selected_files", []):
+                if (ai_dir / src).exists():
+                    output_folder = dx
+                    break
+            if output_folder:
+                break
+
+    # 批量任务：若未从日志解析到 current_dx，使用 affected_dx 中第一个
+    if is_batch and not current_dx:
+        affected = data.get("affected_dx", [])
+        if affected:
+            current_dx = affected[0]
+
+    # 运行状态细化：completed 但有失败时，前端需要明确感知
+    display_status = data.get("status", "idle")
+    if display_status == "completed":
+        if fail_count > 0 and success_count == 0:
+            display_status = "error"
+        elif fail_count > 0 and success_count > 0:
+            display_status = "partial"
+
+    data["success_count"] = success_count
+    data["fail_count"] = fail_count
+    data["current_key"] = current_key
+    data["current_dx"] = current_dx or output_folder
+    data["output_folder"] = output_folder
+    data["display_status"] = display_status
+
+    # 最新日志（最多 20 条）
+    data["latest_log"] = data.get("log", [])[-20:]
+
+    resp = jsonify(data)
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp.headers["Pragma"] = "no-cache"
     return resp
@@ -1316,6 +1910,439 @@ def api_rename():
         return jsonify({"ok": False, "error": msg}), 400
 
 
+# ============================================================================
+# AI 生图对比页面 API
+# ============================================================================
+
+@app.route('/ai-review')
+def ai_review_page():
+    """AI 生图对比页面"""
+    html_file = Path(__file__).parent / "ai_review.html"
+    if html_file.exists():
+        return send_file(str(html_file))
+    return "<h1>ai_review.html not found</h1><p>请确保 ai_review.html 与 bridge.py 在同一目录</p>", 404
+
+
+@app.route('/api/ai-review/projects')
+def api_ai_review_projects():
+    """返回所有 DX 的 INBOX 原图与 01_AI 生成图配对列表"""
+    try:
+        projects = _scan_ai_review_projects()
+        dates = sorted({p["date"] for p in projects if p["date"]}, reverse=True)
+        return jsonify({"ok": True, "projects": projects, "dates": dates, "total": len(projects)})
+    except Exception as e:
+        import traceback
+        print(f"[AIReview] /api/ai-review/projects 错误: {e}\n{traceback.format_exc()}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route('/api/ai-review/thumb')
+def api_ai_review_thumb():
+    """返回 01_AI 中 AI 图的缩略图"""
+    dx = request.args.get("dx", "").strip()
+    filename = request.args.get("file", "").strip()
+    if not re.match(r"^DX\d+$", dx) or not filename:
+        return "bad params", 400
+    thumb = _get_ai_thumb(dx, filename, source="01_AI")
+    if not thumb:
+        return "no thumb", 404
+    r = make_response(send_file(str(thumb), mimetype="image/jpeg"))
+    r.headers["Cache-Control"] = "public, max-age=3600"
+    return r
+
+
+@app.route('/api/ai-review/original')
+def api_ai_review_original():
+    """返回 01_AI 中 AI 图的原图（供悬停放大）"""
+    dx = request.args.get("dx", "").strip()
+    filename = request.args.get("file", "").strip()
+    if not re.match(r"^DX\d+$", dx) or not filename:
+        return "bad params", 400
+    src = _get_ai_original(dx, filename)
+    if not src:
+        return "not found", 404
+    ct = "image/png" if filename.lower().endswith(".png") else "image/jpeg"
+    r = make_response(send_file(str(src), mimetype=ct))
+    r.headers["Cache-Control"] = "public, max-age=3600"
+    return r
+
+
+@app.route('/api/ai-review/trash-thumb')
+def api_ai_review_trash_thumb():
+    """返回回收站中 AI 图的缩略图"""
+    dx = request.args.get("dx", "").strip()
+    filename = request.args.get("file", "").strip()
+    if not re.match(r"^DX\d+$", dx) or not filename:
+        return "bad params", 400
+    thumb = _get_ai_thumb(dx, filename, source="trash")
+    if not thumb:
+        return "no thumb", 404
+    r = make_response(send_file(str(thumb), mimetype="image/jpeg"))
+    r.headers["Cache-Control"] = "public, max-age=3600"
+    return r
+
+
+def _stage_source_for_regen(source_path: Path) -> tuple:
+    """把 DX/01_AI 中的原图临时复制到 INBOX，处理同名冲突。
+
+    返回: (inbox_path, inbox_conflict_path, error_message)
+    - inbox_path: INBOX 中的目标路径
+    - inbox_conflict_path: 被移走的冲突文件路径（无冲突时为 None）
+    - error_message: 失败时的错误信息（成功时为 None）
+    """
+    source_file = source_path.name
+    inbox_path = INBOX_DIR / source_file
+    inbox_conflict_path = None
+    try:
+        source_md5 = compute_md5(str(source_path))
+        if inbox_path.exists():
+            inbox_md5 = compute_md5(str(inbox_path))
+            if inbox_md5 and inbox_md5 != source_md5:
+                conflict_dir = AI_TRASH_DIR / "_inbox_conflicts"
+                conflict_dir.mkdir(parents=True, exist_ok=True)
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                conflict_name = f"{Path(source_file).stem}_{ts}{Path(source_file).suffix}"
+                inbox_conflict_path = conflict_dir / conflict_name
+                shutil.move(str(inbox_path), str(inbox_conflict_path))
+                log(f"INBOX 同名冲突已移走: {source_file} -> {inbox_conflict_path.name}")
+        shutil.copy2(str(source_path), str(inbox_path))
+        return inbox_path, inbox_conflict_path, None
+    except Exception as e:
+        return inbox_path, inbox_conflict_path, f"复制原图到 INBOX 失败: {e}"
+
+
+def _restore_inbox_after_regen(inbox_path: Path, inbox_conflict_path: Path = None):
+    """重新生图结束后清理临时原图，冲突文件保留在暂存区。"""
+    source_file = inbox_path.name
+    try:
+        if inbox_path.exists():
+            try:
+                inbox_path.unlink()
+                log(f"INBOX 临时原图已清理: {source_file}")
+            except Exception as e:
+                log(f"WARN: 清理 INBOX 临时原图失败: {e}")
+        if inbox_conflict_path and inbox_conflict_path.exists():
+            log(f"INBOX 冲突文件保留在回收站: {inbox_conflict_path.name}")
+    except Exception as e:
+        log(f"WARN: 恢复/清理 INBOX 失败 {source_file}: {e}")
+
+
+def _cleanup_duplicate_sources(dx: str, source_file: str):
+    """删除 Lovart 归档源图时产生的重复副本（如 17bw(2).png）。"""
+    try:
+        ai_dir = PROJECTS_DIR / dx / "01_AI"
+        original = ai_dir / source_file
+        if not original.exists():
+            return
+        orig_md5 = compute_md5(str(original))
+        stem = Path(source_file).stem
+        for f in ai_dir.iterdir():
+            if not f.is_file():
+                continue
+            if re.match(rf'^{re.escape(stem)}\(\d+\)\.png$', f.name, re.IGNORECASE):
+                try:
+                    if compute_md5(str(f)) == orig_md5:
+                        f.unlink()
+                        log(f"删除重复源图副本: {f.name}")
+                except Exception:
+                    pass
+    except Exception as e:
+        log(f"WARN: 清理重复源图副本失败: {e}")
+
+
+@app.route('/api/ai-review/regenerate', methods=['POST'])
+def api_ai_review_regenerate():
+    """对指定 01_AI 中的原图重新生图（会重新生成其所在整组）。"""
+    global task_state
+    data = request.get_json(silent=True) or {}
+    dx = data.get("dx", "").strip()
+    source_file = data.get("source_file", "").strip()
+
+    if not dx or not source_file:
+        return jsonify({"ok": False, "error": "缺少 dx 或 source_file"}), 400
+    if not re.match(r"^DX\d+$", dx):
+        return jsonify({"ok": False, "error": "无效的 DX 编号"}), 400
+
+    source_path = PROJECTS_DIR / dx / "01_AI" / source_file
+    if not source_path.exists():
+        return jsonify({"ok": False, "error": f"{dx}/01_AI 中不存在 {source_file}"}), 404
+
+    with _lock:
+        if task_state["status"] == "running":
+            return jsonify({"ok": False, "error": "已有生图任务正在运行，请等待完成"}), 409
+
+    inbox_path, inbox_conflict_path, err = _stage_source_for_regen(source_path)
+    if err:
+        return jsonify({"ok": False, "error": err}), 500
+
+    # 找到该文件所在 group
+    inbox_groups = group_inbox_files()
+    target_group = None
+    for g in inbox_groups:
+        if any(img["filename"] == source_file for img in g["images"]):
+            target_group = g
+            break
+    if not target_group:
+        # 复制错了，清理掉；如有冲突文件则移回
+        try:
+            if inbox_path.exists():
+                inbox_path.unlink()
+            if inbox_conflict_path and inbox_conflict_path.exists():
+                shutil.move(str(inbox_conflict_path), str(inbox_path))
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": f"无法确定 {source_file} 的分组"}), 400
+
+    # 清除 Lovart 处理记录里该原图的 hash，强制重新生成
+    try:
+        removed = _remove_from_lovart_track(inbox_path)
+        if removed:
+            log(f"已清除 {removed} 条 Lovart 处理记录，强制重新生图: {source_file}")
+    except Exception as e:
+        log(f"WARN: 清除 Lovart 处理记录失败: {e}")
+
+    # 启动后台生图任务
+    task_id = f"TASK_REGEN_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    with _lock:
+        task_state = {
+            "status": "starting",
+            "display_status": "starting",
+            "progress": "初始化重新生图...",
+            "started_at": datetime.now().isoformat(),
+            "completed_at": None,
+            "log": [],
+            "selected_files": [source_file],
+            "groups_processed": 0,
+            "groups_total": 1,
+            "task_id": task_id,
+            "reuse_dx": dx,
+        }
+        _save_state()
+
+    def _regen_wrapper():
+        try:
+            _run_generation([source_file], task_id, reuse_dx=dx)
+        except Exception as e:
+            log(f"重新生图任务异常: {e}")
+        finally:
+            _restore_inbox_after_regen(inbox_path, inbox_conflict_path)
+            _cleanup_duplicate_sources(dx, source_file)
+
+    t = threading.Thread(target=_regen_wrapper, daemon=True)
+    t.start()
+
+    return jsonify({
+        "ok": True,
+        "task_id": task_id,
+        "msg": f"已启动重新生图：{dx}/{source_file}（整组 {len(target_group['images'])} 张）",
+    })
+
+
+@app.route('/api/ai-review/regenerate-batch', methods=['POST'])
+def api_ai_review_regenerate_batch():
+    """批量重新生图：支持勾选多个 01_AI 原图，利用 Lovart 并发生成。
+
+    请求体：{items: [{dx, source_file}]}
+    限制：同一批次内所有 source_file 必须全局唯一（不允许跨 DX 同名），
+          因为 LOVART_REGEN_DX_MAP 以文件名为 key。
+    """
+    global task_state
+    data = request.get_json(silent=True) or {}
+    items = data.get("items", [])
+
+    if not items or not isinstance(items, list):
+        return jsonify({"ok": False, "error": "缺少 items"}), 400
+
+    # 校验每个条目
+    seen_files = set()
+    dup_files = set()
+    validated = []
+    for item in items:
+        dx = str(item.get("dx", "")).strip()
+        source_file = str(item.get("source_file", "")).strip()
+        if not dx or not source_file:
+            continue
+        if not re.match(r"^DX\d+$", dx):
+            return jsonify({"ok": False, "error": f"无效的 DX 编号: {dx}"}), 400
+        source_path = PROJECTS_DIR / dx / "01_AI" / source_file
+        if not source_path.exists():
+            return jsonify({"ok": False, "error": f"{dx}/01_AI 中不存在 {source_file}"}), 404
+        if source_file in seen_files:
+            dup_files.add(source_file)
+        seen_files.add(source_file)
+        validated.append({"dx": dx, "source_file": source_file, "source_path": source_path})
+
+    if not validated:
+        return jsonify({"ok": False, "error": "没有有效的重新生图项"}), 400
+    if dup_files:
+        return jsonify({
+            "ok": False,
+            "error": f"同一批次内不允许同名文件（跨 DX）：{', '.join(sorted(dup_files))}"
+        }), 409
+
+    with _lock:
+        if task_state["status"] == "running":
+            return jsonify({"ok": False, "error": "已有生图任务正在运行，请等待完成"}), 409
+
+    # 准备 INBOX：复制所有源文件，处理同名冲突
+    staged = []  # [{dx, source_file, inbox_path, conflict_path}]
+    try:
+        for v in validated:
+            inbox_path, inbox_conflict_path, err = _stage_source_for_regen(v["source_path"])
+            if err:
+                # 回滚已复制的文件
+                for s in staged:
+                    _restore_inbox_after_regen(s["inbox_path"], s["conflict_path"])
+                return jsonify({"ok": False, "error": err}), 500
+            staged.append({
+                "dx": v["dx"],
+                "source_file": v["source_file"],
+                "inbox_path": inbox_path,
+                "conflict_path": inbox_conflict_path,
+            })
+    except Exception as e:
+        for s in staged:
+            _restore_inbox_after_regen(s["inbox_path"], s["conflict_path"])
+        return jsonify({"ok": False, "error": f"准备 INBOX 失败: {e}"}), 500
+
+    # 校验 INBOX 分组（至少每个文件都能被识别到）
+    inbox_groups = group_inbox_files()
+    inbox_files_set = {s["source_file"] for s in staged}
+    matched_files = set()
+    for g in inbox_groups:
+        for img in g["images"]:
+            if img["filename"] in inbox_files_set:
+                matched_files.add(img["filename"])
+    if len(matched_files) != len(inbox_files_set):
+        missing = inbox_files_set - matched_files
+        for s in staged:
+            _restore_inbox_after_regen(s["inbox_path"], s["conflict_path"])
+        return jsonify({"ok": False, "error": f"以下文件无法确定分组: {', '.join(sorted(missing))}"}), 400
+
+    # 清除 Lovart 处理记录
+    for s in staged:
+        try:
+            removed = _remove_from_lovart_track(s["inbox_path"])
+            if removed:
+                log(f"已清除 {removed} 条 Lovart 处理记录，强制重新生图: {s['source_file']}")
+        except Exception as e:
+            log(f"WARN: 清除 Lovart 处理记录失败 {s['source_file']}: {e}")
+
+    # 启动后台生图任务
+    selected_files = [s["source_file"] for s in staged]
+    regen_map = {s["source_file"]: s["dx"] for s in staged}
+    affected_dx = sorted({s["dx"] for s in staged})
+    task_id = f"TASK_REGEN_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    with _lock:
+        task_state = {
+            "status": "starting",
+            "display_status": "starting",
+            "progress": f"初始化批量重新生图 {len(selected_files)} 张...",
+            "started_at": datetime.now().isoformat(),
+            "completed_at": None,
+            "log": [],
+            "selected_files": selected_files,
+            "groups_processed": 0,
+            "groups_total": len(selected_files),
+            "task_id": task_id,
+            "reuse_dx": regen_map,
+            "batch": True,
+            "affected_dx": affected_dx,
+        }
+        _save_state()
+
+    def _batch_regen_wrapper():
+        try:
+            _run_generation(selected_files, task_id, reuse_dx=regen_map)
+        except Exception as e:
+            log(f"批量重新生图任务异常: {e}")
+        finally:
+            for s in staged:
+                _restore_inbox_after_regen(s["inbox_path"], s["conflict_path"])
+                _cleanup_duplicate_sources(s["dx"], s["source_file"])
+
+    t = threading.Thread(target=_batch_regen_wrapper, daemon=True)
+    t.start()
+
+    return jsonify({
+        "ok": True,
+        "task_id": task_id,
+        "msg": f"已启动批量重新生图：{len(selected_files)} 张，涉及 {len(affected_dx)} 个 DX（{', '.join(affected_dx)}）",
+    })
+
+
+@app.route('/api/ai-review/delete-ai', methods=['POST'])
+def api_ai_review_delete_ai():
+    """将 AI 图移入回收站"""
+    data = request.get_json(silent=True) or {}
+    dx = data.get("dx", "").strip()
+    filename = data.get("file", "").strip()
+    if not dx or not filename:
+        return jsonify({"ok": False, "error": "缺少 dx 或 file"}), 400
+    ok, msg = move_ai_to_trash(dx, filename)
+    if ok:
+        return jsonify({"ok": True, "msg": msg})
+    return jsonify({"ok": False, "error": msg}), 500
+
+
+@app.route('/api/ai-review/restore-ai', methods=['POST'])
+def api_ai_review_restore_ai():
+    """从回收站还原 AI 图"""
+    data = request.get_json(silent=True) or {}
+    dx = data.get("dx", "").strip()
+    filename = data.get("file", "").strip()
+    if not dx or not filename:
+        return jsonify({"ok": False, "error": "缺少 dx 或 file"}), 400
+    ok, msg = restore_ai_from_trash(dx, filename)
+    if ok:
+        return jsonify({"ok": True, "msg": msg})
+    return jsonify({"ok": False, "error": msg}), 500
+
+
+@app.route('/api/ai-review/trash')
+def api_ai_review_trash():
+    """返回 AI 图回收站列表"""
+    try:
+        items = list_ai_trash()
+        return jsonify({"ok": True, "items": items, "count": len(items)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route('/api/ai-review/empty-trash', methods=['POST'])
+def api_ai_review_empty_trash():
+    """永久清空 AI 图回收站"""
+    if not AI_TRASH_DIR.exists():
+        return jsonify({"ok": True, "count": 0, "msg": "回收站为空"})
+    count = 0
+    errors = []
+    for dx_dir in list(AI_TRASH_DIR.iterdir()):
+        if not dx_dir.is_dir():
+            continue
+        for f in list(dx_dir.iterdir()):
+            if not f.is_file():
+                continue
+            try:
+                f.unlink()
+                count += 1
+            except Exception as e:
+                errors.append(f"{dx_dir.name}/{f.name}: {e}")
+        # 尝试删除空目录
+        try:
+            dx_dir.rmdir()
+        except Exception:
+            pass
+    # 尝试删除根目录
+    try:
+        AI_TRASH_DIR.rmdir()
+    except Exception:
+        pass
+    msg = f"已清空 {count} 个文件"
+    if errors:
+        msg += f"，{len(errors)} 个失败"
+    return jsonify({"ok": True, "count": count, "errors": errors, "msg": msg})
+
+
 @app.route('/api/registry/query')
 def api_registry_query():
     """查询注册表中单张图片的信息（支持文件名 / UID / MD5）"""
@@ -1532,20 +2559,53 @@ def api_lineage_register():
 
 @app.route('/api/launch-check-rem', methods=['POST'])
 def api_launch_check_rem():
-    """一键启动「启动对比.bat」去背预览服务（端口 8766），用 Chrome 打开"""
+    """一键启动去背预览服务（端口 8766），预触发扫描后再用 Chrome 打开。
+
+    流程：
+      1. 若 8766 端口未监听，启动 check_rem.py。
+      2. 轮询等待 8766 端口 ready（最多 15 秒）。
+      3. 访问 http://127.0.0.1:8766/ 触发 scan_projects，让页面提前渲染。
+      4. 用 Chrome 打开页面，此时内容已就绪，用户无需面对空白页。
+    """
     script = Path("D:/Semems WB/04_OS/engine/check_rem.py")
     chrome = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
     if not script.exists():
         return jsonify({"ok": False, "error": "check_rem.py 不存在"}), 404
+
+    def _port_ready(host, port, timeout):
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                with socket.create_connection((host, port), timeout=1):
+                    return True
+            except Exception:
+                time.sleep(0.3)
+        return False
+
     try:
-        # 启动 check_rem.py（最小化窗口，不抢焦点）
-        run_minimized(
-            [sys.executable, str(script)],
-            cwd=str(script.parent),
-        )
-        # 唯一一次浏览器打开
+        # 检查是否已有服务在跑
+        already_running = _port_ready("127.0.0.1", 8766, timeout=2)
+
+        if not already_running:
+            # 启动 check_rem.py（最小化窗口，不抢焦点）
+            run_minimized(
+                [sys.executable, str(script)],
+                cwd=str(script.parent),
+            )
+            # 等待服务监听端口
+            if not _port_ready("127.0.0.1", 8766, timeout=15):
+                return jsonify({"ok": False, "error": "check_rem.py 启动超时（15秒未监听端口）"}), 500
+
+        # 预触发首页扫描，让内容提前准备好（最多等 90 秒）
+        try:
+            urlopen("http://127.0.0.1:8766/", timeout=90).read()
+        except URLError:
+            pass
+        except Exception:
+            pass
+
+        # 打开浏览器
         import webbrowser
-        chrome = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
         if chrome.exists():
             subprocess.Popen([str(chrome), "http://localhost:8766"])
         else:
@@ -1706,6 +2766,51 @@ def api_open_dx():
     return jsonify({"ok": False, "error": "文件夹不存在"}), 404
 
 
+@app.route('/api/open-file')
+def api_open_file():
+    """打开指定 DX 子目录中的文件所在文件夹，并选中该文件。
+
+    参数：
+      dx: DX 编号
+      file: 文件名
+      sub: 子目录（默认 01_AI，可选 02_REM_BG / 03_UPLOAD / INBOX）
+    """
+    dx = request.args.get("dx", "").strip()
+    filename = request.args.get("file", "").strip()
+    sub = request.args.get("sub", "01_AI").strip()
+
+    if not dx or not filename:
+        return jsonify({"ok": False, "error": "缺少 dx 或 file"}), 400
+    if "/" in filename or "\\" in filename or ".." in filename:
+        return jsonify({"ok": False, "error": "非法文件名"}), 400
+
+    if sub == "INBOX":
+        folder = INBOX_DIR
+    elif sub in ("01_AI", "02_REM_BG", "03_UPLOAD") and re.match(r"^DX\d+$", dx):
+        folder = PROJECTS_DIR / dx / sub
+    else:
+        return jsonify({"ok": False, "error": "非法 sub 参数"}), 400
+
+    target = folder / filename
+    if not target.exists():
+        return jsonify({"ok": False, "error": f"文件不存在: {target}"}), 404
+
+    try:
+        # /select 参数会打开文件夹并高亮选中指定文件，保证前台显示
+        subprocess.Popen(
+            ['explorer.exe', '/select,', str(target)],
+            shell=False,
+        )
+        return jsonify({"ok": True, "path": str(target)})
+    except Exception as e:
+        # 回退：仅打开文件夹
+        try:
+            os.startfile(str(folder))
+            return jsonify({"ok": True, "path": str(folder), "fallback": True})
+        except Exception:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route('/api/batch-upload', methods=['POST'])
 def api_batch_upload():
     """批量上款：调用 E:\Claude code\wb上款\wb_listing.py 逐个 DX 上款。
@@ -1769,7 +2874,7 @@ def api_batch_upload():
 # 后台生图任务
 # ============================================================================
 
-def _run_generation(selected_files: list, task_id: str):
+def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
     """后台执行 Lovart 管线"""
     global task_state
     start_ts = datetime.now()
@@ -1845,37 +2950,32 @@ def _run_generation(selected_files: list, task_id: str):
         save_registry(reg)
         log(f"已分配 {len(uid_map)} 个 UID，{len(group_map)} 个 group_id")
 
-        # ── 1b. 写入 UID manifest 与 INBOX sidecar ─────────────────
+        # ── 1b. 写入 UID manifest ─────────────────
         try:
             manifest = {"version": 1, "generated_at": datetime.now().isoformat(), "items": {}}
             for fname, uid in uid_map.items():
                 gid = None
-                for g in matched:
-                    if any(img["filename"] == fname for img in g["images"]):
-                        gid = group_map[g["group_number"]]
-                        break
                 role = ""
                 for g in matched:
                     for img in g["images"]:
                         if img["filename"] == fname:
+                            gid = group_map[g["group_number"]]
                             role = img["suffix"]
                             break
+                    if gid is not None:
+                        break
                 manifest["items"][fname] = {
                     "uid": uid,
                     "group_id": gid,
                     "role": role,
                 }
-                # INBOX sidecar
-                if wb_meta:
-                    inbox_path = INBOX_DIR / fname
-                    if inbox_path.exists():
-                        wb_meta.ensure_meta(inbox_path, uid=uid, group_id=gid,
-                                            stage="inbox", role=role,
-                                            source_file=f"01_INBOX/{fname}")
             UID_MANIFEST_FILE.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
             log(f"已写入 UID manifest: {UID_MANIFEST_FILE.name}")
         except Exception as e:
             log(f"WARN: UID manifest 写入失败: {e}")
+
+        # INBOX sidecar：wb_meta 以 DX 为根目录，INBOX 文件无法推断 DX，跳过。
+        # 元数据已通过 UID manifest 传给 Lovart，不影响溯源。
 
             # ── 2. 运行 Lovart 管线（不移走未选中文件，Lovart 自带 SHA256 去重） ──
         task_state["status"] = "running"
@@ -1888,6 +2988,19 @@ def _run_generation(selected_files: list, task_id: str):
         env["LOVART_INSECURE_SSL"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         env["BRIDGE_UID_MANIFEST"] = str(UID_MANIFEST_FILE)
+        # 重新生图时使用统一提示词文件，并传入目标 DX 复用映射
+        if task_id and task_id.startswith("TASK_REGEN_"):
+            prompt_path = LOVART_DIR / "config" / "POD AI VIRAL FACTORY v3.md"
+            if prompt_path.exists():
+                env["LOVART_PROMPT_FILE"] = str(prompt_path)
+            # reuse_dx 可以是单个 DX（str）或 filename -> dx 映射（dict）
+            if reuse_dx:
+                if isinstance(reuse_dx, dict):
+                    regen_map = {fname: reuse_dx[fname] for fname in selected_files if fname in reuse_dx}
+                else:
+                    regen_map = {fname: reuse_dx for fname in selected_files}
+                if regen_map:
+                    env["LOVART_REGEN_DX_MAP"] = json.dumps(regen_map)
 
         proc = subprocess.Popen(
             [get_python(), "run_official_v53.py"],
@@ -2030,10 +3143,10 @@ def _run_generation(selected_files: list, task_id: str):
         # ── 6. 完成 ─────────────────────────────────────────────
         task_state["status"] = "completed"
         task_state["completed_at"] = datetime.now().isoformat()
-        task_state["progress"] = f"完成！处理 {len(matched)} 组 / {len(uid_map)} 张"
+        task_state["progress"] = f"任务结束：处理 {len(matched)} 组 / {len(uid_map)} 张"
         if proc.returncode != 0:
             task_state["progress"] += f" (管线退出码: {proc.returncode})"
-        log(f"✔ 任务 {task_id} 完成 ({len(uid_map)} 张, {len(matched)} 组)")
+        log(f"⏹ 任务 {task_id} 结束 (处理 {len(uid_map)} 张, {len(matched)} 组)")
         _save_state()
 
     except Exception as e:
@@ -2080,7 +3193,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.1.9               ║")
+    print("║   Y2 Bridge Server v2.3.0               ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")

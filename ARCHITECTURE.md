@@ -1,6 +1,6 @@
-# Y2 系统架构文档 v2.2.0
+# Y2 系统架构文档 v2.3.0
 
-> 工程类型: 图像生产血缘数据库 + 控制面板 + 贴图成品流水线
+> 工程类型: 图像生产血缘数据库 + 控制面板 + 贴图成品流水线 + AI 生图对比复审
 > 遵循: B+ 四层血缘闭环架构
 
 ---
@@ -10,28 +10,30 @@
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         Chrome 浏览器                                │
-│  ┌─────────────────┐    ┌───────────────────────────────────────┐   │
-│  │ lovart_control   │    │ AI vs 去背 vs 贴图成品 对比预览       │   │
-│  │ (端口 8765)      │    │ (端口 8766 / check_rem.py)            │   │
-│  └────────┬────────┘    └──────────────┬──────────────────────────┘   │
-└───────────┼────────────────────────────┼──────────────────────────────┘
-            │ HTTP/JSON                   │ HTTP/JSON
-            ▼                             ▼
-┌──────────────────────┐     ┌────────────────────────────────────────┐
-│   lovart_bridge.py    │     │   check_rem.py v2.2.0                 │
-│   v2.2.0 (Flask Server)│    │   (预览 + 去背 + 贴图触发 + 批量反相) │
-│                       │     │   check_rem.js v2.2.0 (独立JS)        │
-│   API端点:            │     │                                        │
-│   /api/inbox          │     │   API端点:                             │
-│   /api/generate       │     │   /thumb, /original                    │
-│   /api/provenance     │     │   /rembg, /batch-rembg                │
-│   /api/lineage/*      │     │   /invert-rem, /upscale-rem           │
-│   /api/projects       │     │   /ps-sticker, /ps-batch              │
-│   /upload             │     │   /refresh-thumb, /check_rem.js       │
-│   /api/upload/*       │     │                                        │
-│   /api/batch-upload   │     │                                        │
-│   ...                 │     │                                        │
-└────────┬─────────────┘     └──────────┬─────────────────────────────┘
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐  │
+│  │ lovart_control   │    │ AI 生图对比     │    │ AI vs 去背 vs   │  │
+│  │ (端口 8765)      │    │ /ai-review      │    │ 贴图成品 对比   │  │
+│  │                  │    │ (端口 8765)     │    │ (端口 8766)     │  │
+│  └────────┬────────┘    └────────┬───────┘    └────────┬────────┘  │
+└───────────┼──────────────────────┼─────────────────────┼───────────┘
+            │ HTTP/JSON            │ HTTP/JSON           │ HTTP/JSON
+            ▼                      ▼                     ▼
+┌──────────────────────┐  ┌──────────────────────┐  ┌────────────────────────────────────────┐
+│   lovart_bridge.py   │  │   lovart_bridge.py   │  │   check_rem.py v2.2.0                 │
+│   v2.3.0 (Flask      │  │   重新生图 API:      │  │   (预览 + 去背 + 贴图触发 + 批量反相) │
+│       Server)        │  │   /api/ai-review/*   │  │   check_rem.js v2.2.0 (独立JS)        │
+│                      │  │   /api/ai-review/    │  │                                        │
+│   API端点:           │  │       regenerate     │  │   API端点:                             │
+│   /api/inbox         │  │   /api/ai-review/    │  │   /thumb, /original                    │
+│   /api/generate      │  │       regenerate-    │  │   /rembg, /batch-rembg                │
+│   /api/provenance    │  │       batch          │  │   /invert-rem, /upscale-rem           │
+│   /api/lineage/*     │  │                      │  │   /ps-sticker, /ps-batch              │
+│   /api/projects      │  │                      │  │   /refresh-thumb, /check_rem.js       │
+│   /upload            │  │                      │  │                                        │
+│   /api/upload/*      │  │                      │  │                                        │
+│   /api/batch-upload  │  │                      │  │                                        │
+│   ...                │  │                      │  │                                        │
+└────────┬─────────────┘  └────────┬─────────────┘  └──────────┬─────────────────────────────┘
          │                              │
          │    POST /api/lineage/register│   子进程调用 (最小化窗口)
          │    (+ uid/group_id)          ▼
@@ -195,7 +197,12 @@ python check_rem.py
 
 ## 可复现性清单
 
-- 所有 Python 脚本依赖：`flask`, `Pillow`, `requests`, `win32com`, `pythoncom`, `numpy`
+完整复现/回滚步骤见 [`REPRODUCIBILITY.md`](./REPRODUCIBILITY.md)。
+
+要点：
+- 两个主仓库：`ZCodeProject`（Bridge / 控制台）和 `lovart-official`（生图管线）
+- 当前 Tag：`ZCodeProject v2.3.0`、`lovart-official v6.1`
+- Python 依赖：`flask`, `Pillow`, `requests`, `pywin32`, `pythoncom`, `numpy`
 - Photoshop 路径：`D:\Program Files\Adobe Photoshop 2025 v26.0\Adobe Photoshop 2025\Photoshop.exe`
 - 项目根目录：`D:\Semems WB\02_PROJECTS`
-- 三个仓库独立提交，Tag 为 `v2.1`
+- 提示词文件：`E:\Claude code\lovart-official\config\POD AI VIRAL FACTORY v3.md`

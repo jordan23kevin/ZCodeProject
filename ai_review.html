@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 生图对比 - Y2</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #0f1117; color: #e1e4e8;
+    min-height: 100vh; padding: 18px;
+  }
+  a { color: #58a6ff; text-decoration: none; }
+  .container { max-width: 1920px; margin: 0 auto; }
+
+  /* Header */
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 22px; background: #161b22;
+    border: 1px solid #30363d; border-radius: 8px; margin-bottom: 16px;
+    flex-wrap: wrap; gap: 10px;
+  }
+  .header h1 { font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 7px 16px; border-radius: 6px; font-size: 13px; font-weight: 500;
+    cursor: pointer; border: 1px solid; transition: .1s;
+    background: #21262d; color: #c9d1d9; border-color: #30363d; white-space: nowrap;
+  }
+  .btn:hover { background: #30363d; }
+  .btn:active { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary { background: #238636; color: #fff; border-color: #2ea043; }
+  .btn-primary:hover:not(:disabled) { background: #2ea043; }
+  .btn-warn { background: #e53935; color: #fff; border-color: #b71c1c; }
+  .btn-warn:hover:not(:disabled) { background: #b71c1c; }
+
+  /* Toolbar */
+  .toolbar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-bottom: 16px; padding: 10px 14px; background: #161b22;
+    border: 1px solid #30363d; border-radius: 8px;
+  }
+  .toolbar select, .toolbar input {
+    padding: 7px 10px; border-radius: 6px; font-size: 13px;
+    background: #0d1117; border: 1px solid #30363d; color: #e1e4e8;
+  }
+  .toolbar input { width: 220px; }
+  .toolbar select:focus, .toolbar input:focus { outline: none; border-color: #58a6ff; }
+  .toolbar .cnt { color: #8b949e; font-size: 13px; margin-left: auto; }
+  .toolbar .batch-cnt { color: #58a6ff; font-size: 13px; font-weight: 600; }
+
+  /* Regen checkbox */
+  .regen-cb {
+    width: 16px; height: 16px; cursor: pointer; accent-color: #58a6ff;
+  }
+  .regen-cb-wrap {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 12px; color: #8b949e; cursor: pointer;
+  }
+
+  /* Status panel */
+  .status-panel {
+    display: none;
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; padding: 14px 16px; margin-bottom: 16px;
+  }
+  .status-panel.running { border-color: #58a6ff; }
+  .status-panel.error { border-color: #f85149; }
+  .status-panel.completed { border-color: #3fb950; }
+  .status-head {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .status-badge {
+    font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 4px;
+    text-transform: uppercase; letter-spacing: .5px;
+  }
+  .status-badge.running { background: #1f6feb; color: #fff; }
+  .status-badge.starting { background: #9e6a03; color: #fff; }
+  .status-badge.completed { background: #238636; color: #fff; }
+  .status-badge.error { background: #da3633; color: #fff; }
+  .status-badge.partial { background: #8957e5; color: #fff; }
+  .status-badge.queued { background: #6e7681; color: #fff; }
+  .status-info {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    font-size: 13px; color: #c9d1d9;
+  }
+  .status-info span { display: inline-flex; align-items: center; gap: 5px; }
+  .status-info .label { color: #8b949e; }
+  .status-info .dx-link {
+    color: #58a6ff; cursor: pointer; font-weight: 600;
+  }
+  .status-info .dx-link:hover { text-decoration: underline; }
+  .status-progress {
+    flex-basis: 100%; margin-top: 10px; font-size: 13px; color: #e1e4e8;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .status-progress .spinner {
+    width: 14px; height: 14px; border: 2px solid #30363d;
+    border-top-color: #58a6ff; border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .status-counts {
+    display: flex; gap: 10px; margin-left: auto;
+  }
+  .pill {
+    font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px;
+    background: #0d1117; border: 1px solid #30363d;
+  }
+  .pill.ok { color: #3fb950; }
+  .pill.fail { color: #f85149; }
+  .status-log {
+    margin-top: 12px; background: #0d1117; border: 1px solid #21262d;
+    border-radius: 6px; max-height: 220px; overflow-y: auto;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+    font-size: 11px; line-height: 1.5; color: #8b949e; padding: 10px;
+  }
+  .status-log:empty { display: none; }
+  .status-summary {
+    margin-top: 12px; background: #0d1117; border: 1px solid #21262d;
+    border-radius: 6px; padding: 12px;
+  }
+  .status-summary-title {
+    font-size: 12px; font-weight: 700; color: #58a6ff;
+    margin-bottom: 8px; display: flex; align-items: center; gap: 6px;
+  }
+  .status-summary-body {
+    font-size: 13px; line-height: 1.7; color: #c9d1d9;
+  }
+  .status-summary-body .ok { color: #3fb950; }
+  .status-summary-body .warn { color: #f0c674; }
+  .status-summary-body .err { color: #f85149; }
+  .status-log-header {
+    margin-top: 14px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .status-log-label {
+    font-size: 12px; color: #8b949e;
+  }
+  .status-copy-btn {
+    font-size: 11px; padding: 3px 10px; border-radius: 4px; cursor: pointer;
+    background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+  }
+  .status-copy-btn:hover { background: #30363d; }
+  .status-log-toggle {
+    margin-top: 10px; font-size: 12px; color: #8b949e; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .status-log-toggle:hover { color: #58a6ff; }
+
+  /* Section */
+  .section {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;
+  }
+  .section-title {
+    font-size: 15px; font-weight: 600; margin-bottom: 12px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+
+  /* Cards */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(520px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    background: #0d1117; border: 1px solid #30363d;
+    border-radius: 8px; overflow: hidden;
+  }
+  .card-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; background: #161b22;
+    border-bottom: 1px solid #21262d;
+  }
+  .dxname { font-weight: 700; font-size: 16px; color: #58a6ff; cursor: pointer; }
+  .dxname:hover { text-decoration: underline; }
+  .pcount { color: #8b949e; font-size: 12px; margin-left: auto; }
+  .card-body { padding: 12px; }
+
+  /* Pair row */
+  .pair {
+    border-top: 1px solid #21262d; padding: 10px 0 4px;
+  }
+  .pair:first-child { border-top: none; padding-top: 0; }
+  .stem {
+    color: #8b949e; font-size: 12px; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .badge {
+    display: inline-block; font-size: 11px; font-weight: 700;
+    padding: 1px 7px; border-radius: 4px;
+  }
+  .badge-BW { background: #9c27b0; color: #fff; }
+  .badge-B { background: #555; color: #fff; }
+  .badge-W { background: #e0e0e0; color: #333; }
+  .badge-WB { background: #7ee787; color: #0d1117; }
+  .pair-imgs { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+
+  /* Cell */
+  .cell-wrap { display: flex; flex-direction: column; }
+  .cell {
+    height: 220px; max-height: 220px; background: #fff;
+    border-radius: 6px; overflow: hidden; position: relative;
+    display: flex; align-items: center; justify-content: center;
+    border: 2px solid transparent; transition: .12s;
+  }
+  .cell:hover { border-color: #58a6ff; }
+  .cell.missing { background: #2d1a1a; color: #f85149; font-size: 13px; }
+  .cell img { width: 100%; height: 100%; object-fit: contain; cursor: pointer; }
+  .cell .tag {
+    position: absolute; top: 6px; left: 6px;
+    font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px;
+    background: rgba(0,0,0,.7); color: #fff;
+  }
+  .cell .regen-btn {
+    position: absolute; top: 6px; right: 6px; z-index: 3;
+    font-size: 11px; font-weight: 600; padding: 3px 10px;
+    border-radius: 4px; border: none; cursor: pointer;
+    background: #238636cc; color: #fff; backdrop-filter: blur(2px);
+  }
+  .cell .regen-btn:hover { background: #2ea043; }
+  .cell .regen-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Button bar */
+  .btn-bar {
+    display: flex; align-items: center; gap: 5px;
+    padding: 6px 2px; min-height: 30px; flex-wrap: wrap;
+  }
+  .btn-bar button {
+    border: none; border-radius: 4px; cursor: pointer;
+    font-size: 12px; font-weight: 600; padding: 3px 10px; line-height: 1.5;
+  }
+  .btn-bar .del { background: #e53935; color: #fff; }
+  .btn-bar .del:hover { background: #b71c1c; }
+  .btn-bar .restore { background: #238636; color: #fff; }
+  .btn-bar .restore:hover { background: #2ea043; }
+  .btn-bar .stem-text { color: #666; font-size: 11px; margin-left: auto; }
+
+  /* Trash panel */
+  .trash-grid {
+    display: flex; gap: 10px; flex-wrap: wrap;
+  }
+  .trash-item {
+    width: 160px; flex-shrink: 0;
+    background: #0d1117; border: 2px solid #30363d;
+    border-radius: 6px; overflow: hidden; position: relative;
+  }
+  .trash-item:hover { border-color: #f0c674; }
+  .trash-item img { width: 160px; height: 160px; object-fit: contain; display: block; background: #1a1a1a; }
+  .trash-item .info { padding: 4px 6px; font-size: 10px; color: #8b949e; text-align: center; }
+  .empty-state { text-align: center; padding: 40px; color: #8b949e; }
+  .empty-state .big-icon { font-size: 40px; margin-bottom: 10px; }
+
+  /* Toast */
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: #333; color: #fff; padding: 12px 24px;
+    border-radius: 8px; font-size: 14px; display: none; z-index: 999;
+    max-width: 80%; text-align: center;
+  }
+
+  /* Hover preview */
+  #hoverPreview {
+    position: fixed; z-index: 9999; pointer-events: none; display: none;
+    max-width: 900px; max-height: 90vh;
+    border: 2px solid #555; border-radius: 8px;
+    box-shadow: 0 8px 40px rgba(0,0,0,.85);
+    background: #222;
+  }
+  #hoverPreview img { display: block; max-width: 900px; max-height: 90vh; object-fit: contain; }
+
+
+  .deleted { opacity: .3; pointer-events: none; }
+
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
+  @media (max-width: 768px) {
+    .card-grid { grid-template-columns: 1fr; }
+    .pair-imgs { grid-template-columns: 1fr; }
+    body { padding: 10px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-left">
+      <h1><span>🎨</span> AI 生图对比</h1>
+      <button class="btn" onclick="window.open('/','_blank')" title="返回 Y2 控制台">🏠 Y2 控制台</button>
+    </div>
+  </div>
+
+  <!-- TOOLBAR -->
+  <div class="toolbar">
+    <select id="dateSel" onchange="filterByDate(this.value)">
+      <option value="">全部日期</option>
+    </select>
+    <input id="search" placeholder="搜索 DX号…" oninput="filterCards()">
+    <button class="btn btn-primary" onclick="loadProjects()">🔄 刷新</button>
+    <button class="btn" onclick="toggleTrash()" id="trashBtn">🗑 回收站 <span id="trashCount"></span></button>
+    <button class="btn btn-primary" id="batchRegenBtn" onclick="batchRegenerate()" disabled>🔄 批量重新生图 <span id="batchRegenCnt">0</span></button>
+    <button class="btn" id="clearSelectionBtn" onclick="clearRegenSelection()" disabled>清空选择</button>
+    <span class="batch-cnt" id="batchHint"></span>
+    <span class="cnt" id="cnt">0 款</span>
+  </div>
+
+  <!-- STATUS -->
+  <div class="status-panel" id="statusPanel">
+    <div class="status-head">
+      <span class="status-badge" id="statusBadge">--</span>
+      <div class="status-info" id="statusInfo"></div>
+      <div class="status-counts" id="statusCounts"></div>
+    </div>
+    <div class="status-progress" id="statusProgress"></div>
+    <div class="status-summary" id="statusSummary">
+      <div class="status-summary-title">📝 摘要（给你看）</div>
+      <div class="status-summary-body" id="statusSummaryBody">--</div>
+    </div>
+    <div class="status-log-header">
+      <span class="status-log-label">📋 原始日志（可复制给 AI 分析）</span>
+      <button class="status-copy-btn" id="statusCopyBtn" onclick="copyRawLog()" style="display:none">复制</button>
+    </div>
+    <div class="status-log-toggle" id="statusLogToggle" onclick="toggleStatusLog()">▶ 展开原始日志</div>
+    <div class="status-log" id="statusLog" style="display:none"></div>
+  </div>
+
+  <!-- TRASH PANEL -->
+  <div class="section" id="trashPanel" style="display:none">
+    <div class="section-title">
+      <span>🗑 AI 图回收站</span>
+      <button class="btn btn-warn" onclick="emptyTrash()">🧹 清空回收站</button>
+    </div>
+    <div class="trash-grid" id="trashGrid"></div>
+    <div id="trashEmpty" class="empty-state" style="display:none">
+      <div class="big-icon">🗑</div><p>回收站为空</p>
+    </div>
+  </div>
+
+  <!-- MAIN GRID -->
+  <div class="card-grid" id="cardGrid"></div>
+  <div id="emptyState" class="empty-state" style="display:none">
+    <div class="big-icon">🎨</div>
+    <p>暂无 AI 生图数据</p>
+  </div>
+
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- HOVER PREVIEW -->
+<div id="hoverPreview"><img id="hoverImg" src="" alt=""></div>
+
+<script>
+// ============================================================================
+const STATE = { projects: [], trash: [], dates: [], polling: false };
+
+function showToast(m) {
+  const t = document.getElementById('toast');
+  t.textContent = m; t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 3500);
+}
+function esc(s) {
+  const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML;
+}
+
+// ============================================================================
+// Load projects
+// ============================================================================
+async function loadProjects() {
+  try {
+    const res = await fetch('/api/ai-review/projects');
+    const data = await res.json();
+    if (!data.ok) { showToast('❌ ' + (data.error || '加载失败')); return; }
+    STATE.projects = data.projects || [];
+    STATE.dates = data.dates || [];
+    renderDateSelect();
+    renderCards();
+    loadTrash();
+  } catch (e) { showToast('❌ 网络错误: ' + e.message); }
+}
+
+function renderDateSelect() {
+  const sel = document.getElementById('dateSel');
+  const current = sel.value;
+  let html = '<option value="">全部日期</option>';
+  for (const dt of STATE.dates) {
+    const label = '20' + dt.slice(0,2) + '-' + dt.slice(2,4) + '-' + dt.slice(4,6);
+    const s = dt === current ? ' selected' : '';
+    html += `<option value="${dt}"${s}>${label}</option>`;
+  }
+  sel.innerHTML = html;
+  // 默认选中最新日期（当前未选择任何日期时）
+  if (!current && STATE.dates.length) {
+    sel.value = STATE.dates[0];
+  }
+}
+
+// ============================================================================
+// Render cards
+// ============================================================================
+function renderCards() {
+  const grid = document.getElementById('cardGrid');
+  const empty = document.getElementById('emptyState');
+  const dateFilter = document.getElementById('dateSel').value;
+  const q = document.getElementById('search').value.toUpperCase().trim();
+
+  let projects = STATE.projects;
+  if (dateFilter) projects = projects.filter(p => p.date === dateFilter);
+  if (q) projects = projects.filter(p => p.dx.toUpperCase().includes(q));
+
+  document.getElementById('cnt').textContent = projects.length + ' 款';
+
+  if (!projects.length) { grid.innerHTML = ''; empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+
+  grid.innerHTML = projects.map(p => {
+    const rows = p.groups.map(g => renderPairRow(p.dx, g)).join('');
+    return `<div class="card" data-dx="${p.dx}" data-date="${p.date}">
+      <div class="card-head">
+        <span class="dxname" onclick="openFolder('${p.dx}')">${p.dx}</span>
+        <span class="pcount">${p.groups.length} 组</span>
+      </div>
+      <div class="card-body">${rows}</div>
+    </div>`;
+  }).join('');
+
+  // 恢复批量选择状态
+  document.querySelectorAll('.regen-cb').forEach(cb => {
+    const key = `${cb.dataset.dx}|${cb.dataset.file}`;
+    cb.checked = REGEN_SEL.has(key);
+  });
+
+  bindPreviews();
+}
+
+function renderPairRow(dx, g) {
+  const badgeClass = 'badge-' + (g.role || 'BW');
+  const sourceUrl = g.source_file ? `/api/ai-review/thumb?dx=${dx}&file=${encodeURIComponent(g.source_file)}` : '';
+  const sourceOrigUrl = g.source_file ? `/api/ai-review/original?dx=${dx}&file=${encodeURIComponent(g.source_file)}` : '';
+
+  const cbKey = `${dx}|${g.source_file}`;
+  const sourceCell = g.source_file
+    ? `<div class="cell-wrap">
+        <div class="cell" id="${dx}-${g.role || 'X'}-source" data-hover-src="${sourceOrigUrl}">
+          <span class="tag">原图</span>
+          <button class="regen-btn" onclick="regenerate('${dx}', '${esc(g.source_file)}', this)" title="重新生图（整组）">🔄 重新生图</button>
+          <img src="${sourceUrl}" alt="${esc(g.source_file)}" onclick="openFile('${dx}', '${esc(g.source_file)}')">
+        </div>
+        <div class="btn-bar">
+          <label class="regen-cb-wrap" title="加入批量重新生图">
+            <input type="checkbox" class="regen-cb" data-dx="${dx}" data-file="${esc(g.source_file)}" onchange="toggleRegenSelection('${dx}', '${esc(g.source_file)}', this.checked)">
+            批量
+          </label>
+          <span class="stem-text">${esc(g.source_file)}</span>
+        </div>
+       </div>`
+    : `<div class="cell-wrap"><div class="cell missing"><span>⚠ 无原图</span></div></div>`;
+
+  let aiCell = '';
+  const aiFiles = g.ai_files || [];
+  if (aiFiles.length && g.ai_exists) {
+    aiCell = aiFiles.map((aiFile, idx) => {
+      const aiUrl = `/api/ai-review/thumb?dx=${dx}&file=${encodeURIComponent(aiFile)}`;
+      const aiOrigUrl = `/api/ai-review/original?dx=${dx}&file=${encodeURIComponent(aiFile)}`;
+      const tag = idx === 0 ? 'AI' : `AI${idx + 1}`;
+      return `<div class="cell-wrap">
+        <div class="cell" id="${dx}-${g.role || 'X'}-ai-${idx}" data-hover-src="${aiOrigUrl}">
+          <span class="tag">${tag}</span>
+          <img src="${aiUrl}" alt="${esc(aiFile)}" onclick="openFile('${dx}', '${esc(aiFile)}')">
+        </div>
+        <div class="btn-bar">
+          <button class="del" onclick="deleteAi('${dx}', '${esc(aiFile)}', '${dx}-${g.role || 'X'}-ai-${idx}')" title="删除AI图">×</button>
+          <span class="stem-text">${esc(aiFile)}</span>
+        </div>
+       </div>`;
+    }).join('');
+  } else if (aiFiles.length && !g.ai_exists) {
+    aiCell = `<div class="cell-wrap"><div class="cell missing"><span>⚠ AI图缺失</span></div></div>`;
+  } else {
+    aiCell = `<div class="cell-wrap"><div class="cell missing"><span>⚠ 未生成AI图</span></div></div>`;
+  }
+
+  return `<div class="pair" data-group-id="${esc(g.group_id || '')}">
+    <div class="stem"><span class="badge ${badgeClass}">${g.role || '?'}</span> #${g.design_number || '?'} ${g.paired ? '' : '<span style="color:#f85149">(未配对)</span>'}</div>
+    <div class="pair-imgs">${sourceCell}${aiCell}</div>
+  </div>`;
+}
+
+// ============================================================================
+// Filters
+// ============================================================================
+function filterByDate(dt) {
+  renderCards();
+}
+function filterCards() {
+  renderCards();
+}
+
+// ============================================================================
+// Batch regenerate selection
+// ============================================================================
+const REGEN_SEL = new Set();
+function toggleRegenSelection(dx, sourceFile, checked) {
+  const key = `${dx}|${sourceFile}`;
+  if (checked) REGEN_SEL.add(key);
+  else REGEN_SEL.delete(key);
+  updateBatchToolbar();
+}
+function updateBatchToolbar() {
+  const cnt = REGEN_SEL.size;
+  document.getElementById('batchRegenCnt').textContent = cnt;
+  document.getElementById('batchRegenBtn').disabled = cnt === 0;
+  document.getElementById('clearSelectionBtn').disabled = cnt === 0;
+  document.getElementById('batchHint').textContent = cnt > 0 ? `已选 ${cnt} 张原图` : '';
+}
+function clearRegenSelection() {
+  REGEN_SEL.clear();
+  document.querySelectorAll('.regen-cb').forEach(cb => cb.checked = false);
+  updateBatchToolbar();
+}
+async function batchRegenerate() {
+  if (REGEN_SEL.size === 0) return;
+  const items = Array.from(REGEN_SEL).map(key => {
+    const [dx, file] = key.split('|');
+    return { dx, source_file: file };
+  });
+  if (!confirm(`确定批量重新生图 ${items.length} 张原图吗？\n将分别重新生成每张原图所在整组。`)) return;
+  try {
+    const res = await fetch('/api/ai-review/regenerate-batch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast('✅ ' + data.msg);
+      clearRegenSelection();
+      startStatusPolling();
+    } else {
+      showToast('❌ ' + (data.error || '失败'));
+    }
+  } catch (e) {
+    showToast('❌ 网络错误: ' + e.message);
+  }
+}
+
+// ============================================================================
+// Actions
+// ============================================================================
+async function regenerate(dx, sourceFile, btn) {
+  if (!confirm(`重新生图：${dx}/${sourceFile}？\n将重新生成该原图所在整组（Lovart 按组处理）。`)) return;
+  btn.disabled = true; btn.textContent = '⏳';
+  try {
+    const res = await fetch('/api/ai-review/regenerate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dx: dx, source_file: sourceFile })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast('✅ ' + data.msg);
+      startStatusPolling();
+    } else {
+      showToast('❌ ' + (data.error || '失败'));
+      btn.disabled = false; btn.textContent = '🔄 重新生图';
+    }
+  } catch (e) {
+    showToast('❌ 网络错误: ' + e.message);
+    btn.disabled = false; btn.textContent = '🔄 重新生图';
+  }
+}
+
+async function deleteAi(dx, file, cellId) {
+  if (!confirm(`将 ${dx}/01_AI/${file} 移入回收站？`)) return;
+  try {
+    const res = await fetch('/api/ai-review/delete-ai', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dx: dx, file: file })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast('✅ ' + data.msg);
+      const cell = document.getElementById(cellId);
+      if (cell) cell.classList.add('deleted');
+      loadTrash();
+    } else {
+      showToast('❌ ' + (data.error || '删除失败'));
+    }
+  } catch (e) { showToast('❌ 网络错误: ' + e.message); }
+}
+
+async function restoreAi(dx, file) {
+  try {
+    const res = await fetch('/api/ai-review/restore-ai', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dx: dx, file: file })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast('✅ ' + data.msg);
+      loadTrash();
+      loadProjects();
+    } else {
+      showToast('❌ ' + (data.error || '还原失败'));
+    }
+  } catch (e) { showToast('❌ 网络错误: ' + e.message); }
+}
+
+async function emptyTrash() {
+  if (!confirm('确定清空 AI 图回收站？\n回收站中的文件将被永久删除，不可恢复。')) return;
+  try {
+    const res = await fetch('/api/ai-review/empty-trash', { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+      showToast('✅ ' + (data.msg || `已清空 ${data.count} 个文件`));
+      loadTrash();
+    } else {
+      showToast('❌ ' + (data.error || '清空失败'));
+    }
+  } catch (e) { showToast('❌ 网络错误: ' + e.message); }
+}
+
+function openFolder(dx) {
+  fetch('/api/open/' + dx + '/01_AI').catch(() => {});
+}
+function openAiFolder(dx) {
+  fetch('/api/open/' + dx + '/01_AI').catch(() => {});
+}
+function openFile(dx, file) {
+  fetch(`/api/open-file?dx=${dx}&file=${encodeURIComponent(file)}&sub=01_AI`).catch(() => {});
+}
+function openInboxFolder() {
+  fetch('/api/open/INBOX').catch(() => {});
+}
+
+// ============================================================================
+// Trash panel
+// ============================================================================
+let trashVisible = false;
+function toggleTrash() {
+  trashVisible = !trashVisible;
+  document.getElementById('trashPanel').style.display = trashVisible ? 'block' : 'none';
+  document.getElementById('trashBtn').textContent = trashVisible ? '📂 关闭回收站' : '🗑 回收站';
+  if (trashVisible) loadTrash();
+}
+async function loadTrash() {
+  try {
+    const res = await fetch('/api/ai-review/trash');
+    const data = await res.json();
+    if (!data.ok) { showToast('❌ ' + (data.error || '加载失败')); return; }
+    STATE.trash = data.items || [];
+    document.getElementById('trashCount').textContent = STATE.trash.length ? `(${STATE.trash.length})` : '';
+    renderTrash();
+  } catch (e) { showToast('❌ 网络错误: ' + e.message); }
+}
+function renderTrash() {
+  const grid = document.getElementById('trashGrid');
+  const empty = document.getElementById('trashEmpty');
+  if (!STATE.trash.length) { grid.innerHTML = ''; empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  grid.innerHTML = STATE.trash.map(item => `
+    <div class="trash-item">
+      <img src="${item.preview_url}" alt="${esc(item.filename)}" loading="lazy">
+      <div class="info">${esc(item.dx)} / ${esc(item.filename)}</div>
+      <div class="btn-bar" style="padding:4px 6px">
+        <button class="restore" onclick="restoreAi('${item.dx}', '${esc(item.filename)}')">↩ 还原</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ============================================================================
+// Status polling
+// ============================================================================
+let statusLogVisible = false;
+function toggleStatusLog() {
+  statusLogVisible = !statusLogVisible;
+  const logEl = document.getElementById('statusLog');
+  const toggleEl = document.getElementById('statusLogToggle');
+  logEl.style.display = statusLogVisible ? 'block' : 'none';
+  toggleEl.textContent = statusLogVisible ? '▼ 收起实时日志' : '▶ 查看实时日志';
+}
+
+function startStatusPolling() {
+  if (STATE.polling) return;
+  STATE.polling = true;
+  pollStatus();
+}
+async function pollStatus() {
+  try {
+    const st = await (await fetch('/api/status')).json();
+    renderStatusPanel(st);
+
+    if (st.status === 'running' || st.status === 'starting') {
+      setTimeout(pollStatus, 2000);
+    } else if (st.status === 'completed' || st.status === 'error') {
+      STATE.polling = false;
+      loadProjects();
+      return;
+    } else {
+      STATE.polling = false;
+      return;
+    }
+  } catch (_) {
+    setTimeout(pollStatus, 3000);
+  }
+}
+function renderStatusPanel(st) {
+  const panel = document.getElementById('statusPanel');
+  const badge = document.getElementById('statusBadge');
+  const info = document.getElementById('statusInfo');
+  const counts = document.getElementById('statusCounts');
+  const progress = document.getElementById('statusProgress');
+  const logEl = document.getElementById('statusLog');
+  const summaryBody = document.getElementById('statusSummaryBody');
+  const copyBtn = document.getElementById('statusCopyBtn');
+
+  const status = st.display_status || st.status || 'idle';
+  const labelMap = {
+    idle: '未开始', starting: '启动中', running: '生图中', queued: '排队中',
+    completed: '已完成', error: '失败', partial: '部分失败'
+  };
+
+  if (status === 'idle' || !status) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  panel.className = 'status-panel ' + status;
+  badge.className = 'status-badge ' + status;
+  badge.textContent = labelMap[status] || status;
+
+  const dx = st.current_dx || st.output_folder || '';
+  const dxHtml = dx
+    ? `<span class="label">款号:</span><span class="dx-link" onclick="openFolder('${dx}')">${esc(dx)}</span>`
+    : `<span class="label">款号:</span><span style="color:#8b949e">--</span>`;
+  const keyHtml = st.current_key
+    ? `<span class="label">Key:</span><span>${esc(st.current_key)}</span>`
+    : '';
+  const elapsed = typeof st.elapsed_seconds === 'number' ? st.elapsed_seconds : 0;
+  const timeHtml = `<span class="label">已用:</span><span>${formatElapsed(elapsed)}</span>`;
+  const countsHtml = `<span class="pill ok">✓ ${st.success_count || 0}</span><span class="pill fail">✕ ${st.fail_count || 0}</span>`;
+  const folderHtml = st.output_folder && st.output_folder !== dx
+    ? `<span class="label">输出:</span><span class="dx-link" onclick="openFolder('${st.output_folder}')">${esc(st.output_folder)}/01_AI</span>`
+    : '';
+
+  info.innerHTML = [dxHtml, keyHtml, timeHtml, countsHtml, folderHtml].filter(Boolean).join('');
+
+  counts.innerHTML = '';
+
+  const spinner = (status === 'running' || status === 'starting') ? '<span class="spinner"></span>' : '';
+  const progressText = st.progress || (status === 'running' ? '正在处理…' : '');
+  progress.innerHTML = spinner + '<span>' + esc(progressText) + '</span>';
+
+  const logs = st.latest_log || st.log || [];
+  if (logs.length) {
+    logEl.innerHTML = logs.map(l => esc(String(l))).join('<br>');
+    if (statusLogVisible) logEl.scrollTop = logEl.scrollHeight;
+    copyBtn.style.display = 'inline-block';
+  } else {
+    copyBtn.style.display = 'none';
+  }
+
+  // 生成给人看的摘要
+  summaryBody.innerHTML = buildSummary(st, logs);
+}
+
+function buildSummary(st, logs) {
+  const status = st.display_status || st.status || 'idle';
+  const labelMap = {
+    idle: '未开始', starting: '启动中', running: '生图中', queued: '排队中',
+    completed: '已完成', error: '失败', partial: '部分失败'
+  };
+  const statusText = labelMap[status] || status;
+  const dx = st.current_dx || st.output_folder || '未知';
+  const elapsed = formatElapsed(st.elapsed_seconds || 0);
+  const success = st.success_count || 0;
+  const fail = st.fail_count || 0;
+  const total = success + fail;
+
+  let lines = [];
+  lines.push(`任务状态：<b>${statusText}</b>`);
+  if (st.batch && st.affected_dx && st.affected_dx.length > 1) {
+    lines.push(`批量重新生图：${total} 张，涉及 ${st.affected_dx.length} 个 DX`);
+    const dxLinks = st.affected_dx.map(d => `<span class="dx-link" onclick="openFolder('${d}')">${esc(d)}</span>`).join('、');
+    lines.push(`目标款号：${dxLinks}`);
+  } else {
+    lines.push(`目标款号：<span class="dx-link" onclick="openFolder('${dx}')">${esc(dx)}</span>`);
+  }
+  if (st.output_folder && st.output_folder !== dx && !(st.batch && st.affected_dx && st.affected_dx.includes(st.output_folder))) {
+    lines.push(`输出文件夹：<span class="dx-link" onclick="openFolder('${st.output_folder}')">${esc(st.output_folder)}/01_AI</span>`);
+  }
+  lines.push(`已用时间：${elapsed}`);
+  lines.push(`生成结果：<span class="${fail ? 'err' : 'ok'}">成功 ${success} 张</span>，<span class="${fail ? 'err' : ''}">失败 ${fail} 张</span>（共 ${total} 张）`);
+
+  // 提取关键事件
+  const selectedMatch = logs.join('\n').match(/选中文件:\s*([^\n]+)/);
+  if (selectedMatch) lines.push(`选中文件：${esc(selectedMatch[1].trim())}`);
+
+  const conflicts = logs.filter(l => l.includes('INBOX 同名冲突已移走'));
+  if (conflicts.length) {
+    lines.push(`<span class="warn">⚠ 发现 ${conflicts.length} 个同名不同图冲突，已移入回收站暂存</span>`);
+  }
+
+  const failLines = logs.filter(l => /\[FAIL\]|失败|error|异常|未找到图片URL/i.test(l));
+  if (failLines.length) {
+    const lastFail = failLines[failLines.length - 1];
+    lines.push(`<span class="err">⚠ 最后失败原因：${esc(lastFail.replace(/^.*\[FAIL\]\s*/, '').trim())}</span>`);
+  }
+
+  if (status === 'running' || status === 'starting') {
+    lines.push(`<span class="warn">⏳ 正在运行，请等待…</span>`);
+  }
+
+  return lines.join('<br>');
+}
+
+function copyRawLog() {
+  const logEl = document.getElementById('statusLog');
+  const text = logEl.innerText || '';
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('statusCopyBtn');
+    const old = btn.textContent;
+    btn.textContent = '已复制';
+    setTimeout(() => btn.textContent = old, 1500);
+  }).catch(() => {
+    showToast('❌ 复制失败，请手动选择日志复制');
+  });
+}
+function formatElapsed(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h) return `${h}h${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s`;
+  if (m) return `${m}m${String(s).padStart(2,'0')}s`;
+  return `${s}s`;
+}
+
+// ============================================================================
+// Hover preview
+// ============================================================================
+const hoverPreview = document.getElementById('hoverPreview');
+const hoverImg = document.getElementById('hoverImg');
+let hoverTimer = null;
+function bindPreviews() {
+  document.querySelectorAll('.cell[data-hover-src]').forEach(cell => {
+    cell.addEventListener('mouseenter', function(e) {
+      if (hoverTimer) clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => {
+        const src = this.getAttribute('data-hover-src');
+        if (!src) return;
+        hoverImg.src = src;
+        hoverPreview.style.display = 'block';
+        const rect = this.getBoundingClientRect();
+        const previewW = 900, previewH = window.innerHeight * 0.9;
+        let left = rect.right + 8, top = rect.top;
+        if (left + previewW > window.innerWidth - 8) left = rect.left - previewW - 8;
+        if (left < 8) left = 8;
+        if (top + previewH > window.innerHeight - 8) top = window.innerHeight - previewH - 8;
+        if (top < 8) top = 8;
+        hoverPreview.style.left = left + 'px';
+        hoverPreview.style.top = top + 'px';
+      }, 200);
+    });
+    cell.addEventListener('mouseleave', function() {
+      if (hoverTimer) clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => { hoverPreview.style.display = 'none'; }, 100);
+    });
+  });
+}
+
+// ============================================================================
+// Init
+// ============================================================================
+document.addEventListener('DOMContentLoaded', () => {
+  loadProjects();
+  // 检查是否有正在运行的任务
+  fetch('/api/status').then(r => r.json()).then(st => {
+    if (st.status === 'running' || st.status === 'starting') startStatusPolling();
+  }).catch(() => {});
+});
+</script>
+</body>
+</html>
