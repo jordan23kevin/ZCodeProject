@@ -1,6 +1,6 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.3.2` + `run_official_v53.py v6.1`
+> 对应版本: `lovart_bridge.py v2.3.3` + `run_official_v53.py v6.1`
 > 最后更新: 2026-07-04
 
 ---
@@ -104,7 +104,7 @@ git reset --hard HEAD~1
 # ZCodeProject
 cd C:\Users\Administrator\ZCodeProject
 git fetch origin --tags
-git checkout v2.3.2
+git checkout v2.3.3
 
 # lovart-official
 cd "E:\Claude code\lovart-official"
@@ -122,7 +122,7 @@ git checkout v6.1
 
 ---
 
-## 5. 本次更新关键点（v2.3.2 / v6.1）
+## 5. 本次更新关键点（v2.3.3 / v6.1）
 
 | 问题 | 根因 | 解决方案 | 文件位置 |
 |------|------|----------|----------|
@@ -135,6 +135,7 @@ git checkout v6.1
 | 日期分类随文件更新乱跳 | 按 AI/去背/贴图文件 mtime 判断日期 | 统一按 DX 文件夹建立日期 `st_ctime` 分类 | `lovart_bridge.py` / `check_rem.py` |
 | 点击去背预览无响应 | check_rem print 中 emoji 在 GBK 控制台崩溃 | 移除 emoji + 强制 stdout UTF-8 | `check_rem.py` |
 | 去背预览打开慢 | 启动后阻塞等待 scan_projects 90 秒 | 端口 ready 后快速 ping，立即开浏览器 | `lovart_bridge.py` |
+| 上款按钮打不开 | 按钮使用 localhost:8765/upload，解析到 IPv6 | 改为相对路径 /upload | `lovart_control.html` |
 
 ---
 

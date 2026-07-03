@@ -1,12 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.2
+Y2 Bridge Server v2.3.3
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.3：
+  - 修复 Y2 控制台「上款」按钮打不开：原链接使用 http://localhost:8765/upload，
+    在 IPv6/localhost 解析异常或 Bridge 仅监听 127.0.0.1 时触发 ERR_CONNECTION_REFUSED。
+  - 改为相对路径 /upload，确保与当前 Y2 控制台同域（127.0.0.1:8765），避免 localhost 解析问题。
 
 变更 v2.3.2：
   - 修复 check_rem.py 启动崩溃：print 语句中的 emoji（🔄）在 GBK 控制台导致 UnicodeEncodeError
@@ -3170,7 +3175,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.2               ║")
+    print("║   Y2 Bridge Server v2.3.3               ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")
