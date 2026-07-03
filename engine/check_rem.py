@@ -2038,10 +2038,9 @@ def main():
     print(f"  点缩略图：打开文件夹   x：送回收站   [重新去背]：驱动美图")
     print(f"  关闭此窗口停止服务")
 
-    # 后台预扫描：启动后 1 秒开始全量扫描，把结果 warming 到缓存，
+    # 后台预扫描：启动后立即全量扫描，把结果 warming 到缓存，
     # 这样用户首次打开首页时就是热缓存，几乎秒开。
     def _warm_cache():
-        time.sleep(1)
         try:
             t0 = time.time()
             scan_projects()

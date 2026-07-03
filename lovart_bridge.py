@@ -272,9 +272,9 @@ def _check_rem_daemon():
                     run_minimized([sys.executable, str(script)], cwd=str(script.parent))
                 except Exception as e:
                     print(f"  [check_rem daemon] 启动失败: {e}", flush=True)
-            time.sleep(20)
+            time.sleep(5)
         except Exception:
-            time.sleep(20)
+            time.sleep(5)
 
 
 # ============================================================================
