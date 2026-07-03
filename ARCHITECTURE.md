@@ -1,4 +1,4 @@
-# Y2 系统架构文档 v2.3.1
+# Y2 系统架构文档 v2.3.2
 
 > 工程类型: 图像生产血缘数据库 + 控制面板 + 贴图成品流水线 + AI 生图对比复审
 > 遵循: B+ 四层血缘闭环架构
@@ -124,6 +124,14 @@ check_rem.py 的 HTML 模板使用 Python f-string 生成，JS 代码中的 `{}`
 - 所有页面的日期分类统一使用 `DXxxxx` 文件夹的 `st_ctime`（建立时间）。
 - 实现位置：`lovart_bridge.py::_dx_dir_date()`、`check_rem.py::scan_projects()`。
 - 移除 `_load_upload_date_map()`，上款记录仅用于「已上款 / 未上款」状态判断。
+
+### 去背预览启动崩溃与速度优化（v2.3.2）
+
+**问题 1**: `check_rem.py` 在 `chcp 936`（GBK）控制台启动时，`print()` 中的 emoji（🔄）触发 `UnicodeEncodeError`，进程直接退出，端口 8766 从未监听。
+**解决方案**: 移除 print 中的 emoji，并强制 `stdout`/`stderr` 使用 UTF-8 编码。
+
+**问题 2**: 启动 `check_rem.py` 后，Bridge 会阻塞等待 `scan_projects()` 完成（最多 90 秒）才打开浏览器，用户感觉「打开很慢」。
+**解决方案**: 端口 ready 后快速 ping 首页（3 秒超时），立即打开浏览器；扫描在后台进行，页面逐步渲染。
 
 ### 后台静默运行
 

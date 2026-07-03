@@ -45,14 +45,22 @@
 
 端口 8766（避开 01_CHECK 的 8765）。
 """
-__version__ = "2.1.7"
+__version__ = "2.1.8"
 VERSION = __version__
-import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests
+import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io
 from pathlib import Path
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, quote
 from PIL import Image, ImageOps
 from ctypes import wintypes
+
+# 强制 stdout/stderr 使用 UTF-8，避免 Windows GBK 控制台打印 emoji/生僻字时崩溃
+if sys.stdout.encoding != 'utf-8':
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+    except Exception:
+        pass
 
 # ── UID 元数据系统 ──────────────────────────────────
 try:
@@ -1991,7 +1999,7 @@ def main():
     os.chdir(str(CHECK))
     url = f"http://localhost:{PORT}/"
     print(f"  AI vs 去背 对比预览  →  {url}")
-    print(f"  点缩略图：打开文件夹   ×：送回收站   🔄重新去背：驱动美图")
+    print(f"  点缩略图：打开文件夹   x：送回收站   [重新去背]：驱动美图")
     print(f"  关闭此窗口停止服务")
     try:
         ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

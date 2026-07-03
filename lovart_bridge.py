@@ -1,12 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.1
+Y2 Bridge Server v2.3.2
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.2：
+  - 修复 check_rem.py 启动崩溃：print 语句中的 emoji（🔄）在 GBK 控制台导致 UnicodeEncodeError
+  - 强制 check_rem.py stdout/stderr 使用 UTF-8，避免 Windows GBK 控制台打印生僻字符/emoji 崩溃
+  - 优化「去背预览」启动速度：移除阻塞式 90 秒预扫描，端口 ready 后快速 ping 并立即打开浏览器
+  - 「去背预览」尝试在已有 Chrome 窗口中以新标签页打开（new=2）
 
 变更 v2.3.1：
   - Y2 控制台所有日期分类统一按 DX 文件夹建立日期（st_ctime）
@@ -2526,13 +2532,13 @@ def api_lineage_register():
 
 @app.route('/api/launch-check-rem', methods=['POST'])
 def api_launch_check_rem():
-    """一键启动去背预览服务（端口 8766），预触发扫描后再用 Chrome 打开。
+    """一键启动去背预览服务（端口 8766），确认端口可用后立即打开浏览器。
 
     流程：
-      1. 若 8766 端口未监听，启动 check_rem.py。
+      1. 若 8766 端口未监听，最小化启动 check_rem.py。
       2. 轮询等待 8766 端口 ready（最多 15 秒）。
-      3. 访问 http://127.0.0.1:8766/ 触发 scan_projects，让页面提前渲染。
-      4. 用 Chrome 打开页面，此时内容已就绪，用户无需面对空白页。
+      3. 快速 ping 首页确认服务已响应（最多 3 秒，不阻塞等待扫描完成）。
+      4. 立即用 Chrome / 系统默认浏览器打开，页面自行渲染；扫描在后台完成。
     """
     script = Path("D:/Semems WB/04_OS/engine/check_rem.py")
     chrome = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
@@ -2563,20 +2569,24 @@ def api_launch_check_rem():
             if not _port_ready("127.0.0.1", 8766, timeout=15):
                 return jsonify({"ok": False, "error": "check_rem.py 启动超时（15秒未监听端口）"}), 500
 
-        # 预触发首页扫描，让内容提前准备好（最多等 90 秒）
+        # 快速确认服务已能响应（不等待完整扫描，避免长时间阻塞）
         try:
-            urlopen("http://127.0.0.1:8766/", timeout=90).read()
-        except URLError:
-            pass
+            urlopen("http://127.0.0.1:8766/", timeout=3).read()
         except Exception:
             pass
 
-        # 打开浏览器
+        # 打开浏览器：优先用 Chrome，尝试在已有窗口的新标签页打开
+        url = "http://127.0.0.1:8766/"
         import webbrowser
         if chrome.exists():
-            subprocess.Popen([str(chrome), "http://localhost:8766"])
+            try:
+                # new=2 表示请求在现有浏览器窗口中打开新标签页
+                webbrowser.register('chrome', None, webbrowser.BackgroundBrowser(str(chrome)))
+                webbrowser.get('chrome').open(url, new=2)
+            except Exception:
+                subprocess.Popen([str(chrome), url])
         else:
-            webbrowser.open("http://localhost:8766")
+            webbrowser.open(url, new=2)
         return jsonify({"ok": True, "msg": "已启动 AI vs 去背 对比预览 (端口 8766)"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -3160,7 +3170,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.1               ║")
+    print("║   Y2 Bridge Server v2.3.2               ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")
