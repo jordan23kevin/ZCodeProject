@@ -1,12 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.3
+Y2 Bridge Server v2.3.4
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.4：
+  - 修复去背预览页面悬停放大图位置乱跳：
+    原 JS 用固定 900x90vh 估算预览图尺寸来定位，与实际渲染尺寸不符。
+  - 新逻辑：等原图加载后读取 preview 元素实际 offsetWidth/offsetHeight 再定位；
+    水平默认放缩略图右侧，溢出则放左侧；垂直仅做必要平移，不再大幅跳动。
 
 变更 v2.3.3：
   - 修复 Y2 控制台「上款」按钮打不开：原链接使用 http://localhost:8765/upload，
@@ -3175,7 +3181,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.3               ║")
+    print("║   Y2 Bridge Server v2.3.4               ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")

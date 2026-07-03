@@ -229,7 +229,7 @@ function filterCards(){
   });
   document.getElementById('cnt').textContent=n+' 款';
 }
-// 悬停预览
+// 悬停预览：等图片加载后用实际尺寸定位，避免乱跳
 var prevEl=document.getElementById('preview');
 var prevImg=document.getElementById('previewImg');
 function bindPreview(cell){
@@ -239,18 +239,35 @@ function bindPreview(cell){
     var src=img.getAttribute('data-src')||img.src;
     prevImg.src=src.replace('/thumb?','/original?');
     prevEl.style.display='block';
-    var r=this.getBoundingClientRect();
-    var previewW=900, previewH=window.innerHeight*0.9;
-    var left=r.right+8, top=r.top;
-    // 水平：右边放不下就放左边
-    if(left+previewW>window.innerWidth-8) left=r.left-previewW-8;
-    if(left<8) left=8;
-    // 垂直：下方放不下就向上对齐，保证不超出视口
-    if(top+previewH>window.innerHeight-8) top=window.innerHeight-previewH-8;
-    if(top<8) top=8;
-    prevEl.style.left=left+'px'; prevEl.style.top=top+'px';
+    prevEl.style.visibility='hidden';
+    prevEl.style.left='0px'; prevEl.style.top='0px';
+    var self=this;
+    function positionPreview(){
+      var r=self.getBoundingClientRect();
+      var pw=prevEl.offsetWidth||900, ph=prevEl.offsetHeight||Math.floor(window.innerHeight*0.9);
+      var margin=8;
+      // 默认放 cell 右侧，顶部对齐
+      var left=r.right+margin, top=r.top;
+      // 右边放不下就放左边
+      if(left+pw>window.innerWidth-margin) left=r.left-pw-margin;
+      // 左边仍放不下则贴左边缘
+      if(left<margin) left=margin;
+      // 下方放不下则向上平移，只移必要距离
+      if(top+ph>window.innerHeight-margin) top=window.innerHeight-ph-margin;
+      // 上方仍放不下则贴顶部
+      if(top<margin) top=margin;
+      prevEl.style.left=left+'px'; prevEl.style.top=top+'px';
+      prevEl.style.visibility='visible';
+    }
+    if(prevImg.complete && prevImg.naturalWidth>0){
+      positionPreview();
+    } else {
+      prevImg.onload=positionPreview;
+      // 缓存命中也可能不触发 load，兜底 100ms 后定位
+      setTimeout(positionPreview, 100);
+    }
   });
-  cell.addEventListener('mouseleave',function(){prevEl.style.display='none';});
+  cell.addEventListener('mouseleave',function(){prevEl.style.display='none'; prevImg.onload=null;});
 }
 document.querySelectorAll('.cell').forEach(bindPreview);
 

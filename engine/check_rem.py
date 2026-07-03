@@ -1,8 +1,11 @@
-"""01_CHECK_REM v2.1.8 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.1.9 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个 DX 款的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
+
+功能 v2.1.9：
+  - 修复悬停放大图位置乱跳：等原图加载后用实际尺寸定位，不再按固定 900x90vh 预判
 
 功能 v2.1.8：
   - 日期分类统一按 DX 文件夹建立日期（st_ctime），不再按 AI/去背图最后更新时间
@@ -45,7 +48,7 @@
 
 端口 8766（避开 01_CHECK 的 8765）。
 """
-__version__ = "2.1.8"
+__version__ = "2.1.9"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io
 from pathlib import Path
