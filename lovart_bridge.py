@@ -1,12 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.8
+Y2 Bridge Server v2.3.9
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.9：
+  - 版本同步：与 lovart-official v6.1.1 对齐
+    * v6.1.1 修复 Lovart 提示词缺少 concept 问题
+    * v6.1.1 增强图片 URL 提取、新增无图诊断、连接层 3 次重试
+  - 更新 REPRODUCIBILITY.md 中 lovart-official 回滚 Tag 为 v6.1.1
 
 变更 v2.3.8：
   - 文档与版本同步：更新 SKILL.md / CHANGELOG.md / ARCHITECTURE.md / REPRODUCIBILITY.md
@@ -3215,7 +3221,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.8               ║")
+    print("║   Y2 Bridge Server v2.3.9               ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")

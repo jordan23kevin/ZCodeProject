@@ -1,5 +1,18 @@
 # Y2 一体化控制系统 — 更新日志
 
+## v2.3.9 (2026-07-04) — Lovart v6.1.1 联动对齐
+
+### 📚 文档与版本
+
+- **与 Lovart-official v6.1.1 对齐**：
+  - v6.1.1 修复提示词缺少 concept：把 `POD AI VIRAL FACTORY v3.md` 当规则框架，前面自动拼接 concrete request。
+  - v6.1.1 增强图片 URL 提取（artifacts / markdown / 带 query string 的纯链接）。
+  - v6.1.1 新增无图诊断 `extract_agent_text`，失败原因写入日志。
+  - v6.1.1 `agent_skill._request` 统一重试 3 次，连接层错误幂等重试。
+- **Bridge 版本同步**：`lovart_bridge.py` / `SKILL.md` / `ARCHITECTURE.md` / `CHANGELOG.md` / `REPRODUCIBILITY.md` 全部升级到 v2.3.9。
+
+---
+
 ## v2.3.8 (2026-07-04) — 文档同步 + wb上款联动版本对齐
 
 ### 📚 文档与版本

@@ -1,6 +1,6 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.3.8` + `run_official_v53.py v6.1` + `wb_listing.py v1.3.13`
+> 对应版本: `lovart_bridge.py v2.3.9` + `run_official_v53.py v6.1.1` + `wb_listing.py v1.3.13`
 > 最后更新: 2026-07-04
 
 ---
@@ -108,12 +108,12 @@ git reset --hard HEAD~1
 # ZCodeProject
 cd C:\Users\Administrator\ZCodeProject
 git fetch origin --tags
-git checkout v2.3.8
+git checkout v2.3.9
 
 # lovart-official
 cd "E:\Claude code\lovart-official"
 git fetch origin --tags
-git checkout v6.1
+git checkout v6.1.1
 
 # wb上款
 cd "E:\Claude code\wb上款"
@@ -153,7 +153,7 @@ git checkout v1.3.13
 
 ---
 
-## 6. 本次更新关键点（v2.3.8 / wb上款 v1.3.13）
+## 6. 本次更新关键点（v2.3.9 / wb上款 v1.3.13 / Lovart v6.1.1）
 
 | 问题 | 根因 | 解决方案 | 文件位置 |
 |------|------|----------|----------|
@@ -163,7 +163,11 @@ git checkout v1.3.13
 | Edge 上款时弹前台 | Chromium CDP 命令激活窗口 | wb上款 v1.3.9+ 透明隐藏 + HWND_BOTTOM（v1.3.13 文档同步） | `wb上款 browser_kernel/service/edge_service.py` |
 | 豆包传图失败 | 隐藏窗口后标签未激活，文件 input change 不触发 | prepare_edge + CDP activate + bring_to_front | `wb上款 wb_listing.py` |
 | 登录态误判卡住 | LoginGuard DOM 信号太严格 | 增加 URL 兜底 | `wb上款 browser_kernel/auth/login_guard.py` |
-| 文档版本不一致 | 代码迭代中文档未及时同步 | v2.3.8 / v1.3.13 统一所有 SKILL/CHANGELOG/ARCHITECTURE/REPRODUCIBILITY | 所有仓库根文档 |
+| 文档版本不一致 | 代码迭代中文档未及时同步 | v2.3.9 / v1.3.13 / v6.1.1 统一所有 SKILL/CHANGELOG/ARCHITECTURE/REPRODUCIBILITY | 所有仓库根文档 |
+| Lovart 只回文字要 concept | 提示词只有规则框架，缺少 concrete request | v6.1.1 自动拼接 `_CONCEPT` + `--- DESIGN RULES ---` | `lovart-official/run_official_v53.py` / `config/settings.py` |
+| 图片 URL 提取失败 | 只支持 artifacts 和简单正则 | v6.1.1 支持 artifacts / markdown / 带 query string 链接 | `lovart-official/utils/helpers.py` |
+| 无图时无诊断 | 失败只记录 "未找到图片URL" | v6.1.1 新增 `extract_agent_text` 记录 agent 回复 | `lovart-official/utils/helpers.py` / `core/executor.py` |
+| API 连接层偶发失败 | POST 只重试 1 次 | v6.1.1 `_request` 统一重试 3 次，幂等重试 | `lovart-official/skills/lovart-skill/agent_skill.py` |
 
 ---
 
