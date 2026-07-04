@@ -1,8 +1,13 @@
-"""01_CHECK_REM v2.2.3 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.2.4 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个 DX 款的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
+
+功能 v2.2.4：
+  - 修复单张「重新去背」失效：补全缺失的 `_rembg_worker.py`，`/rembg` 端点现在能正常后台驱动美图
+  - `rembg_one_file` 暂存时把同 DX 所有生成图都放入 `_temp_rembg/{DX}/01_AI`，避免美图 `precheck_pairs` 因缺少 B/W 配对而跳过
+  - 只 untrack 目标图 MD5，同 DX 其他已处理图不会被重复去背
 
 功能 v2.2.3：
   - 反相与贴图解耦：反相只生成黑版专用去背图，不再自动调用贴图流水线
@@ -65,7 +70,7 @@
 
 端口 8766（避开 01_CHECK 的 8765）。
 """
-__version__ = "2.2.3"
+__version__ = "2.2.4"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue
 from pathlib import Path
@@ -529,13 +534,24 @@ def rembg_one_file(dx, ai_file):
     if had_old:
         send_to_recycle_bin(str(old_cut_path))
 
-    # 4. 暂存该单张 AI 图到 _temp_rembg/{DX}/01_AI/
+    # 4. 暂存目标图及其配对图到 _temp_rembg/{DX}/01_AI/
+    #    美图脚本的 precheck_pairs 会检查 B/W 配对完整性；如果只暂存单张 W，
+    #    当 source_map / orig_files 中缺少 B 时会导致整批跳过。因此把同 DX 的
+    #    所有生成图都暂存进来，让配对预检看到完整画面（已在 track 的图不会被重跑）。
     staging_root = TEMP_REMBG / dx / "01_AI"
     if staging_root.exists():
         shutil.rmtree(str(staging_root), ignore_errors=True)
     staging_root.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(str(ai_path), str(staging_root / ai_file))
-    staged_md5 = [file_md5(str(ai_path))]
+    staged_md5 = []
+    for f in sorted(ai_dir.iterdir()):
+        if is_generated_ai(f.name, dx):
+            shutil.copy2(str(f), str(staging_root / f.name))
+            staged_md5.append(file_md5(str(f)))
+    if not staged_md5:
+        _restore_config()
+        _restore_one_backup(cut_name, backup_dir, rem_dir)
+        shutil.rmtree(str(TEMP_REMBG / dx), ignore_errors=True)
+        return False, f"{dx} 没有可暂存的生成图"
 
     # 5. 备份并改写 config.json：SRC 指向 _temp_rembg（脚本扫描 DX*/01_AI）
     shutil.copy2(str(MEITU_CONFIG), str(CONFIG_BACKUP))
@@ -549,8 +565,8 @@ def rembg_one_file(dx, ai_file):
     (WB_ROOT / "_temp_rembg" / "archive").mkdir(parents=True, exist_ok=True)
     MEITU_CONFIG.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    # 6. 从 track 移除该图 md5（仅让美图重跑此图，不影响血缘 registry 中的 AI 图 MD5）
-    removed = _untrack_md5(staged_md5, dx=dx)
+    # 6. 从 track 移除目标图 md5（仅让美图重跑此图，不影响血缘 registry 中的 AI 图 MD5）
+    removed = _untrack_md5([file_md5(str(ai_path))], dx=dx)
 
     # 7. 真实驱动美图（新控制台窗口，接管屏幕）
     if not MEITU_SCRIPT.exists():
@@ -559,7 +575,7 @@ def rembg_one_file(dx, ai_file):
         shutil.rmtree(str(TEMP_REMBG / dx), ignore_errors=True)
         return False, f"美图脚本不存在: {MEITU_SCRIPT}"
 
-    print(f"  [重去背] {dx}/{ai_file}: 暂存1张, 启动美图...", flush=True)
+    print(f"  [重去背] {dx}/{ai_file}: 暂存 {len(staged_md5)} 张（目标 + 同DX生成图）, 启动美图...", flush=True)
     print(f"  ⚠ 美图将接管屏幕，请勿动键鼠，等待脚本结束。", flush=True)
     try:
         proc = run_minimized(

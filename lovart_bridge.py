@@ -1,12 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.12
+Y2 Bridge Server v2.3.13
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.13：
+  - AI 去背 贴图 OS (`engine/check_rem.py v2.2.4`)：
+    * 修复单张「重新去背」点击后无响应/不生成去背图的问题
+    * 补全缺失的 `engine/_rembg_worker.py`：负责在后台运行美图去背并清理锁文件
+    * `rembg_one_file` 暂存时把同 DX 所有生成图都放进临时目录，避免美图配对预检跳过
 
 变更 v2.3.12：
   - AI 去背 贴图 OS (`engine/check_rem.py v2.2.3`)：
@@ -3304,7 +3310,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.12              ║")
+    print("║   Y2 Bridge Server v2.3.13              ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")
