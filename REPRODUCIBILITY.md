@@ -1,6 +1,6 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.3.7` + `run_official_v53.py v6.1`
+> 对应版本: `lovart_bridge.py v2.3.8` + `run_official_v53.py v6.1` + `wb_listing.py v1.3.13`
 > 最后更新: 2026-07-04
 
 ---
@@ -12,7 +12,7 @@
 | ZCodeProject | `C:\Users\Administrator\ZCodeProject` | `https://github.com/jordan23kevin/ZCodeProject.git` | `master` | Y2 控制台 Bridge + 前端页面 |
 | lovart-official | `E:\Claude code\lovart-official` | `https://github.com/jordan23kevin/lovart-official.git` | `main` | Lovart 生图管线 |
 | ps（贴图流水线） | `E:\Claude code\ps` | （未纳入本次推送） | — | PS 贴图 + BW 合成 |
-| wb上款 | `E:\Claude code\wb上款` | （未纳入本次推送） | — | 批量上款 |
+| wb上款 | `E:\Claude code\wb上款` | `https://github.com/jordan23kevin/wb-listing.git` | `main` | 批量上款 |
 
 ---
 
@@ -27,6 +27,10 @@ git pull origin master
 
 # Lovart 管线
 cd "E:\Claude code\lovart-official"
+git pull origin main
+
+# wb上款
+cd "E:\Claude code\wb上款"
 git pull origin main
 ```
 
@@ -104,12 +108,17 @@ git reset --hard HEAD~1
 # ZCodeProject
 cd C:\Users\Administrator\ZCodeProject
 git fetch origin --tags
-git checkout v2.3.7
+git checkout v2.3.8
 
 # lovart-official
 cd "E:\Claude code\lovart-official"
 git fetch origin --tags
 git checkout v6.1
+
+# wb上款
+cd "E:\Claude code\wb上款"
+git fetch origin --tags
+git checkout v1.3.13
 ```
 
 ### 4.3 回滚后重启
@@ -144,7 +153,21 @@ git checkout v6.1
 
 ---
 
-## 6. 关键配置与外部依赖
+## 6. 本次更新关键点（v2.3.8 / wb上款 v1.3.13）
+
+| 问题 | 根因 | 解决方案 | 文件位置 |
+|------|------|----------|----------|
+| 上款进度显示 `280 / 41 (683%)` | `/api/upload/progress` 把历史已完成记录算进当前批次 | done_count / total_count 只统计当前选中的款号 | `lovart_bridge.py` |
+| 上款页面进度信息不清晰 | 只显示 `done / total (pct%)` | 改为 `已上款 X / 总 Y  失败 Z  剩余 W` | `upload.html` |
+| AI 生图对比页缓存旧图 | 重新生图后文件名不变，浏览器用缓存 | 缩略图/原图 URL 追加 `t=<mtime>` | `lovart_bridge.py` / `ai_review.html` |
+| Edge 上款时弹前台 | Chromium CDP 命令激活窗口 | wb上款 v1.3.9+ 透明隐藏 + HWND_BOTTOM（v1.3.13 文档同步） | `wb上款 browser_kernel/service/edge_service.py` |
+| 豆包传图失败 | 隐藏窗口后标签未激活，文件 input change 不触发 | prepare_edge + CDP activate + bring_to_front | `wb上款 wb_listing.py` |
+| 登录态误判卡住 | LoginGuard DOM 信号太严格 | 增加 URL 兜底 | `wb上款 browser_kernel/auth/login_guard.py` |
+| 文档版本不一致 | 代码迭代中文档未及时同步 | v2.3.8 / v1.3.13 统一所有 SKILL/CHANGELOG/ARCHITECTURE/REPRODUCIBILITY | 所有仓库根文档 |
+
+---
+
+## 7. 关键配置与外部依赖
 
 - **Lovart API Key**: `E:\Claude code\lovart-official\config\keys.json`
 - **提示词文件**: `E:\Claude code\lovart-official\config\POD AI VIRAL FACTORY v3.md`
