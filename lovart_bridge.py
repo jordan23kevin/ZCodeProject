@@ -1,12 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.13
+Y2 Bridge Server v2.3.14
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.14：
+  - AI 去背 贴图 OS (`engine/check_rem.py v2.2.5`)：
+    * PS 贴图流程队列化：单张/批量贴图统一进入后台队列串行执行
+    * 新增 `/sticker-status` 端点，前端入队后轮询进度
+    * 每步 PS 脚本增加 5 分钟超时，卡住自动终止并继续下一款
+    * 解决批量贴图处理到一半停止的问题（前端不再被单个挂起请求阻塞）
 
 变更 v2.3.13：
   - AI 去背 贴图 OS (`engine/check_rem.py v2.2.4`)：
@@ -3310,7 +3317,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.13              ║")
+    print("║   Y2 Bridge Server v2.3.14              ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")

@@ -1,8 +1,14 @@
-"""01_CHECK_REM v2.2.4 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.2.5 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个 DX 款的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
+
+功能 v2.2.5：
+  - PS 贴图流程队列化：单张/批量贴图统一进入后台队列，串行执行，避免并发冲突
+  - 新增 `_sticker_worker_loop` + `/sticker-status`，前端入队后轮询进度
+  - 每步 PS 脚本（黑T贴图 / 通用贴图 / BW合成）增加 5 分钟超时，卡住自动终止并继续下一款
+  - 前端 `batchSticker()` 改为全部入队后统一轮询，不再因单个请求挂起而中断
 
 功能 v2.2.4：
   - 修复单张「重新去背」失效：补全缺失的 `_rembg_worker.py`，`/rembg` 端点现在能正常后台驱动美图
@@ -70,7 +76,7 @@
 
 端口 8766（避开 01_CHECK 的 8765）。
 """
-__version__ = "2.2.4"
+__version__ = "2.2.5"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue
 from pathlib import Path
@@ -177,6 +183,98 @@ def _invert_worker_loop():
                 _INVERT_STATUS["running"] = False
                 _INVERT_STATUS["current"] = None
                 _INVERT_STATUS["pending"] = _INVERT_QUEUE.qsize()
+
+
+# ── PS 贴图任务队列（单张 + 批量统一串行执行，避免 PS 并发冲突 + 超时兜底）────────
+_STICKER_QUEUE = queue.Queue()
+_STICKER_WORKER_THREAD = None
+_STICKER_STATUS_LOCK = threading.Lock()
+_STICKER_STATUS = {
+    "running": False,
+    "current": None,
+    "pending": 0,
+    "completed_total": 0,
+    "last_result": None,
+    "last_error": None,
+}
+STICKER_STEP_TIMEOUT = 300  # 每步 PS 脚本最多 5 分钟
+
+
+def _ensure_sticker_worker():
+    """启动 PS 贴图后台工作线程（幂等）。"""
+    global _STICKER_WORKER_THREAD
+    if _STICKER_WORKER_THREAD is None or not _STICKER_WORKER_THREAD.is_alive():
+        _STICKER_WORKER_THREAD = threading.Thread(target=_sticker_worker_loop, daemon=True)
+        _STICKER_WORKER_THREAD.start()
+
+
+def _run_ps_script_with_timeout(cmd, cwd=None, timeout=STICKER_STEP_TIMEOUT, label="PS脚本"):
+    """运行 PS 脚本，超时则 kill 子进程并返回失败。"""
+    import subprocess as _sub
+    try:
+        print(f"  [贴图队列] 启动 {label}: {' '.join(cmd)}", flush=True)
+        proc = run_minimized(cmd, cwd=cwd, wait=False)
+        try:
+            proc.wait(timeout=timeout)
+        except _sub.TimeoutExpired:
+            print(f"  [贴图队列] {label} 超时 {timeout}s，强制终止", flush=True)
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+            return False, f"{label} 超时（{timeout}s）"
+        if proc.returncode != 0:
+            return False, f"{label} 返回码非零: {proc.returncode}"
+        return True, f"{label} 完成"
+    except Exception as e:
+        return False, f"{label} 启动/执行异常: {e}"
+
+
+def _run_ps_script_sync(cmd, cwd=None, label="PS脚本"):
+    """同步运行 PS 脚本（无超时，保留旧行为供直接调用）。"""
+    try:
+        proc = run_minimized(cmd, cwd=cwd)
+        if proc.returncode != 0:
+            return False, f"{label} 返回码非零: {proc.returncode}"
+        return True, f"{label} 完成"
+    except Exception as e:
+        return False, f"{label} 启动/执行异常: {e}"
+
+
+def _sticker_worker_loop():
+    """贴图队列消费者：按顺序执行每款完整贴图流水线。"""
+    while True:
+        task = _STICKER_QUEUE.get()
+        if task is None:
+            break
+        dx = task.get("dx")
+        with _STICKER_STATUS_LOCK:
+            _STICKER_STATUS["running"] = True
+            _STICKER_STATUS["current"] = dx
+            _STICKER_STATUS["pending"] = _STICKER_QUEUE.qsize()
+        try:
+            ok, msg = Handler._run_sticker_pipeline(dx, use_timeout=True)
+            result = {
+                "ok": ok,
+                "msg": msg,
+                "results": [{"ok": ok, "dx": dx, "msg": msg}]
+            }
+            with _STICKER_STATUS_LOCK:
+                _STICKER_STATUS["last_result"] = result
+                _STICKER_STATUS["completed_total"] += 1
+            print(f"[贴图队列] {dx} 完成: ok={ok}, msg={msg}", flush=True)
+        except Exception as e:
+            with _STICKER_STATUS_LOCK:
+                _STICKER_STATUS["last_error"] = str(e)
+            print(f"[贴图队列] {dx} 异常: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+        finally:
+            with _STICKER_STATUS_LOCK:
+                _STICKER_STATUS["running"] = False
+                _STICKER_STATUS["current"] = None
+                _STICKER_STATUS["pending"] = _STICKER_QUEUE.qsize()
 
 
 # ── 回收站删除（与 check_sync.py 一致，可撤销）─────
@@ -987,6 +1085,8 @@ class Handler(BaseHTTPRequestHandler):
             self._ps_sticker(dx)
         elif path == "/ps-batch":
             self._ps_batch(dx)
+        elif path == "/sticker-status":
+            self._sticker_status()
         elif path == "/upscale-rem":
             self._upscale_rem(dx, file)
         elif path == "/invert-rem":
@@ -1633,9 +1733,11 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 print(f"  [贴图流水线] 兜底元数据失败 {f}: {e}", flush=True)
 
     @staticmethod
-    def _run_sticker_pipeline(dx):
+    def _run_sticker_pipeline(dx, use_timeout=False):
         """运行完整贴图流水线：黑T专用 → 通用贴图 → BW 合成。返回 (ok, msg)。
-        每次调用前先清理旧版自动生成的贴图/BW文件，确保反相或重跑后一定重新合成BW。"""
+        每次调用前先清理旧版自动生成的贴图/BW文件，确保反相或重跑后一定重新合成BW。
+        use_timeout=True 时，每步 PS 脚本最多运行 STICKER_STEP_TIMEOUT 秒，超时会强制终止并返回失败。
+        """
         sticker_script = Path(r"E:\Claude code\ps\ps_sticker_one.py")
         batch_script = Path(r"E:\Claude code\ps\ps_batch_one.py")
         black_script = Path(r"E:\Claude code\ps\process_black.py")
@@ -1667,32 +1769,25 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                     except Exception:
                         pass
 
+        runner = _run_ps_script_with_timeout if use_timeout else lambda cmd, cwd=None, label="PS脚本": _run_ps_script_sync(cmd, cwd=cwd, label=label)
+
         # 1) 黑T专用贴图（如果存在黑B/黑W/黑BW）
         if has_black:
             if not black_script.exists():
                 return False, "黑T贴图脚本(process_black.py)不存在"
-            try:
-                proc0 = run_minimized([sys.executable, str(black_script), dx])
-            except Exception as e:
-                return False, f"黑T贴图启动失败: {e}"
-            if proc0.returncode != 0:
-                return False, f"黑T贴图执行失败: {dx}"
+            ok, msg = runner([sys.executable, str(black_script), dx], label="黑T贴图")
+            if not ok:
+                return False, f"黑T贴图失败: {dx} ({msg})"
 
         # 2) 通用 B/W/BW 贴图（有黑版对应文件时自动跳过黑T输出，只做白T）
-        try:
-            proc1 = run_minimized([sys.executable, str(sticker_script), dx])
-        except Exception as e:
-            return False, f"PS贴图启动失败: {e}"
-        if proc1.returncode != 0:
-            return False, f"PS贴图执行失败: {dx}"
+        ok, msg = runner([sys.executable, str(sticker_script), dx], label="PS贴图")
+        if not ok:
+            return False, f"PS贴图失败: {dx} ({msg})"
 
         # 3) 用贴好的 B/W 合成 BW
-        try:
-            proc2 = run_minimized([sys.executable, str(batch_script), dx])
-        except Exception as e:
-            return True, f"贴图完成，但BW合成启动失败: {e}"
-        if proc2.returncode != 0:
-            return True, f"贴图完成，但BW合成执行失败: {dx}"
+        ok, msg = runner([sys.executable, str(batch_script), dx], label="BW合成")
+        if not ok:
+            return True, f"贴图完成，但BW合成失败: {dx} ({msg})"
 
         msg_prefix = "黑T+白T贴图+BW合成" if has_black else "PS贴图+BW合成"
 
@@ -1705,8 +1800,43 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
     def _ps_sticker(self, dx):
         if not re.match(r"^DX\d+$", dx):
             self._send_json({"ok": False, "msg": "DX号非法"}); return
-        ok, msg = self._run_sticker_pipeline(dx)
-        self._send_json({"ok": ok, "msg": msg})
+
+        _ensure_sticker_worker()
+        _STICKER_QUEUE.put({"dx": dx})
+        with _STICKER_STATUS_LOCK:
+            pending = _STICKER_STATUS["pending"] = _STICKER_QUEUE.qsize()
+            current = _STICKER_STATUS["current"]
+        msg = "已加入贴图队列"
+        if current:
+            msg += f"，当前正在处理 {current}"
+        if pending > 1:
+            msg += f"，前面还有 {pending - 1} 个任务"
+        self._send_json({"ok": True, "queued": True, "pending": pending, "msg": msg})
+
+    # 贴图队列状态查询（单张 + 批量共用）
+    def _sticker_status(self):
+        with _STICKER_STATUS_LOCK:
+            running = _STICKER_STATUS["running"]
+            pending = _STICKER_STATUS["pending"]
+            current = _STICKER_STATUS["current"]
+            last_result = _STICKER_STATUS["last_result"]
+
+        if running or pending > 0:
+            msg = "贴图队列运行中"
+            if current:
+                msg += f"：当前 {current}"
+            if pending:
+                msg += f"，还剩 {pending} 个任务"
+            self._send_json({"done": False, "running": running, "pending": pending, "current": current, "msg": msg})
+            return
+
+        if last_result:
+            with _STICKER_STATUS_LOCK:
+                _STICKER_STATUS["last_result"] = None
+            self._send_json({"done": True, "ok": last_result.get("ok", True), "msg": last_result.get("msg", ""), "results": last_result.get("results", [])})
+            return
+
+        self._send_json({"done": True, "ok": True, "msg": "无结果", "results": []})
 
     # BW合成（独立入口：仅用已贴好的 B/W 合成 BW）
     def _ps_batch(self, dx):
@@ -2140,6 +2270,9 @@ def main():
 
     # 启动反相队列工作线程（单张 + 批量统一串行处理）
     _ensure_invert_worker()
+
+    # 启动 PS 贴图队列工作线程（单款 + 批量统一串行处理 + 超时兜底）
+    _ensure_sticker_worker()
 
     # 后台预扫描：启动后立即全量扫描，把结果 warming 到缓存，
     # 这样用户首次打开首页时就是热缓存，几乎秒开。

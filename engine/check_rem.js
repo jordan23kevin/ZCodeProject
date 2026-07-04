@@ -92,8 +92,19 @@ function rembg(dx,file){
 function switchDate(d){window.location.href = d ? '/'+d+'/' : '/';}
 function psSticker(dx){
   if(!confirm('启动 PS贴图（含BW合成） '+dx+' ？\nPS将打开，请勿动键鼠。'))return;
-  showToast('⏳ 启动PS贴图（含BW合成） '+dx+'…');
-  fetch('/ps-sticker?dx='+dx).then(function(r){return r.json();}).then(function(d){showToast(d.msg);if(d.ok)setTimeout(function(){location.reload();},3000);});
+  showToast('⏳ 已加入贴图队列 '+dx+'…');
+  fetch('/ps-sticker?dx='+dx).then(function(r){return r.json();}).then(function(d){
+    if(!d.ok){showToast('❌ '+d.msg);return;}
+    showToast(d.msg);
+    var pollTimer=setInterval(function(){
+      fetch('/sticker-status').then(function(r){return r.json();}).then(function(res){
+        if(!res.done){showToast(res.msg);return;}
+        clearInterval(pollTimer);
+        if(res.ok){showToast('✅ 贴图完成：'+res.msg);}else{showToast('❌ 贴图完成但有失败：'+res.msg);}
+        setTimeout(function(){location.reload();},3000);
+      });
+    },2000);
+  });
 }
 function psBatch(dx){
   if(!confirm('启动 BW合成 '+dx+' ？\n将合成白BW/黑BW。'))return;
@@ -107,24 +118,45 @@ function batchSticker(){
   var list=[];
   checked.forEach(function(cb){list.push(cb.getAttribute('data-dx'));});
   var btn=document.getElementById('batchStickerBtn');
-  btn.disabled=true;btn.textContent='⏳ 启动中…';
-  showToast('⏳ 启动批量贴图（含BW合成） '+list.length+' 款…');
-  // 逐个启动（PS单任务处理）
-  var i=0;
-  function runNext(){
-    if(i>=list.length){
-      btn.textContent='📎 批量贴图 (0)';btn.disabled=false;
-      showToast('✅ 批量贴图（含BW合成）已全部启动，3秒后刷新');
-      setTimeout(function(){location.reload();},3000);
+  btn.disabled=true;btn.textContent='⏳ 加入队列…';
+  showToast('⏳ 批量贴图加入队列 '+list.length+' 款…');
+
+  // 逐个把任务加入后端队列（入队很快），然后统一轮询 /sticker-status
+  var enqueued=0;
+  function enqueueNext(){
+    if(enqueued>=list.length){
+      showToast('⏳ 已全部加入队列，开始轮询进度…');
+      startPolling();
       return;
     }
-    fetch('/ps-sticker?dx='+list[i]).then(function(r){return r.json();}).then(function(d){
-      showToast('📎 ('+(i+1)+'/'+list.length+') '+list[i]+': '+d.msg);
-      i++;
-      if(i<list.length) setTimeout(runNext,2000); else runNext();
+    fetch('/ps-sticker?dx='+list[enqueued]).then(function(r){return r.json();}).then(function(d){
+      if(!d.ok){
+        showToast('❌ '+list[enqueued]+': '+d.msg);
+        btn.textContent='📎 批量贴图 (0)';btn.disabled=false;
+        return;
+      }
+      enqueued++;
+      enqueueNext();
     });
   }
-  runNext();
+
+  function startPolling(){
+    var pollTimer=setInterval(function(){
+      fetch('/sticker-status').then(function(r){return r.json();}).then(function(res){
+        if(!res.done){showToast(res.msg);return;}
+        clearInterval(pollTimer);
+        btn.textContent='📎 批量贴图 (0)';btn.disabled=false;
+        if(res.ok){
+          showToast('✅ 批量贴图完成：'+res.msg);
+        }else{
+          showToast('❌ 批量贴图完成但有失败：'+res.msg);
+        }
+        setTimeout(function(){location.reload();},3000);
+      });
+    },2000);
+  }
+
+  enqueueNext();
 }
 function batchInvertRem(){
   var checked=document.querySelectorAll('.dx-check:checked');
