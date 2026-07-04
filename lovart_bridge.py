@@ -1,12 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.6
+Y2 Bridge Server v2.3.7
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.7：
+  - 修复 /api/upload/progress 计数/百分比异常：只按当前选中的款号统计 done/fail/total
+    避免历史已完成记录把 done_count 撑爆 total_count，导致 "280 / 41 (683%)" 这种显示
+  - upload.html 进度文案改为：已上款 X / 总 Y  失败 Z  剩余 W，信息更直观
+  - AI 生图对比页 (/ai-review) 缩略图 URL 增加 mtime 参数，重新生图后浏览器自动刷新缓存
+  - AI 重新生图任务输出使用 PYTHONUNBUFFERED=1，日志实时可见
 
 变更 v2.3.6：
   - check_rem.py 启动后 1 秒自动后台预扫描，把 scan_projects 结果 warming 到缓存
@@ -200,17 +207,29 @@ def _save_lovart_track(track: list):
 
 
 def _remove_from_lovart_track(img_path: Path) -> int:
-    """从 Lovart track 中移除指定图片的 hash 记录，强制下次重新处理。
+    """从 Lovart track 中移除指定图片的 hash / name+size 记录，强制下次重新处理。
     返回移除的条目数。"""
     if not img_path.exists():
         return 0
     try:
         img_hash = _compute_sha256(str(img_path))
+        img_size = img_path.stat().st_size
+        img_name = img_path.name
     except Exception:
         return 0
     track = _load_lovart_track()
     orig_len = len(track)
-    track = [e for e in track if e.get("hash") != img_hash]
+
+    def _matches(e):
+        # hash 唯一标识（优先）
+        if img_hash and e.get("hash") == img_hash:
+            return True
+        # 兼容旧记录：同名同尺寸也清除，避免换批次后仍被误判为已处理
+        if e.get("name") == img_name and e.get("size") == img_size:
+            return True
+        return False
+
+    track = [e for e in track if not _matches(e)]
     removed = orig_len - len(track)
     if removed:
         _save_lovart_track(track)
@@ -1006,8 +1025,9 @@ def _scan_ai_review_projects():
         if not ai_dir.is_dir():
             continue
 
-        # 读取目录内所有图片
+        # 读取目录内所有图片，同时记录 mtime 用于前端缓存刷新
         all_files = []
+        file_mtimes = {}
         for f in sorted(ai_dir.iterdir()):
             if not f.is_file():
                 continue
@@ -1016,6 +1036,10 @@ def _scan_ai_review_projects():
             if '_副本' in f.name or '已归档' in f.name or '原图' in f.name:
                 continue
             all_files.append(f.name)
+            try:
+                file_mtimes[f.name] = int(f.stat().st_mtime)
+            except Exception:
+                file_mtimes[f.name] = 0
 
         # 分离原图与 AI 生成图
         source_files = [f for f in all_files if INBOX_NAME_RE.match(f)]
@@ -1065,7 +1089,9 @@ def _scan_ai_review_projects():
                     "design_number": _design_number_from_inbox(source_name),
                     "role": role,
                     "source_file": source_name,
+                    "source_mtime": file_mtimes.get(source_name, 0),
                     "ai_file": ai_file,
+                    "ai_mtime": file_mtimes.get(ai_file, 0),
                     "ai_exists": True,
                     "paired": True,
                 })
@@ -1110,7 +1136,9 @@ def _scan_ai_review_projects():
                             "design_number": _design_number_from_inbox(source_name),
                             "role": src_info.get("role", ""),
                             "source_file": source_name,
+                            "source_mtime": file_mtimes.get(source_name, 0),
                             "ai_file": ai_file,
+                            "ai_mtime": file_mtimes.get(ai_file, 0),
                             "ai_exists": True,
                             "paired": True,
                         })
@@ -1131,7 +1159,9 @@ def _scan_ai_review_projects():
                 "design_number": _design_number_from_inbox(source_name),
                 "role": role,
                 "source_file": source_name,
+                "source_mtime": file_mtimes.get(source_name, 0),
                 "ai_file": ai_file,
+                "ai_mtime": file_mtimes.get(ai_file, 0),
                 "ai_exists": True,
                 "paired": source_name != "",
             })
@@ -1149,13 +1179,16 @@ def _scan_ai_review_projects():
                     "design_number": g.get("design_number", 0),
                     "role": g.get("role", ""),
                     "source_file": g.get("source_file", ""),
+                    "source_mtime": g.get("source_mtime", 0),
                     "ai_files": [],
+                    "ai_mtimes": [],
                     "paired": False,
                     "ai_exists": False,
                 }
             mg = merged[key]
             if g.get("ai_file"):
                 mg["ai_files"].append(g["ai_file"])
+                mg["ai_mtimes"].append(g.get("ai_mtime", 0))
             if g.get("paired"):
                 mg["paired"] = True
             if g.get("ai_exists"):
@@ -2715,16 +2748,18 @@ def api_upload_progress():
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
 
-    # 历史已完成作为权威基准
-    historical = _read_completed_md()
-    completed_set = set(data.get("completed", [])) | historical
-    data["completed"] = sorted(completed_set)
-    data["done_count"] = len(data["completed"])
-
-    # pending = selected - completed - failed
+    # 只统计当前选中款范围内的完成/失败，避免历史记录把 done_count 撑爆 total_count
     selected_set = set(data.get("selected", []))
-    failed_set = set(data.get("failed", []))
+    failed_set = set(data.get("failed", [])) & selected_set
+    historical = _read_completed_md()
+    completed_set = (set(data.get("completed", [])) | historical) & selected_set
+
+    data["completed"] = sorted(completed_set)
+    data["failed"] = sorted(failed_set)
     data["pending"] = sorted(selected_set - completed_set - failed_set)
+    data["done_count"] = len(completed_set)
+    data["fail_count"] = len(failed_set)
+    data["total_count"] = len(selected_set)
 
     return jsonify(data)
 
@@ -2968,6 +3003,7 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
         env["PYTHONPATH"] = PYTHONPATH
         env["LOVART_INSECURE_SSL"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUNBUFFERED"] = "1"
         env["BRIDGE_UID_MANIFEST"] = str(UID_MANIFEST_FILE)
         # 重新生图时使用统一提示词文件，并传入目标 DX 复用映射
         if task_id and task_id.startswith("TASK_REGEN_"):
@@ -3008,118 +3044,118 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
                 log(line[:300])
                 task_state["progress"] = line[:200]
 
-            proc.wait()
+        proc.wait()
 
-            # ── 4. 更新 registry ────────────────────────────────────
-            log("更新注册表，建立溯源关系...")
-            reg = load_registry()
-            reg = ensure_registry_v4(reg)
+        # ── 4. 更新 registry ────────────────────────────────────
+        log("更新注册表，建立溯源关系...")
+        reg = load_registry()
+        reg = ensure_registry_v4(reg)
 
-            # 扫描 Lovart 生成的 DX 文件夹，关联 group + 建立溯源
-            if PROJECTS_DIR.exists():
-                cutoff = start_ts.timestamp()
-                for d in sorted(os.listdir(PROJECTS_DIR)):
-                    if not d.startswith('DX'):
-                        continue
-                    ai_dir = PROJECTS_DIR / d / "01_AI"
-                    if not ai_dir.exists():
-                        continue
+        # 扫描 Lovart 生成的 DX 文件夹，关联 group + 建立溯源
+        if PROJECTS_DIR.exists():
+            cutoff = start_ts.timestamp()
+            for d in sorted(os.listdir(PROJECTS_DIR)):
+                if not d.startswith('DX'):
+                    continue
+                ai_dir = PROJECTS_DIR / d / "01_AI"
+                if not ai_dir.exists():
+                    continue
 
-                    dir_mtime = ai_dir.stat().st_mtime
-                    if dir_mtime < cutoff:
-                        continue
+                dir_mtime = ai_dir.stat().st_mtime
+                if dir_mtime < cutoff:
+                    continue
 
-                    sm_path = PROJECTS_DIR / d / "source_map.json"
-                    if not sm_path.exists():
-                        continue
+                sm_path = PROJECTS_DIR / d / "source_map.json"
+                if not sm_path.exists():
+                    continue
 
-                    try:
-                        with open(sm_path, 'r', encoding='utf-8') as f:
-                            sm = json.load(f)
-                    except Exception:
-                        continue
-
-                    for src in sm.get("sources", []):
-                        src_id = src.get("src_id", "")
-                        role = src.get("role", "")
-                        target_file = src.get("file", "")
-                        uid = src.get("uid", "")
-                        gid = src.get("group_id", "")
-
-                        # 优先按 uid 匹配注册表；否则回退 role+group_id
-                        img_info = None
-                        if uid:
-                            md5_key = reg.get("uid_index", {}).get(uid, "")
-                            img_info = reg.get("images", {}).get(md5_key)
-                        if not img_info and gid and role:
-                            for mk, info in reg.get("images", {}).items():
-                                if info.get("role") == role and info.get("group_id") == gid:
-                                    img_info = info
-                                    break
-                        if not img_info:
-                            for mk, info in reg.get("images", {}).items():
-                                if info.get("role") == role and \
-                                   info.get("group_id") in group_map.values():
-                                    img_info = info
-                                    break
-
-                        if img_info:
-                            # 更新注册表
-                            img_info["current_name"] = target_file
-                            img_info["current_path"] = f"02_PROJECTS/{d}/01_AI/{target_file}"
-                            img_info["src_id"] = src_id
-                            img_info["events"].append({
-                                "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "event": "bridge_generate_complete",
-                                "detail": f"输出到 {d}/01_AI/{target_file}",
-                            })
-                            # 更新对应的 group
-                            gid = img_info.get("group_id")
-                            if gid in reg.get("groups", {}):
-                                reg["groups"][gid]["dx_folder"] = d
-                                reg["groups"][gid]["status"] = "generated"
-
-                            # 写入 AI sidecar 与 uid_map
-                            if wb_meta:
-                                try:
-                                    ai_path = PROJECTS_DIR / d / "01_AI" / target_file
-                                    if ai_path.exists():
-                                        inbox_name = img_info.get("inbox_original_name", "")
-                                        wb_meta.register_ai(
-                                            ai_path,
-                                            uid=img_info.get("uid", uid),
-                                            group_id=img_info.get("group_id", gid),
-                                            role=role,
-                                            parent_uid=img_info.get("uid", uid),
-                                            inbox_file=f"01_INBOX/{inbox_name}" if inbox_name else None,
-                                        )
-                                except Exception as e:
-                                    log(f"WARN: AI sidecar 写入失败 {target_file}: {e}")
-
-            # 建立溯源关系（AI 图 → INBOX 原图）
-            lovart_reg_path = Path("D:/Semems WB/WB_REGISTRY/registry.json")
-            lovart_reg = {}
-            if lovart_reg_path.exists():
                 try:
-                    with open(lovart_reg_path, 'r', encoding='utf-8') as f:
-                        lovart_reg = json.load(f)
+                    with open(sm_path, 'r', encoding='utf-8') as f:
+                        sm = json.load(f)
                 except Exception:
-                    pass
-
-            for md5_key, img_info in reg.get("images", {}).items():
-                if img_info.get("source_type") or not img_info.get("group_id"):
                     continue
-                gid = img_info.get("group_id")
-                if gid not in group_map.values():
-                    continue
-                # 这张 AI 图刚生成，找它的 INBOX 源图
-                inbox_name = img_info.get("inbox_original_name", "")
-                src_md5 = reg.get("name_index", {}).get(inbox_name, "")
-                if src_md5 and src_md5 in reg.get("images", {}):
-                    _register_provenance(reg, md5_key, src_md5, "ai_gen")
 
-            save_registry(reg)
-            log("注册表更新完成（含溯源关系）")
+                for src in sm.get("sources", []):
+                    src_id = src.get("src_id", "")
+                    role = src.get("role", "")
+                    target_file = src.get("file", "")
+                    uid = src.get("uid", "")
+                    gid = src.get("group_id", "")
+
+                    # 优先按 uid 匹配注册表；否则回退 role+group_id
+                    img_info = None
+                    if uid:
+                        md5_key = reg.get("uid_index", {}).get(uid, "")
+                        img_info = reg.get("images", {}).get(md5_key)
+                    if not img_info and gid and role:
+                        for mk, info in reg.get("images", {}).items():
+                            if info.get("role") == role and info.get("group_id") == gid:
+                                img_info = info
+                                break
+                    if not img_info:
+                        for mk, info in reg.get("images", {}).items():
+                            if info.get("role") == role and \
+                               info.get("group_id") in group_map.values():
+                                img_info = info
+                                break
+
+                    if img_info:
+                        # 更新注册表
+                        img_info["current_name"] = target_file
+                        img_info["current_path"] = f"02_PROJECTS/{d}/01_AI/{target_file}"
+                        img_info["src_id"] = src_id
+                        img_info["events"].append({
+                            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "event": "bridge_generate_complete",
+                            "detail": f"输出到 {d}/01_AI/{target_file}",
+                        })
+                        # 更新对应的 group
+                        gid = img_info.get("group_id")
+                        if gid in reg.get("groups", {}):
+                            reg["groups"][gid]["dx_folder"] = d
+                            reg["groups"][gid]["status"] = "generated"
+
+                        # 写入 AI sidecar 与 uid_map
+                        if wb_meta:
+                            try:
+                                ai_path = PROJECTS_DIR / d / "01_AI" / target_file
+                                if ai_path.exists():
+                                    inbox_name = img_info.get("inbox_original_name", "")
+                                    wb_meta.register_ai(
+                                        ai_path,
+                                        uid=img_info.get("uid", uid),
+                                        group_id=img_info.get("group_id", gid),
+                                        role=role,
+                                        parent_uid=img_info.get("uid", uid),
+                                        inbox_file=f"01_INBOX/{inbox_name}" if inbox_name else None,
+                                    )
+                            except Exception as e:
+                                log(f"WARN: AI sidecar 写入失败 {target_file}: {e}")
+
+        # 建立溯源关系（AI 图 → INBOX 原图）
+        lovart_reg_path = Path("D:/Semems WB/WB_REGISTRY/registry.json")
+        lovart_reg = {}
+        if lovart_reg_path.exists():
+            try:
+                with open(lovart_reg_path, 'r', encoding='utf-8') as f:
+                    lovart_reg = json.load(f)
+            except Exception:
+                pass
+
+        for md5_key, img_info in reg.get("images", {}).items():
+            if img_info.get("source_type") or not img_info.get("group_id"):
+                continue
+            gid = img_info.get("group_id")
+            if gid not in group_map.values():
+                continue
+            # 这张 AI 图刚生成，找它的 INBOX 源图
+            inbox_name = img_info.get("inbox_original_name", "")
+            src_md5 = reg.get("name_index", {}).get(inbox_name, "")
+            if src_md5 and src_md5 in reg.get("images", {}):
+                _register_provenance(reg, md5_key, src_md5, "ai_gen")
+
+        save_registry(reg)
+        log("注册表更新完成（含溯源关系）")
 
         # ── 6. 完成 ─────────────────────────────────────────────
         task_state["status"] = "completed"
@@ -3174,7 +3210,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.6               ║")
+    print("║   Y2 Bridge Server v2.3.7               ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")

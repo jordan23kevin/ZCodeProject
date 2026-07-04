@@ -299,10 +299,12 @@ function updateProgressPanel(){
   }
   panel.classList.add('active');
   var total=progressData.total_count||0;
-  var done=(progressData.done_count||0)+(progressData.fail_count||0);
-  var pct=total?Math.round(done/total*100):0;
+  var done=progressData.done_count||0;
+  var fail=progressData.fail_count||0;
+  var remain=total-done-fail;
+  var pct=total?Math.round((done+fail)/total*100):0;
   document.getElementById('progressBar').style.width=pct+'%';
-  document.getElementById('progressMeta').textContent=done+' / '+total+' ('+pct+'%)';
+  document.getElementById('progressMeta').textContent='已上款 '+done+' / '+total+'  失败 '+fail+'  剩余 '+remain;
 
   var current=progressData.current;
   var currentText=current?'正在上款：'+current:'等待中…';

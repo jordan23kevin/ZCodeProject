@@ -445,8 +445,10 @@ function renderCards() {
 
 function renderPairRow(dx, g) {
   const badgeClass = 'badge-' + (g.role || 'BW');
-  const sourceUrl = g.source_file ? `/api/ai-review/thumb?dx=${dx}&file=${encodeURIComponent(g.source_file)}` : '';
-  const sourceOrigUrl = g.source_file ? `/api/ai-review/original?dx=${dx}&file=${encodeURIComponent(g.source_file)}` : '';
+  const sourceMtime = g.source_mtime || 0;
+  const sourceQs = sourceMtime ? `&t=${sourceMtime}` : '';
+  const sourceUrl = g.source_file ? `/api/ai-review/thumb?dx=${dx}&file=${encodeURIComponent(g.source_file)}${sourceQs}` : '';
+  const sourceOrigUrl = g.source_file ? `/api/ai-review/original?dx=${dx}&file=${encodeURIComponent(g.source_file)}${sourceQs}` : '';
 
   const cbKey = `${dx}|${g.source_file}`;
   const sourceCell = g.source_file
@@ -468,10 +470,13 @@ function renderPairRow(dx, g) {
 
   let aiCell = '';
   const aiFiles = g.ai_files || [];
+  const aiMtimes = g.ai_mtimes || [];
   if (aiFiles.length && g.ai_exists) {
     aiCell = aiFiles.map((aiFile, idx) => {
-      const aiUrl = `/api/ai-review/thumb?dx=${dx}&file=${encodeURIComponent(aiFile)}`;
-      const aiOrigUrl = `/api/ai-review/original?dx=${dx}&file=${encodeURIComponent(aiFile)}`;
+      const aiMtime = aiMtimes[idx] || 0;
+      const aiQs = aiMtime ? `&t=${aiMtime}` : '';
+      const aiUrl = `/api/ai-review/thumb?dx=${dx}&file=${encodeURIComponent(aiFile)}${aiQs}`;
+      const aiOrigUrl = `/api/ai-review/original?dx=${dx}&file=${encodeURIComponent(aiFile)}${aiQs}`;
       const tag = idx === 0 ? 'AI' : `AI${idx + 1}`;
       return `<div class="cell-wrap">
         <div class="cell" id="${dx}-${g.role || 'X'}-ai-${idx}" data-hover-src="${aiOrigUrl}">
@@ -800,7 +805,11 @@ function buildSummary(st, logs) {
     lines.push(`输出文件夹：<span class="dx-link" onclick="openFolder('${st.output_folder}')">${esc(st.output_folder)}/01_AI</span>`);
   }
   lines.push(`已用时间：${elapsed}`);
-  lines.push(`生成结果：<span class="${fail ? 'err' : 'ok'}">成功 ${success} 张</span>，<span class="${fail ? 'err' : ''}">失败 ${fail} 张</span>（共 ${total} 张）`);
+  // 成功数始终绿色；失败数仅在 >0 时标红
+  const failSpan = fail
+    ? `<span class="err">失败 ${fail} 张</span>`
+    : `<span>失败 ${fail} 张</span>`;
+  lines.push(`生成结果：<span class="ok">成功 ${success} 张</span>，${failSpan}（共 ${total} 张）`);
 
   // 提取关键事件
   const selectedMatch = logs.join('\n').match(/选中文件:\s*([^\n]+)/);
@@ -811,10 +820,17 @@ function buildSummary(st, logs) {
     lines.push(`<span class="warn">⚠ 发现 ${conflicts.length} 个同名不同图冲突，已移入回收站暂存</span>`);
   }
 
-  const failLines = logs.filter(l => /\[FAIL\]|失败|error|异常|未找到图片URL/i.test(l));
-  if (failLines.length) {
-    const lastFail = failLines[failLines.length - 1];
-    lines.push(`<span class="err">⚠ 最后失败原因：${esc(lastFail.replace(/^.*\[FAIL\]\s*/, '').trim())}</span>`);
+  // 只有真正存在失败时才显示失败原因；过滤掉汇总行 "生成 X 张, 失败 Y 张"
+  if (fail > 0) {
+    const failLines = logs.filter(l =>
+      /\[FAIL\]|未找到图片URL|Connection failed|Insufficient credits|风控|积分用完|RuntimeError/i.test(l)
+      && !/生成\s*\d+\s*张[,，]\s*失败\s*\d+\s*张/.test(l)
+    );
+    if (failLines.length) {
+      const lastFail = failLines[failLines.length - 1];
+      const reason = lastFail.replace(/^.*\[FAIL\]\s*/, '').replace(/^.*?:\s*/, '').trim();
+      lines.push(`<span class="err">⚠ 最后失败原因：${esc(reason || lastFail.trim())}</span>`);
+    }
   }
 
   if (status === 'running' || status === 'starting') {

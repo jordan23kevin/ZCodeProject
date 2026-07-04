@@ -1,6 +1,6 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.3.6` + `run_official_v53.py v6.1`
+> 对应版本: `lovart_bridge.py v2.3.7` + `run_official_v53.py v6.1`
 > 最后更新: 2026-07-04
 
 ---
@@ -104,7 +104,7 @@ git reset --hard HEAD~1
 # ZCodeProject
 cd C:\Users\Administrator\ZCodeProject
 git fetch origin --tags
-git checkout v2.3.6
+git checkout v2.3.7
 
 # lovart-official
 cd "E:\Claude code\lovart-official"
