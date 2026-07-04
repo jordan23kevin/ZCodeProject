@@ -67,6 +67,7 @@
   <input id="search" placeholder="搜索 DX号…" oninput="filterCards()">
   <button onclick="filterCards()">🔍 搜索</button>
   <button onclick="refreshAll()">🔄 刷新</button>
+  <button onclick="refreshOnlineListed()" id="refreshOnlineBtn">🌐 刷新已上款</button>
   <label>
     <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)" style="width:20px;height:20px;accent-color:#4CAF50;vertical-align:middle;"> 全选
   </label>
@@ -88,6 +89,7 @@
     <span id="progressElapsed">已用：-</span>
     <span id="progressAvg">平均：-</span>
     <span id="progressEta">预计剩余：-</span>
+    <span id="progressOnline">在线已验证：-</span>
   </div>
 </div>
 
@@ -203,10 +205,14 @@ function buildCard(p){
   if(progressData && progressData.per_dx && progressData.per_dx[p.dx] && progressData.per_dx[p.dx].duration){
     doneInfo=' <span style="color:#8bc34a;font-size:13px">('+formatDuration(progressData.per_dx[p.dx].duration)+')</span>';
   }
+  var onlineBadge = p.online_listed
+    ? ' <span style="background:#4caf50;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:8px;">✓ 在线</span>'
+    : '';
   return '<div class="card" data-dx="'+p.dx+'" id="card-'+p.dx+'">'
     +'<div class="card-head">'
     +'<input type="checkbox" class="dx-check" data-dx="'+p.dx+'" onchange="updateUploadBtn()">'
     +'<span class="dxname" onclick="openDxFolder(\''+p.dx+'\')">'+p.dx+'</span>'
+    +onlineBadge
     +'<span class="pcount">'+(p.files?p.files.length:0)+' 张'+doneInfo+'</span>'
     +'</div>'
     +'<div class="up-gallery">'+(rows.length?rows.join(''):'<p class="empty">03_UPLOAD 为空</p>')+'</div>'
@@ -218,11 +224,6 @@ function renderCards(){
   var date=document.getElementById('dateSel').value;
   var terms=q?q.split(',').map(function(t){return t.trim();}).filter(function(t){return t;}):[];
 
-  var completedSet={};
-  if(progressData && progressData.completed){
-    progressData.completed.forEach(function(dx){completedSet[dx]=true;});
-  }
-
   var pending=[], completed=[];
   allProjects.forEach(function(p){
     if(date && p.date!==date)return;
@@ -230,7 +231,7 @@ function renderCards(){
     if(!terms.length)show=true;
     else for(var i=0;i<terms.length;i++){if(p.dx.indexOf(terms[i])>=0){show=true;break;}}
     if(!show)return;
-    if(completedSet[p.dx])completed.push(p);
+    if(p.online_listed)completed.push(p);
     else pending.push(p);
   });
 
@@ -274,6 +275,52 @@ function openDxFolder(dx){
 function refreshAll(){
   showToast('🔄 刷新中…');
   loadProjects();
+}
+
+function refreshOnlineListed(){
+  var btn=document.getElementById('refreshOnlineBtn');
+  btn.disabled=true;btn.textContent='⏳ 刷新中…';
+  showToast('🌐 正在从店小秘在线产品页拉取已上款信息…');
+  fetch('/api/upload/refresh-online-listed',{method:'POST'})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      showToast(d.ok?'✅ '+d.msg:'❌ '+(d.error||'未知错误'));
+      if(d.ok){
+        // 轮询进度，等待在线数据更新
+        startOnlinePolling();
+      }else{
+        btn.disabled=false;btn.textContent='🌐 刷新已上款';
+      }
+    }).catch(function(e){
+      showToast('❌ 请求失败: '+e);
+      btn.disabled=false;btn.textContent='🌐 刷新已上款';
+    });
+}
+
+var onlinePollTimer=null;
+function startOnlinePolling(){
+  if(onlinePollTimer)clearInterval(onlinePollTimer);
+  var btn=document.getElementById('refreshOnlineBtn');
+  var lastCount=-1;
+  var stableRounds=0;
+  onlinePollTimer=setInterval(function(){
+    Promise.all([loadProjects(), loadProgress()]).then(function(){
+      renderCards();
+      updateProgressPanel();
+      var onlineCount=progressData&&progressData.online_count||0;
+      if(onlineCount===lastCount){
+        stableRounds++;
+        if(stableRounds>=3){
+          clearInterval(onlinePollTimer);onlinePollTimer=null;
+          btn.disabled=false;btn.textContent='🌐 刷新已上款';
+          showToast('✅ 在线已上款刷新完成：'+onlineCount+' 款');
+        }
+      }else{
+        lastCount=onlineCount;
+        stableRounds=0;
+      }
+    });
+  },3000);
 }
 
 function startPolling(){
@@ -335,6 +382,15 @@ function updateProgressPanel(){
   }
   document.getElementById('progressAvg').textContent='平均：'+avg;
   document.getElementById('progressEta').textContent='预计剩余：'+eta;
+
+  var onlineCount=progressData.online_count||0;
+  var onlineUpdated=progressData.online_updated_at||'';
+  var onlineText='在线已验证：'+onlineCount+' / '+total;
+  if(onlineUpdated){
+    var d=new Date(onlineUpdated);
+    if(!isNaN(d)) onlineText+=' （更新于 '+d.toLocaleTimeString()+'）';
+  }
+  document.getElementById('progressOnline').textContent=onlineText;
 }
 
 function batchUpload(){

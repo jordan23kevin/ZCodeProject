@@ -1,5 +1,30 @@
 # Y2 一体化控制系统 — 更新日志
 
+## v2.3.10 (2026-07-04) — WB 上款在线验证 + 与 wb上款 v1.3.14 联动
+
+### ✨ 新增
+
+- **WB 上款页面新增「刷新已上款」功能**
+  - 新增 API 端点 `POST /api/upload/refresh-online-listed`，后台启动 `check_online_listed.py`。
+  - `check_online_listed.py` 自动打开店小秘 Temu 在线产品页，切分页到 300 条/页，抓取所有 SKU 货号并提取 DX 款号。
+  - 抓取结果写入 `D:\Semems WB\.wb_online_listed.json`。
+
+### 🔧 调整
+
+- **已上款状态权威来源变更**
+  - `/upload` 页面现在以 `.wb_online_listed.json`（店小秘在线产品页实际数据）作为已上款判断的唯一权威来源。
+  - `已上款货号_wb.md` 不再参与 `/upload` 已上款状态判断（仍保留供其他流程参考）。
+  - `/api/upload/progress` 返回新增字段：`online_set`、`online_count`、`online_updated_at`。
+  - `/api/upload/projects` 返回每个 project 的 `online_listed` 布尔字段。
+
+### 🎨 UI
+
+- `upload.html` 工具栏新增「🌐 刷新已上款」按钮。
+- 已在线验证的款号卡片显示绿色 `✓ 在线` 徽章。
+- 上款进度面板增加「在线已验证：X / 总 Y」显示。
+
+---
+
 ## v2.3.9 (2026-07-04) — Lovart v6.1.1 联动对齐
 
 ### 📚 文档与版本

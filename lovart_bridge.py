@@ -1,20 +1,23 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.9
+Y2 Bridge Server v2.3.10
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
 
-变更 v2.3.9：
-  - 版本同步：与 lovart-official v6.1.1 对齐
-    * v6.1.1 修复 Lovart 提示词缺少 concept 问题
-    * v6.1.1 增强图片 URL 提取、新增无图诊断、连接层 3 次重试
-  - 更新 REPRODUCIBILITY.md 中 lovart-official 回滚 Tag 为 v6.1.1
+变更 v2.3.10：
+  - WB 上款页面新增「刷新已上款」功能：
+    * 调用 wb上款 v1.3.14 的 check_online_listed.py
+    * 从店小秘 Temu 在线产品页抓取 SKU，提取 DX 款号
+    * 在线已上款成为 /upload 页面已上款状态的唯一权威来源
+    * 新增 /api/upload/refresh-online-listed 端点
+    * upload.html 增加刷新按钮、在线验证徽章、进度面板在线计数
+  - 与 wb上款 v1.3.14 联动版本对齐
 
-变更 v2.3.8：
+变更 v2.3.9：
   - 文档与版本同步：更新 SKILL.md / CHANGELOG.md / ARCHITECTURE.md / REPRODUCIBILITY.md
   - 明确与 wb上款 v1.3.13 联动：Edge 透明隐藏、LoginGuard URL 兜底、豆包传图修复
   - 新增 REPRODUCIBILITY.md：一键复现、回滚到 Tag、问题与解决记录
@@ -956,6 +959,7 @@ def rename_to_bw(filename: str) -> tuple:
 UPLOAD_THUMB_DIR = BASE_DIR / "_upload_thumbs"
 UPLOAD_PROGRESS_FILE = BASE_DIR / ".wb_upload_progress.json"
 UPLOAD_RECORD_MD = BASE_DIR / "已上款货号_wb.md"
+ONLINE_LISTED_FILE = BASE_DIR / ".wb_online_listed.json"
 
 def _dx_dir_date(d: Path) -> str:
     """返回 DX 文件夹建立日期（YYMMDD），所有日期分类统一用建立时间。"""
@@ -2651,8 +2655,12 @@ def upload_page():
 
 @app.route('/api/upload/projects')
 def api_upload_projects():
-    """返回所有含 03_UPLOAD 成品的 DX 列表"""
-    return jsonify({"ok": True, "projects": _scan_upload_projects()})
+    """返回所有含 03_UPLOAD 成品的 DX 列表，并标记是否在线已上款"""
+    projects = _scan_upload_projects()
+    online_set = _read_online_listed()
+    for p in projects:
+        p["online_listed"] = p.get("dx", "") in online_set
+    return jsonify({"ok": True, "projects": projects, "online_updated_at": _online_listed_updated_at()})
 
 
 @app.route('/api/upload/thumb')
@@ -2687,7 +2695,7 @@ def api_upload_original():
 
 
 def _read_completed_md():
-    """读取 已上款货号_wb.md 中的所有 DX 货号"""
+    """读取 已上款货号_wb.md 中的所有 DX 货号（已弃用，仅兼容旧逻辑）"""
     md = BASE_DIR / "已上款货号_wb.md"
     if not md.exists():
         return set()
@@ -2702,6 +2710,29 @@ def _read_completed_md():
             )
     except Exception:
         return set()
+
+
+def _read_online_listed():
+    """读取店小秘在线产品页抓取的已上款 DX 集合（唯一权威来源）"""
+    if not ONLINE_LISTED_FILE.exists():
+        return set()
+    try:
+        data = json.loads(ONLINE_LISTED_FILE.read_text(encoding="utf-8"))
+        dx_set = data.get("dx_set", []) or []
+        return set(str(dx).upper() for dx in dx_set if str(dx).upper().startswith("DX"))
+    except Exception:
+        return set()
+
+
+def _online_listed_updated_at():
+    """返回在线已上款数据最后更新时间"""
+    if not ONLINE_LISTED_FILE.exists():
+        return None
+    try:
+        data = json.loads(ONLINE_LISTED_FILE.read_text(encoding="utf-8"))
+        return data.get("updated_at")
+    except Exception:
+        return None
 
 
 def _remove_from_completed_md(dx_list):
@@ -2762,8 +2793,9 @@ def api_upload_progress():
     # 只统计当前选中款范围内的完成/失败，避免历史记录把 done_count 撑爆 total_count
     selected_set = set(data.get("selected", []))
     failed_set = set(data.get("failed", [])) & selected_set
-    historical = _read_completed_md()
-    completed_set = (set(data.get("completed", [])) | historical) & selected_set
+    online_set = _read_online_listed()
+    # 店小秘在线产品页为唯一权威来源；同时保留当前运行中的 completed（wb_listing.py 实时写入）
+    completed_set = (set(data.get("completed", [])) | online_set) & selected_set
 
     data["completed"] = sorted(completed_set)
     data["failed"] = sorted(failed_set)
@@ -2772,7 +2804,44 @@ def api_upload_progress():
     data["fail_count"] = len(failed_set)
     data["total_count"] = len(selected_set)
 
+    # 在线已上款信息（权威来源）
+    data["online_set"] = sorted(online_set & selected_set)
+    data["online_count"] = len(online_set & selected_set)
+    data["online_updated_at"] = _online_listed_updated_at()
+
     return jsonify(data)
+
+
+@app.route('/api/upload/refresh-online-listed', methods=['POST'])
+def api_upload_refresh_online_listed():
+    """启动 check_online_listed.py，从店小秘在线产品页刷新真正已上款的 DX 集合"""
+    lock_file = BASE_DIR / ".check_online_listed.lock"
+    if lock_file.exists():
+        return jsonify({
+            "ok": False,
+            "error": "已有刷新任务在运行，请等待完成"
+        }), 429
+
+    default_script = r"E:\Claude code\wb上款\check_online_listed.py"
+    script_path = Path(default_script)
+    if not script_path.exists():
+        return jsonify({
+            "ok": False,
+            "error": f"刷新脚本不存在: {default_script}"
+        }), 404
+
+    try:
+        proc = run_minimized([sys.executable, str(script_path)], wait=False)
+        return jsonify({
+            "ok": True,
+            "msg": "已开始刷新在线已上款，请等待 30~120 秒后查看结果",
+            "pid": proc.pid,
+        })
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "error": f"启动刷新脚本失败: {e}"
+        }), 500
 
 
 @app.route('/api/open')
@@ -3221,7 +3290,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.9               ║")
+    print("║   Y2 Bridge Server v2.3.10              ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")
