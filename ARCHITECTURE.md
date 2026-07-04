@@ -1,4 +1,4 @@
-# Y2 系统架构文档 v2.3.14
+# Y2 系统架构文档 v2.3.15
 
 > 工程类型: 图像生产血缘数据库 + 控制面板 + 贴图成品流水线 + AI 生图对比复审
 > 遵循: B+ 四层血缘闭环架构
@@ -19,7 +19,7 @@
             │ HTTP/JSON            │ HTTP/JSON           │ HTTP/JSON
             ▼                      ▼                     ▼
 ┌──────────────────────┐  ┌──────────────────────┐  ┌────────────────────────────────────────┐
-│   lovart_bridge.py   │  │   lovart_bridge.py   │  │   check_rem.py v2.2.0                 │
+│   lovart_bridge.py   │  │   lovart_bridge.py   │  │   check_rem.py v2.2.6                 │
 │   v2.3.0 (Flask      │  │   重新生图 API:      │  │   (预览 + 去背 + 贴图触发 + 批量反相) │
 │       Server)        │  │   /api/ai-review/*   │  │   check_rem.js v2.2.0 (独立JS)        │
 │                      │  │   /api/ai-review/    │  │                                        │

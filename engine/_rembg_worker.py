@@ -7,6 +7,7 @@
 import sys
 import os
 from pathlib import Path
+from datetime import datetime
 
 # 把 engine 目录加入路径，方便导入 check_rem
 sys.path.insert(0, str(Path(__file__).parent))
@@ -14,9 +15,23 @@ sys.path.insert(0, str(Path(__file__).parent))
 from check_rem import rembg_one_file, TEMP_REMBG
 
 
+def _setup_logging():
+    log_dir = Path("D:/Semems WB/_debug")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"_rembg_worker_{datetime.now():%Y%m%d_%H%M%S}.log"
+    f = open(log_path, "a", encoding="utf-8")
+    sys.stdout = f
+    sys.stderr = f
+    return log_path, f
+
+
 def main():
+    log_path, log_f = _setup_logging()
+    print(f"[_rembg_worker] 日志: {log_path}", flush=True)
+
     if len(sys.argv) < 3:
         print("用法: _rembg_worker.py <DX> <ai_file>", flush=True)
+        log_f.close()
         return 1
 
     dx = sys.argv[1]
@@ -38,6 +53,10 @@ def main():
                 print("[_rembg_worker] 锁已清理", flush=True)
         except Exception as e:
             print(f"[_rembg_worker] 清理锁失败: {e}", flush=True)
+        try:
+            log_f.close()
+        except Exception:
+            pass
 
     return 0
 

@@ -1,7 +1,7 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.3.14` + `run_official_v53.py v6.1.1` + `wb_listing.py v1.3.16`
-> 最后更新: 2026-07-04
+> 对应版本: `lovart_bridge.py v2.3.15` + `run_official_v53.py v6.1.1` + `wb_listing.py v1.3.17`
+> 最后更新: 2026-07-05
 
 ---
 
@@ -108,7 +108,7 @@ git reset --hard HEAD~1
 # ZCodeProject
 cd C:\Users\Administrator\ZCodeProject
 git fetch origin --tags
-git checkout v2.3.14
+git checkout v2.3.15
 
 # lovart-official
 cd "E:\Claude code\lovart-official"
@@ -118,7 +118,7 @@ git checkout v6.1.1
 # wb上款
 cd "E:\Claude code\wb上款"
 git fetch origin --tags
-git checkout v1.3.14
+git checkout v1.3.17
 ```
 
 ### 4.3 回滚后重启
@@ -153,10 +153,14 @@ git checkout v1.3.14
 
 ---
 
-## 6. 本次更新关键点（v2.3.14 / wb上款 v1.3.16 / Lovart v6.1.1）
+## 6. 本次更新关键点（v2.3.15 / wb上款 v1.3.17 / Lovart v6.1.1）
 
 | 问题 | 根因 | 解决方案 | 文件位置 |
 |------|------|----------|----------|
+| 单张去背后 02_REM_BG 无输出（如 DX0339_W） | 美图保存路径未切换，`_副本.png` 落到 `WB_ROOT/_temp_rembg/save`，check_rem 只扫描 `TEMP_REMBG/{DX}/02_REM_BG` | 新增 `_collect_rembg_results()`，从三个位置扫描 `_cut.png` / `_副本.png` 并归位改名 | `engine/check_rem.py` |
+| 批量去背 B/W 被错误跳过 | `/batch-rembg` 用全局 `dx_files` 判断是否含 BW，前一个有 BW 的款污染后续所有款 | 每个 DX 独立判断，只跳过该 DX 自己的 B/W | `engine/check_rem.py` |
+| 去背后无法定位问题 | `_rembg_worker.py` 控制台关闭后日志丢失 | worker 输出重定向到 `D:\Semems WB\_debug\_rembg_worker_YYYYMMDD_HHMMSS.log` | `engine/_rembg_worker.py` |
+| 批量上款首个款黑T图错传白T位置 | 全局 `选择图片` 按钮顺序与表格行顺序不一致；颜色勾选后 DOM 重排 | 从目标表格行内部定位按钮；重新按颜色解析行索引；上传前颜色校验 | `wb上款/wb_listing.py` |
 | 上款进度显示 `280 / 41 (683%)` | `/api/upload/progress` 把历史已完成记录算进当前批次 | done_count / total_count 只统计当前选中的款号 | `lovart_bridge.py` |
 | 上款页面进度信息不清晰 | 只显示 `done / total (pct%)` | 改为 `已上款 X / 总 Y  失败 Z  剩余 W` | `upload.html` |
 | AI 生图对比页缓存旧图 | 重新生图后文件名不变，浏览器用缓存 | 缩略图/原图 URL 追加 `t=<mtime>` | `lovart_bridge.py` / `ai_review.html` |

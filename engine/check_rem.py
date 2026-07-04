@@ -1,8 +1,17 @@
-"""01_CHECK_REM v2.2.5 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.2.6 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个 DX 款的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
+
+功能 v2.2.6：
+  - 修复 DX0339_W 等单张去背无输出：美图保存路径未切换时，结果会落到 `_temp_rembg/save`。
+    check_rem.py 现在会从 `TEMP_REMBG/{DX}/02_REM_BG`、`WB_ROOT/_temp_rembg/save`、
+    `WB_ROOT/_temp_rembg/archive` 三个位置收集 `_cut.png` / `_副本.png`，并把 `_副本.png` 改名为 `_cut.png`。
+  - `rembg_one_file` / `batch_rembg` 暂存时额外复制 `source_map.json` 与原始配对文件（1B.png / 1W.png 等），
+    让美图 `precheck_pairs` 能正确识别 B/W 角色和配对完整性。
+  - 修复 `/batch-rembg` 的 BW 过滤 bug：原实现按全局 dx_files 判断是否含 BW，导致前一个有 BW 的款会污染后续所有款，
+    现在改为每个 DX 独立判断，只跳过该 DX 自己的 B/W。
 
 功能 v2.2.5：
   - PS 贴图流程队列化：单张/批量贴图统一进入后台队列，串行执行，避免并发冲突
@@ -76,7 +85,7 @@
 
 端口 8766（避开 01_CHECK 的 8765）。
 """
-__version__ = "2.2.5"
+__version__ = "2.2.6"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue
 from pathlib import Path
@@ -587,6 +596,51 @@ def get_thumb(dx, kind, file):
     return thumb
 
 
+# ── 去背结果收集：兼容美图保存路径未切换的兜底 ─────────────
+def _collect_rembg_results(dx, stems, rem_dir):
+    """从多个可能位置收集去背产物，返回 {stem: dest_path}。
+
+    美图保存对话框若路径未生效，_副本.png 可能落到 DST_SAVE / archive；
+    本函数会扫描：
+      1. TEMP_REMBG/{dx}/02_REM_BG
+      2. WB_ROOT/_temp_rembg/save
+      3. WB_ROOT/_temp_rembg/archive
+    并把 *_副本.png 改名为 *_cut.png 后移动到真实 rem_dir。
+    """
+    stems = set(stems)
+    found = {}
+    search_roots = [
+        TEMP_REMBG / dx / "02_REM_BG",
+        WB_ROOT / "_temp_rembg" / "save",
+        WB_ROOT / "_temp_rembg" / "archive",
+    ]
+    patterns = ["*_cut.png", "*_副本.png"]
+    for root in search_roots:
+        if not root.is_dir():
+            continue
+        for pat in patterns:
+            for f in root.glob(pat):
+                if f.stat().st_size < 100_000:
+                    continue
+                stem = f.stem.replace("_副本", "").replace("_cut", "")
+                if stem not in stems:
+                    continue
+                if stem in found:
+                    continue  # 已收集，跳过重复
+                cut_name = f"{stem}_cut.png"
+                dest = rem_dir / cut_name
+                rem_dir.mkdir(parents=True, exist_ok=True)
+                if dest.exists():
+                    send_to_recycle_bin(str(dest))
+                try:
+                    shutil.move(str(f), str(dest))
+                    print(f"  [重去背] 收集新结果 → {dest} (来源: {root}/{f.name})", flush=True)
+                    found[stem] = dest
+                except Exception as e:
+                    print(f"  [重去背] 移动结果失败 {f} → {dest}: {e}", flush=True)
+    return found
+
+
 # ── 重新去背：单张 AI 图安全重跑美图秀秀 ─────────────
 def rembg_one_file(dx, ai_file):
     """驱动 wb_meitu_batch.py 重跑「指定 DX 的某一张 AI 图」的去背。
@@ -645,6 +699,16 @@ def rembg_one_file(dx, ai_file):
         if is_generated_ai(f.name, dx):
             shutil.copy2(str(f), str(staging_root / f.name))
             staged_md5.append(file_md5(str(f)))
+    # 4b. 复制 source_map.json 与原始配对文件到暂存目录，
+    #     让美图 precheck_pairs 能正确识别 B/W 角色与配对完整性。
+    src_smap = BASE / dx / "source_map.json"
+    if src_smap.exists():
+        shutil.copy2(str(src_smap), str(TEMP_REMBG / dx / "source_map.json"))
+    for f in sorted(ai_dir.iterdir()):
+        if not is_generated_ai(f.name, dx) and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+            # 原始配对文件（如 1B.png / 1W.png）
+            shutil.copy2(str(f), str(staging_root / f.name))
+
     if not staged_md5:
         _restore_config()
         _restore_one_backup(cut_name, backup_dir, rem_dir)
@@ -688,35 +752,28 @@ def rembg_one_file(dx, ai_file):
     # 8. 收尾：恢复 config（无论成功失败）
     _restore_config()
 
-    # 8b. 美图脚本的输出路径是 dirname(subdir)/02_REM_BG = _temp_rembg/{DX}/02_REM_BG
-    #     （不是真实目录！因为 subdir 在暂存目录里）。所以要把暂存目录里的新 _cut.png
-    #     收集、移动到真实的 02_REM_BG，否则会被当成"没产出"而还原旧图覆盖新图。
-    temp_out_dir = TEMP_REMBG / dx / "02_REM_BG"
-    if temp_out_dir.is_dir():
-        for f in temp_out_dir.glob("*_cut.png"):
-            dest = rem_dir / f.name
-            rem_dir.mkdir(parents=True, exist_ok=True)
-            if dest.exists():
-                send_to_recycle_bin(str(dest))  # 先清理同名占位
-            shutil.move(str(f), str(dest))
-            print(f"  [重去背] 收集新结果 → {dest}", flush=True)
-            # 注册去背输出元数据
-            if wb_meta is not None and ai_uid:
-                try:
-                    wb_meta.register_rembg(dest, uid=ai_uid, group_id=group_id,
-                                           role=role, parent_uid=ai_uid, ai_file=ai_file)
-                except Exception as e:
-                    print(f"  [重去背] 元数据注册失败: {e}", flush=True)
-            # 同步执行 ESRGAN 放大到 2024×2048（美图脚本是异步Popen，可能来不及跑完）
-            upscaler = MEITU_SCRIPT.parent / "upscale_worker.py"
-            if upscaler.exists():
-                try:
-                    subprocess.run([sys.executable, str(upscaler), str(dest)],
-                                   capture_output=True, timeout=120)
-                    sz = os.path.getsize(dest) // 1024
-                    print(f"  [重去背] ESRGAN 放大完成 → {sz}KB", flush=True)
-                except Exception as e:
-                    print(f"  [重去背] ESRGAN 放大跳过: {e}", flush=True)
+    # 8b. 收集美图产物。美图保存对话框若路径未生效，_副本.png 可能落到 DST_SAVE / archive；
+    #     因此从多个位置扫描并归位到真实 02_REM_BG。
+    found = _collect_rembg_results(dx, [stem], rem_dir)
+    dest = found.get(stem)
+    if dest and dest.exists():
+        # 注册去背输出元数据
+        if wb_meta is not None and ai_uid:
+            try:
+                wb_meta.register_rembg(dest, uid=ai_uid, group_id=group_id,
+                                       role=role, parent_uid=ai_uid, ai_file=ai_file)
+            except Exception as e:
+                print(f"  [重去背] 元数据注册失败: {e}", flush=True)
+        # 同步执行 ESRGAN 放大到 2024×2048（美图脚本是异步Popen，可能来不及跑完）
+        upscaler = MEITU_SCRIPT.parent / "upscale_worker.py"
+        if upscaler.exists():
+            try:
+                subprocess.run([sys.executable, str(upscaler), str(dest)],
+                               capture_output=True, timeout=120)
+                sz = os.path.getsize(dest) // 1024
+                print(f"  [重去背] ESRGAN 放大完成 → {sz}KB", flush=True)
+            except Exception as e:
+                print(f"  [重去背] ESRGAN 放大跳过: {e}", flush=True)
 
     # 9. 检查美图是否产出该 stem 的新结果（在真实目录里判断）
     new_exists = rem_dir.is_dir() and (rem_dir / cut_name).exists() \
@@ -784,6 +841,15 @@ def batch_rembg(dx_files):
         staging_root.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(ai_path), str(staging_root / ai_file))
 
+        # 暂存 source_map.json 与原始配对文件，帮助美图 precheck_pairs 识别角色
+        dx_ai_dir = BASE / dx / "01_AI"
+        src_smap = BASE / dx / "source_map.json"
+        if src_smap.exists():
+            shutil.copy2(str(src_smap), str(TEMP_REMBG / dx / "source_map.json"))
+        for f in sorted(dx_ai_dir.iterdir()):
+            if not is_generated_ai(f.name, dx) and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                shutil.copy2(str(f), str(staging_root / f.name))
+
         staged.append((dx, ai_file, stem, cut_name, ai_path, rem_dir, backup_dir, had_old, ai_uid, group_id, role))
 
     if not staged:
@@ -825,17 +891,17 @@ def batch_rembg(dx_files):
     finally:
         _restore_config()
 
-    # 5. 从临时目录收集结果到真实 DX 文件夹
+    # 5. 从多个可能位置收集结果到真实 DX 文件夹
+    dx_stems = {}
     for dx, ai_file, stem, cut_name, ai_path, rem_dir, backup_dir, had_old, ai_uid, group_id, role in staged:
-        # 从 _temp_rembg/{DX}/02_REM_BG 收集新生成的 _cut.png
-        temp_out_dir = TEMP_REMBG / dx / "02_REM_BG"
-        if temp_out_dir.is_dir():
-            for f in temp_out_dir.glob("*_cut.png"):
-                dest = rem_dir / f.name
-                rem_dir.mkdir(parents=True, exist_ok=True)
-                if dest.exists():
-                    send_to_recycle_bin(str(dest))
-                shutil.move(str(f), str(dest))
+        dx_stems.setdefault(dx, {"rem_dir": rem_dir, "items": []})
+        dx_stems[dx]["items"].append((ai_file, stem, cut_name, ai_path, ai_uid, group_id, role))
+    for dx, info in dx_stems.items():
+        stems = [item[1] for item in info["items"]]
+        found = _collect_rembg_results(dx, stems, info["rem_dir"])
+        for ai_file, stem, cut_name, ai_path, ai_uid, group_id, role in info["items"]:
+            dest = found.get(stem)
+            if dest and dest.exists():
                 # 注册去背输出元数据
                 if wb_meta is not None and ai_uid:
                     try:
@@ -1603,13 +1669,15 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             ai_dir = BASE / dx / "01_AI"
             if not ai_dir.is_dir():
                 continue
+            files = []
             for f in sorted(ai_dir.iterdir()):
                 if f.is_file() and is_generated_ai(f.name, dx):
-                    dx_files.append((dx, f.name))
-            # 如果该 DX 已有 BW 合并图，就不需要单独处理 B 和 W
-            has_bw = any("_BW" in name for _, name in dx_files)
+                    files.append(f.name)
+            # 如果该 DX 已有 BW 合并图，就只处理 BW，跳过 B/W
+            has_bw = any("_BW" in name for name in files)
             if has_bw:
-                dx_files = [(dx, name) for dx, name in dx_files if "_BW" in name]
+                files = [name for name in files if "_BW" in name]
+            dx_files.extend((dx, name) for name in files)
 
         if not dx_files:
             self._send_json({"ok": False, "msg": "没有找到需要去背的图"}); return

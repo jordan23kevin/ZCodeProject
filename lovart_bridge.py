@@ -1,21 +1,25 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.14
+Y2 Bridge Server v2.3.15
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
 
-变更 v2.3.14：
-  - AI 去背 贴图 OS (`engine/check_rem.py v2.2.5`)：
-    * PS 贴图流程队列化：单张/批量贴图统一进入后台队列串行执行
-    * 新增 `/sticker-status` 端点，前端入队后轮询进度
-    * 每步 PS 脚本增加 5 分钟超时，卡住自动终止并继续下一款
-    * 解决批量贴图处理到一半停止的问题（前端不再被单个挂起请求阻塞）
+变更 v2.3.15：
+  - AI 去背 贴图 OS (`engine/check_rem.py v2.2.6`)：
+    * 修复 DX0339_W 等单张去背后 02_REM_BG 无输出：美图保存路径未切换时，结果会落到 `_temp_rembg/save`。
+      check_rem.py 现在从 `TEMP_REMBG/{DX}/02_REM_BG`、`WB_ROOT/_temp_rembg/save`、`WB_ROOT/_temp_rembg/archive`
+      三个位置收集 `_cut.png` / `_副本.png`，并把 `_副本.png` 改名为 `_cut.png`。
+    * `rembg_one_file` / `batch_rembg` 暂存时额外复制 `source_map.json` 与原始配对文件（1B.png / 1W.png 等），
+      让美图 `precheck_pairs` 正确识别 B/W 角色与配对完整性。
+    * 修复 `/batch-rembg` 的 BW 过滤 bug：原实现按全局 `dx_files` 判断是否含 BW，导致前一个有 BW 的款会污染后续所有款；
+      现在每个 DX 独立判断，只跳过该 DX 自己的 B/W。
+    * `engine/_rembg_worker.py` 增加文件日志，输出写入 `D:\Semems WB\_debug\_rembg_worker_YYYYMMDD_HHMMSS.log`。
 
-变更 v2.3.13：
+变更 v2.3.14：
   - AI 去背 贴图 OS (`engine/check_rem.py v2.2.4`)：
     * 修复单张「重新去背」点击后无响应/不生成去背图的问题
     * 补全缺失的 `engine/_rembg_worker.py`：负责在后台运行美图去背并清理锁文件
@@ -3317,7 +3321,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.14              ║")
+    print("║   Y2 Bridge Server v2.3.15              ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")

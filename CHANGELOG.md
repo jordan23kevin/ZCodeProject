@@ -1,5 +1,25 @@
 # Y2 一体化控制系统 — 更新日志
 
+## v2.3.15 (2026-07-05) — 修复单张去背无输出 + 批量去背 BW 过滤污染
+
+### 🐛 修复
+
+- **修复 DX0339_W 等单张去背后 02_REM_BG 无输出**
+  - 根因：美图秀秀保存对话框路径未生效时，`_副本.png` 会落到 `WB_ROOT/_temp_rembg/save`，而 `check_rem.py` 只从 `TEMP_REMBG/{DX}/02_REM_BG` 收集 `_cut.png`，导致“保存了但不见图”。
+  - 解决：
+    - `engine/check_rem.py v2.2.6` 新增 `_collect_rembg_results()`，从 `TEMP_REMBG/{DX}/02_REM_BG`、`WB_ROOT/_temp_rembg/save`、`WB_ROOT/_temp_rembg/archive` 三个位置扫描 `_cut.png` / `_副本.png`。
+    - 收集时自动把 `_副本.png` 改名为 `_cut.png` 并移动到真实 `02_REM_BG`。
+    - `rembg_one_file` / `batch_rembg` 暂存时额外复制 `source_map.json` 与原始配对文件（如 `1B.png` / `1W.png`），让美图 `precheck_pairs` 正确识别 B/W 角色与配对完整性。
+
+- **修复 `/batch-rembg` 的 BW 过滤跨 DX 污染 bug**
+  - 根因：原实现用全局 `dx_files` 判断是否含 BW，导致前一个有 BW 的款会污染后续所有款，使后续款的 B/W 被错误跳过。
+  - 解决：改为每个 DX 独立判断，只跳过该 DX 自己的 B/W。
+
+- **增强 `_rembg_worker.py` 可观测性**
+  - 工作进程输出重定向到 `D:\Semems WB\_debug\_rembg_worker_YYYYMMDD_HHMMSS.log`，方便定位“美图运行了但没出图”的问题。
+
+---
+
 ## v2.3.14 (2026-07-04) — PS 批量贴图队列化 + 超时兜底
 
 ### 🐛 修复
