@@ -129,12 +129,12 @@ function batchSticker(){
 function batchInvertRem(){
   var checked=document.querySelectorAll('.dx-check:checked');
   if(!checked.length){showToast('请先勾选需要批量反相的款');return;}
-  if(!confirm('批量反相 '+checked.length+' 个款？\n将对每款的 B/W/BW 去背图生成黑版专用图，并自动完成贴图+BW合成。'))return;
+  if(!confirm('批量反相 '+checked.length+' 个款？\n将对每款的 B/W/BW 去背图生成黑版专用图（不会自动贴图）。'))return;
   var list=[];
   checked.forEach(function(cb){list.push(cb.getAttribute('data-dx'));});
   var btn=document.getElementById('batchInvertBtn');
   btn.disabled=true;btn.textContent='⏳ 启动中…';
-  showToast('⏳ 启动批量反相（含贴图+BW合成） '+list.length+' 款…');
+  showToast('⏳ 启动批量反相 '+list.length+' 款…');
   fetch('/batch-invert-rem?dx='+list.join(',')).then(function(r){return r.json();}).then(function(d){
     if(!d.ok){showToast('❌ '+d.msg);btn.textContent='🌑 批量反相 (0)';btn.disabled=false;return;}
     showToast(d.msg);
@@ -184,7 +184,7 @@ function upscaleRem(dx,file,cellId){
   });
 }
 function invertRem(dx,file,stem,cellId){
-  if(!confirm('反相 '+file+' 生成黑版贴图？\n将生成 '+dx+'_黑'+stem.replace(dx+'_','')+'_cut.png，并自动重跑该款全部贴图+BW合成。'))return;
+  if(!confirm('反相 '+file+' 生成黑版贴图？\n将生成 '+dx+'_黑'+stem.replace(dx+'_','')+'_cut.png（不会自动贴图）。'))return;
   showToast('⏳ 已加入反相队列…');
   fetch('/invert-rem?dx='+dx+'&file='+encodeURIComponent(file)).then(function(r){return r.json();}).then(function(d){
     if(!d.ok){showToast('❌ '+d.msg);return;}

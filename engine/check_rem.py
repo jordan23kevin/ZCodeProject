@@ -1,8 +1,12 @@
-"""01_CHECK_REM v2.2.2 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.2.3 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个 DX 款的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
+
+功能 v2.2.3：
+  - 反相与贴图解耦：反相只生成黑版专用去背图，不再自动调用贴图流水线
+  - 贴图由用户单独点击「贴图」或「批量贴图」触发
 
 功能 v2.2.2：
   - 反相任务统一队列：单张「反相」与「批量反相」加入同一个后台队列，串行执行
@@ -61,7 +65,7 @@
 
 端口 8766（避开 01_CHECK 的 8765）。
 """
-__version__ = "2.2.2"
+__version__ = "2.2.3"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue
 from pathlib import Path
@@ -145,7 +149,7 @@ def _invert_worker_loop():
                 Handler._run_single_invert_sync(task["dx"], task["file"])
                 result = {
                     "ok": True,
-                    "msg": f"{task['dx']} 反相并重新贴图完成",
+                    "msg": f"{task['dx']} 反相完成（未自动贴图）",
                     "results": [{"ok": True, "dx": task["dx"], "msg": "单张反相完成"}]
                 }
             else:
@@ -154,7 +158,7 @@ def _invert_worker_loop():
                 fail_count = len(results) - ok_count
                 result = {
                     "ok": fail_count == 0,
-                    "msg": f"批量反相完成 {ok_count}/{len(results)}" + (f"，{fail_count} 个失败" if fail_count else ""),
+                    "msg": f"批量反相完成 {ok_count}/{len(results)}" + (f"，{fail_count} 个失败" if fail_count else "") + "（未自动贴图）",
                     "results": results
                 }
             with _INVERT_STATUS_LOCK:
@@ -763,19 +767,18 @@ def batch_rembg(dx_files):
     return results
 
 
-# ── 批量反相：对多个 DX 的非黑版 _cut.png 反相并跑贴图流水线 ────────────────────────
+# ── 批量反相：对多个 DX 的非黑版 _cut.png 反相生成黑版专用图 ────────────────────────
 def batch_invert_rem(dx_list):
-    """批量反相：对选中 DX 的所有非黑版 _cut.png 反相生成黑版专用图，
-    然后自动跑完整贴图流水线（黑T专用 → 通用贴图 → BW 合成）。
+    """批量反相：对选中 DX 的所有非黑版 _cut.png 反相生成黑版专用图。
+    不再自动跑贴图流水线；贴图由用户单独点击「贴图」或「批量贴图」触发。
     dx_list: [dx, ...]
-    返回: [{dx, files:[{src,dest}], sticker_ok, sticker_msg, ok, msg}, ...]
+    返回: [{dx, files:[{src,dest}], ok, msg}, ...]
     """
     results = []
     for dx in dx_list:
         rem_dir = BASE / dx / "02_REM_BG"
         if not rem_dir.is_dir():
-            results.append({"dx": dx, "files": [], "sticker_ok": False,
-                            "sticker_msg": "02_REM_BG 不存在", "ok": False,
+            results.append({"dx": dx, "files": [], "ok": False,
                             "msg": f"{dx}: 02_REM_BG 不存在"})
             continue
 
@@ -825,21 +828,17 @@ def batch_invert_rem(dx_list):
                 errors.append(f"{name}: {e}")
 
         if not files and errors:
-            results.append({"dx": dx, "files": files, "sticker_ok": False,
-                            "sticker_msg": "", "ok": False,
+            results.append({"dx": dx, "files": files, "ok": False,
                             "msg": f"{dx}: 反相失败 - " + "; ".join(errors)})
             continue
         if not files:
-            results.append({"dx": dx, "files": files, "sticker_ok": False,
-                            "sticker_msg": "", "ok": True,
+            results.append({"dx": dx, "files": files, "ok": True,
                             "msg": f"{dx}: 无需要反相的图"})
             continue
 
-        # 反相后跑完整贴图流水线
-        ok, msg = Handler._run_sticker_pipeline(dx)
-        results.append({"dx": dx, "files": files, "sticker_ok": ok,
-                        "sticker_msg": msg, "ok": ok and not errors,
-                        "msg": f"{dx}: 反相 {len(files)} 张, " + ("贴图+BW合成完成" if ok else f"贴图/BW合成异常: {msg}") + ("; 错误: " + "; ".join(errors) if errors else "")})
+        # 仅生成黑版反相图，不自动跑贴图流水线
+        results.append({"dx": dx, "files": files, "ok": not errors,
+                        "msg": f"{dx}: 反相 {len(files)} 张完成" + ("; 错误: " + "; ".join(errors) if errors else "")})
     return results
 
 
@@ -1309,7 +1308,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 	  <button onclick="batchRembg()" id="batchBtn" style="cursor:pointer;background:#ff9800;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>⚡ 批量去背 (0)</button>
 	  <button onclick="copyMissing()" title="复制当前日期缺图款号（缺AI图/缺去背/缺B/W配对）" style="background:#e91e63;">📋 复制缺图款号</button>
 	  <button onclick="batchSticker()" id="batchStickerBtn" title="批量PS贴图（含B/W贴图与BW合成）" style="cursor:pointer;background:#7b1fa2;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>📎 批量贴图 (0)</button>
-	  <button onclick="batchInvertRem()" id="batchInvertBtn" title="批量反相：对选中款的所有B/W/BW去背图生成黑版专用图，并自动贴图+BW合成" style="cursor:pointer;background:#673ab7;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>🌑 批量反相 (0)</button>
+	  <button onclick="batchInvertRem()" id="batchInvertBtn" title="批量反相：对选中款的所有B/W/BW去背图生成黑版专用图（不会自动贴图）" style="cursor:pointer;background:#673ab7;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>🌑 批量反相 (0)</button>
 	  <button onclick="copyNoSticker()" title="复制当前日期所有未生成成品的款号" style="background:#7b1fa2;">📋 复制缺贴图</button>
 	  <span class="cnt" id="cnt">{len(projects)} 款</span>
 	</div>
@@ -1859,10 +1858,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             try: tf.unlink()
             except: pass
 
-        # 反相后重跑该款完整贴图+BW合成流水线
-        ok, msg = Handler._run_sticker_pipeline(dx)
-        if not ok:
-            raise RuntimeError(msg)
+        # 仅生成黑版反相图，不自动跑贴图流水线；贴图由用户单独触发
 
     # 反相 HTTP 入口：加入统一队列，立即返回
     def _invert_rem(self, dx, file):
