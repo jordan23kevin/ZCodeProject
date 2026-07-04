@@ -185,10 +185,22 @@ function upscaleRem(dx,file,cellId){
 }
 function invertRem(dx,file,stem,cellId){
   if(!confirm('反相 '+file+' 生成黑版贴图？\n将生成 '+dx+'_黑'+stem.replace(dx+'_','')+'_cut.png，并自动重跑该款全部贴图+BW合成。'))return;
-  showToast('⏳ 反相并重新贴图/BW合成…');
+  showToast('⏳ 已加入反相队列…');
   fetch('/invert-rem?dx='+dx+'&file='+encodeURIComponent(file)).then(function(r){return r.json();}).then(function(d){
+    if(!d.ok){showToast('❌ '+d.msg);return;}
     showToast(d.msg);
-    if(d.ok) setTimeout(function(){location.reload();},3000);
+    var pollTimer=setInterval(function(){
+      fetch('/batch-invert-result').then(function(r){return r.json();}).then(function(res){
+        if(!res.done){showToast(res.msg);return;}
+        clearInterval(pollTimer);
+        if(res.ok){
+          showToast('✅ 反相完成：'+res.msg);
+        }else{
+          showToast('❌ 反相完成但有失败：'+res.msg);
+        }
+        setTimeout(function(){location.reload();},3000);
+      });
+    },2000);
   });
 }
 function refreshRem(dx,stem,cellId){

@@ -1,5 +1,28 @@
 # Y2 一体化控制系统 — 更新日志
 
+## v2.3.11 (2026-07-04) — 反相任务统一队列 + wb上款 v1.3.16 联动
+
+### 🔧 调整
+
+- **AI 去背 贴图 OS 反相流程队列化（`engine/check_rem.py v2.2.2`）**
+  - 单张「反相」按钮与「批量反相」按钮统一进入同一个后台任务队列，串行执行。
+  - 新增 `_invert_worker_loop` 工作线程，避免多个反相任务同时驱动 Photoshop 导致冲突。
+  - `/invert-rem` 与 `/batch-invert-rem` 改为立即返回「已加入队列」与当前排队信息。
+  - `/batch-invert-result` 同时兼容单张与批量反相的进度轮询。
+
+### 🎨 UI
+
+- `engine/check_rem.js`
+  - 单张反相点击后改为轮询队列状态，完成后统一提示并刷新页面。
+  - 批量反相保持原有轮询逻辑，兼容新的队列响应格式。
+
+### 📚 文档与版本
+
+- `lovart_bridge.py` / `SKILL.md` / `ARCHITECTURE.md` / `CHANGELOG.md` / `REPRODUCIBILITY.md` 升级到 v2.3.11。
+- 与 wb上款 v1.3.16 联动版本对齐。
+
+---
+
 ## v2.3.10 (2026-07-04) — WB 上款在线验证 + 与 wb上款 v1.3.14 联动
 
 ### ✨ 新增

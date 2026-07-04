@@ -1,8 +1,14 @@
-"""01_CHECK_REM v2.2.1 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.2.2 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个 DX 款的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
+
+功能 v2.2.2：
+  - 反相任务统一队列：单张「反相」与「批量反相」加入同一个后台队列，串行执行
+  - 新增 `_invert_worker_loop` 工作线程，避免多个反相同时驱动 Photoshop 导致冲突
+  - `/invert-rem` 与 `/batch-invert-rem` 改为立即返回「已加入队列」
+  - `/batch-invert-result` 同时兼容单张与批量反相的进度轮询
 
 功能 v2.2.1：
   - 启动后 1 秒后台自动预扫描，把结果 warming 到缓存，用户首次打开首页无需等待
@@ -55,9 +61,9 @@
 
 端口 8766（避开 01_CHECK 的 8765）。
 """
-__version__ = "2.2.1"
+__version__ = "2.2.2"
 VERSION = __version__
-import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading
+import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue
 from pathlib import Path
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, quote
@@ -101,6 +107,67 @@ THUMB_DIR.mkdir(parents=True, exist_ok=True)
 # scan_projects 结果缓存（避免每次请求都全量扫描）
 _SCAN_PROJECTS_CACHE = {"projects": None, "timestamp": 0, "lock": threading.Lock()}
 _SCAN_PROJECTS_TTL = 30  # 秒
+
+# ── 反相任务队列（单张 + 批量统一串行执行，避免并发冲突）────────────────
+_INVERT_QUEUE = queue.Queue()
+_INVERT_WORKER_THREAD = None
+_INVERT_STATUS_LOCK = threading.Lock()
+_INVERT_STATUS = {
+    "running": False,
+    "current": None,
+    "pending": 0,
+    "completed_total": 0,
+    "last_result": None,
+    "last_error": None,
+}
+
+
+def _ensure_invert_worker():
+    """启动反相后台工作线程（幂等）。"""
+    global _INVERT_WORKER_THREAD
+    if _INVERT_WORKER_THREAD is None or not _INVERT_WORKER_THREAD.is_alive():
+        _INVERT_WORKER_THREAD = threading.Thread(target=_invert_worker_loop, daemon=True)
+        _INVERT_WORKER_THREAD.start()
+
+
+def _invert_worker_loop():
+    """反相队列消费者：按顺序执行单张/批量反相任务。"""
+    while True:
+        task = _INVERT_QUEUE.get()
+        if task is None:
+            break
+        with _INVERT_STATUS_LOCK:
+            _INVERT_STATUS["running"] = True
+            _INVERT_STATUS["current"] = task.get("dx") or (task.get("dx_list", [None])[0] if task.get("dx_list") else None)
+            _INVERT_STATUS["pending"] = _INVERT_QUEUE.qsize()
+        try:
+            if task["type"] == "single":
+                Handler._run_single_invert_sync(task["dx"], task["file"])
+                result = {
+                    "ok": True,
+                    "msg": f"{task['dx']} 反相并重新贴图完成",
+                    "results": [{"ok": True, "dx": task["dx"], "msg": "单张反相完成"}]
+                }
+            else:
+                results = batch_invert_rem(task["dx_list"])
+                ok_count = sum(1 for r in results if r["ok"])
+                fail_count = len(results) - ok_count
+                result = {
+                    "ok": fail_count == 0,
+                    "msg": f"批量反相完成 {ok_count}/{len(results)}" + (f"，{fail_count} 个失败" if fail_count else ""),
+                    "results": results
+                }
+            with _INVERT_STATUS_LOCK:
+                _INVERT_STATUS["last_result"] = result
+                _INVERT_STATUS["completed_total"] += 1
+        except Exception as e:
+            with _INVERT_STATUS_LOCK:
+                _INVERT_STATUS["last_error"] = str(e)
+        finally:
+            with _INVERT_STATUS_LOCK:
+                _INVERT_STATUS["running"] = False
+                _INVERT_STATUS["current"] = None
+                _INVERT_STATUS["pending"] = _INVERT_QUEUE.qsize()
 
 
 # ── 回收站删除（与 check_sync.py 一致，可撤销）─────
@@ -1739,24 +1806,25 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         except Exception as e:
             self._send_json({"ok": False, "msg": f"\u653e\u5927\u5931\u8d25: {e}"})
 
-    # 反相去背图并自动跑黑T贴图
-    def _invert_rem(self, dx, file):
+    # 反相去背图并自动跑黑T贴图（静态方法：实际执行逻辑，供队列 worker 调用）
+    @staticmethod
+    def _run_single_invert_sync(dx, file):
         if not re.match(r"^DX\d+$", dx) or "/" in file or "\\" in file:
-            self._send_json({"ok": False, "msg": "参数非法"}); return
+            raise ValueError("参数非法")
         if "_黑" in file:
-            self._send_json({"ok": False, "msg": "已是黑版专用图，无需反相"}); return
+            raise ValueError("已是黑版专用图，无需反相")
         if not file.lower().endswith("_cut.png"):
-            self._send_json({"ok": False, "msg": "仅支持 _cut.png 去背图"}); return
+            raise ValueError("仅支持 _cut.png 去背图")
 
         src = BASE / dx / "02_REM_BG" / file
         if not src.exists():
-            self._send_json({"ok": False, "msg": f"{file} 不存在"}); return
+            raise FileNotFoundError(f"{file} 不存在")
 
         # 生成目标文件名：DX0255_B_cut.png -> DX0255_黑B_cut.png
         stem = file[:-len("_cut.png")]
         suffix = stem[len(dx)+1:] if stem.startswith(dx + "_") else ""
         if not suffix:
-            self._send_json({"ok": False, "msg": "无法解析文件名后缀"}); return
+            raise ValueError("无法解析文件名后缀")
         dest_name = f"{dx}_黑{suffix}_cut.png"
         dest = BASE / dx / "02_REM_BG" / dest_name
 
@@ -1768,7 +1836,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             inv = Image.merge("RGBA", (*inv_rgb.split(), a))
             inv.save(dest)
         except Exception as e:
-            self._send_json({"ok": False, "msg": f"反相失败: {e}"}); return
+            raise RuntimeError(f"反相失败: {e}")
 
         # 注册黑版变体元数据
         if wb_meta is not None:
@@ -1792,10 +1860,32 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             except: pass
 
         # 反相后重跑该款完整贴图+BW合成流水线
-        ok, msg = self._run_sticker_pipeline(dx)
-        self._send_json({"ok": ok, "msg": f"已生成 {dest_name}，{msg}"})
+        ok, msg = Handler._run_sticker_pipeline(dx)
+        if not ok:
+            raise RuntimeError(msg)
 
-    # 批量反相：对选中 DX 的所有非黑版 _cut.png 反相，并跑完整贴图流水线
+    # 反相 HTTP 入口：加入统一队列，立即返回
+    def _invert_rem(self, dx, file):
+        if not re.match(r"^DX\d+$", dx) or "/" in file or "\\" in file:
+            self._send_json({"ok": False, "msg": "参数非法"}); return
+        if "_黑" in file:
+            self._send_json({"ok": False, "msg": "已是黑版专用图，无需反相"}); return
+        if not file.lower().endswith("_cut.png"):
+            self._send_json({"ok": False, "msg": "仅支持 _cut.png 去背图"}); return
+
+        _ensure_invert_worker()
+        _INVERT_QUEUE.put({"type": "single", "dx": dx, "file": file})
+        with _INVERT_STATUS_LOCK:
+            pending = _INVERT_STATUS["pending"] = _INVERT_QUEUE.qsize()
+            current = _INVERT_STATUS["current"]
+        msg = "已加入反相队列"
+        if current:
+            msg += f"，当前正在处理 {current}"
+        if pending > 1:
+            msg += f"，前面还有 {pending - 1} 个任务"
+        self._send_json({"ok": True, "queued": True, "pending": pending, "msg": msg})
+
+    # 批量反相 HTTP 入口：加入统一队列，立即返回
     def _batch_invert_rem(self):
         from urllib.parse import parse_qs
         qs = parse_qs(self.path.split('?', 1)[1]) if '?' in self.path else {}
@@ -1806,45 +1896,43 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         if not dx_list:
             self._send_json({"ok": False, "msg": "无效的 dx 参数"}); return
 
-        lock = TEMP_REMBG / ".invert_lock"
-        if lock.exists():
-            self._send_json({"ok": False, "msg": "已有批量反相任务在运行，请等其完成"}); return
+        _ensure_invert_worker()
+        _INVERT_QUEUE.put({"type": "batch", "dx_list": dx_list})
+        with _INVERT_STATUS_LOCK:
+            pending = _INVERT_STATUS["pending"] = _INVERT_QUEUE.qsize()
+            current = _INVERT_STATUS["current"]
+        msg = f"批量反相已加入队列，共 {len(dx_list)} 款"
+        if current:
+            msg += f"，当前正在处理 {current}"
+        if pending > 1:
+            msg += f"，前面还有 {pending - 1} 个任务"
+        self._send_json({"ok": True, "queued": True, "pending": pending, "count": len(dx_list), "msg": msg})
 
-        def _run():
-            try:
-                lock.write_text("batch", encoding="utf-8")
-                results = batch_invert_rem(dx_list)
-                ok_count = sum(1 for r in results if r["ok"])
-                fail_count = len(results) - ok_count
-                msg = f"完成 {ok_count}/{len(results)}"
-                if fail_count:
-                    msg += f", {fail_count}个失败"
-                result_file = TEMP_REMBG / "_batch_invert_result.json"
-                with open(result_file, 'w', encoding='utf-8') as f:
-                    json.dump({"ok": True, "msg": msg, "results": results}, f, ensure_ascii=False)
-            finally:
-                if lock.exists():
-                    lock.unlink()
-
-        import threading
-        threading.Thread(target=_run, daemon=True).start()
-        self._send_json({"ok": True, "msg": f"批量反相已启动，共 {len(dx_list)} 款，将自动反相并贴图+BW合成"})
-
-    # 批量反相结果查询
+    # 反相队列结果查询（兼容单张 + 批量）
     def _batch_invert_result(self):
-        result_file = TEMP_REMBG / "_batch_invert_result.json"
-        lock = TEMP_REMBG / ".invert_lock"
-        if lock.exists():
-            self._send_json({"done": False, "msg": "批量反相进行中…"})
-        elif result_file.exists():
-            try:
-                data = json.loads(result_file.read_text(encoding="utf-8"))
-                result_file.unlink()
-                self._send_json({"done": True, **data})
-            except Exception:
-                self._send_json({"done": True, "ok": True, "msg": "完成", "results": []})
-        else:
-            self._send_json({"done": True, "ok": True, "msg": "无结果", "results": []})
+        with _INVERT_STATUS_LOCK:
+            running = _INVERT_STATUS["running"]
+            pending = _INVERT_STATUS["pending"]
+            current = _INVERT_STATUS["current"]
+            last_result = _INVERT_STATUS["last_result"]
+
+        if running or pending > 0:
+            msg = "反相队列运行中"
+            if current:
+                msg += f"：当前 {current}"
+            if pending:
+                msg += f"，还剩 {pending} 个任务"
+            self._send_json({"done": False, "running": running, "pending": pending, "current": current, "msg": msg})
+            return
+
+        # 队列空闲：消费上次结果
+        if last_result:
+            with _INVERT_STATUS_LOCK:
+                _INVERT_STATUS["last_result"] = None
+            self._send_json({"done": True, "ok": last_result.get("ok", True), "msg": last_result.get("msg", ""), "results": last_result.get("results", [])})
+            return
+
+        self._send_json({"done": True, "ok": True, "msg": "无结果", "results": []})
 
     def _refresh_thumb(self, dx, stem):
         if not re.match(r"^DX\d+$", dx) or not stem or "/" in stem or "\\" in stem:
@@ -2037,6 +2125,9 @@ def main():
     print(f"  AI vs 去背 对比预览  →  {url}")
     print(f"  点缩略图：打开文件夹   x：送回收站   [重新去背]：驱动美图")
     print(f"  关闭此窗口停止服务")
+
+    # 启动反相队列工作线程（单张 + 批量统一串行处理）
+    _ensure_invert_worker()
 
     # 后台预扫描：启动后立即全量扫描，把结果 warming 到缓存，
     # 这样用户首次打开首页时就是热缓存，几乎秒开。

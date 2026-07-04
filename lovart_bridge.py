@@ -1,12 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.10
+Y2 Bridge Server v2.3.11
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.11：
+  - AI 去背 贴图 OS (`engine/check_rem.py v2.2.2`)：
+    * 单张「反相」与「批量反相」统一进入同一个后台任务队列，串行执行
+    * 避免连续点击多个反相时并发驱动 Photoshop 导致冲突
+    * `/invert-rem` 与 `/batch-invert-rem` 改为立即返回「已加入队列」
+    * 前端 `check_rem.js` 轮询 `/batch-invert-result` 获取完成状态
+  - 与 wb上款 v1.3.16 联动版本对齐（运行时在线校验 + 终检）
 
 变更 v2.3.10：
   - WB 上款页面新增「刷新已上款」功能：
@@ -3290,7 +3298,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.10              ║")
+    print("║   Y2 Bridge Server v2.3.11              ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")
