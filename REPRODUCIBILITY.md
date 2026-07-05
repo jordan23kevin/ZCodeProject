@@ -1,6 +1,6 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.3.17` + `run_official_v53.py v6.1.1` + `wb_listing.py v1.3.22`
+> 对应版本: `lovart_bridge.py v2.3.17` + `run_official_v53.py v6.1.1` + `wb_listing.py v1.3.23`
 > 最后更新: 2026-07-05
 
 ---
@@ -118,7 +118,7 @@ git checkout v6.1.1
 # wb上款
 cd "E:\Claude code\wb上款"
 git fetch origin --tags
-git checkout v1.3.22
+git checkout v1.3.23
 ```
 
 ### 4.3 回滚后重启
@@ -153,7 +153,7 @@ git checkout v1.3.22
 
 ---
 
-## 6. 本次更新关键点（v2.3.17 / wb上款 v1.3.22 / Lovart v6.1.1）
+## 6. 本次更新关键点（v2.3.17 / wb上款 v1.3.23 / Lovart v6.1.1）
 
 | 问题 | 根因 | 解决方案 | 文件位置 |
 |------|------|----------|----------|
