@@ -1,12 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.15
+Y2 Bridge Server v2.3.16
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.16：
+  - 同步 wb上款 v1.3.19：
+    * Edge 窗口默认可见（WB_EDGE_VISIBLE=1），便于上款过程人工观察与调试。
+    * 分类选择精确匹配当前月份，避免跨月份分类误选。
 
 变更 v2.3.15：
   - AI 去背 贴图 OS (`engine/check_rem.py v2.2.6`)：
@@ -3321,7 +3326,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.15              ║")
+    print("║   Y2 Bridge Server v2.3.16              ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")
