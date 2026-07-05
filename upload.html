@@ -276,7 +276,7 @@ function copyPendingSkus(){
     showToast('暂无未上款款号');
     return;
   }
-  var list=currentPending.map(function(p){return p.dx;}).join('\n');
+  var list=currentPending.map(function(p){return p.dx;}).join(',');
   if(navigator.clipboard && navigator.clipboard.writeText){
     navigator.clipboard.writeText(list).then(function(){
       showToast('✅ 已复制 '+currentPending.length+' 个未上款款号');

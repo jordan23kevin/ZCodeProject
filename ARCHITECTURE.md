@@ -11,7 +11,7 @@
 
 - **WB 上款页面 (`upload.html`) 新增「📋 复制未上款」按钮**
   - 前端维护 `currentPending` 数组，实时记录当前筛选后的未上款项目。
-  - 点击按钮时将所有未上款 DX 号以换行符拼接，写入系统剪贴板。
+  - 点击按钮时将所有未上款 DX 号以逗号拼接，写入系统剪贴板。
   - 兼容现代浏览器的 `navigator.clipboard.writeText` 与旧版 `document.execCommand('copy')` 兜底，确保在 Bridge 内嵌 Chrome 中可用。
   - 该功能纯前端实现，无需调用 Bridge API，不阻塞页面其他操作。
 
