@@ -1,12 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.17
+Y2 Bridge Server v2.3.18
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.18：
+  - `upload.html`（WB 上款页面）新增「📋 复制未上款」按钮。
+  - 一键复制当前未上款列表中的所有 DX 款号到剪贴板（换行分隔）。
+  - 兼容 `navigator.clipboard` 与 `document.execCommand('copy')` 兜底。
 
 变更 v2.3.17：
   - `lovart_bridge.bat` 启动 Chrome 增加 `--window-size=1400,900`，避免 Bridge 面板默认最大化占据整个屏幕。
@@ -3330,7 +3335,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.17              ║")
+    print("║   Y2 Bridge Server v2.3.18              ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")

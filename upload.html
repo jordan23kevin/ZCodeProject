@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.2.0</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.3.0</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -59,7 +59,7 @@
 </style>
 </head>
 <body>
-<h1>WB 上款 <span class="v">v2.2.0</span></h1>
+<h1>WB 上款 <span class="v">v2.3.0</span></h1>
 <div class="toolbar">
   <select id="dateSel" onchange="switchDate(this.value)">
     <option value="">全部日期</option>
@@ -68,6 +68,7 @@
   <button onclick="filterCards()">🔍 搜索</button>
   <button onclick="refreshAll()">🔄 刷新</button>
   <button onclick="refreshOnlineListed()" id="refreshOnlineBtn">🌐 刷新已上款</button>
+  <button onclick="copyPendingSkus()" id="copyPendingBtn" title="复制当前未上款列表中的所有款号">📋 复制未上款</button>
   <label>
     <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)" style="width:20px;height:20px;accent-color:#4CAF50;vertical-align:middle;"> 全选
   </label>
@@ -118,6 +119,7 @@ function showToast(m){
 var allProjects=[];
 var progressData=null;
 var pollTimer=null;
+var currentPending=[];
 
 function loadProjects(){
   document.getElementById('pendingGrid').innerHTML='<p class="empty">加载中…</p>';
@@ -235,6 +237,7 @@ function renderCards(){
     else pending.push(p);
   });
 
+  currentPending=pending;
   document.getElementById('pendingGrid').innerHTML=pending.map(buildCard).join('')||'<p class="empty">暂无未上款数据</p>';
   document.getElementById('completedGrid').innerHTML=completed.map(buildCard).join('')||'<p class="empty">暂无已上款数据</p>';
   document.getElementById('pendingSection').style.display='block';
@@ -266,6 +269,36 @@ function updateUploadBtn(){
   var btn=document.getElementById('uploadBtn');
   btn.disabled=n===0;
   btn.textContent='📤 批量上传 ('+n+')';
+}
+
+function copyPendingSkus(){
+  if(!currentPending.length){
+    showToast('暂无未上款款号');
+    return;
+  }
+  var list=currentPending.map(function(p){return p.dx;}).join('\n');
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(list).then(function(){
+      showToast('✅ 已复制 '+currentPending.length+' 个未上款款号');
+    }).catch(function(e){
+      showToast('❌ 复制失败: '+e);
+    });
+  }else{
+    // 兜底：用临时 textarea + execCommand
+    var ta=document.createElement('textarea');
+    ta.value=list;
+    ta.style.position='fixed';
+    ta.style.opacity='0';
+    document.body.appendChild(ta);
+    ta.select();
+    try{
+      document.execCommand('copy');
+      showToast('✅ 已复制 '+currentPending.length+' 个未上款款号');
+    }catch(e){
+      showToast('❌ 复制失败: '+e);
+    }
+    document.body.removeChild(ta);
+  }
 }
 
 function openDxFolder(dx){
