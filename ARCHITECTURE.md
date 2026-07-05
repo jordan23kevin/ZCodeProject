@@ -1,7 +1,19 @@
-# Y2 系统架构文档 v2.3.18
+# Y2 系统架构文档 v2.3.19
 
 > 工程类型: 图像生产血缘数据库 + 控制面板 + 贴图成品流水线 + AI 生图对比复审
 > 遵循: B+ 四层血缘闭环架构
+
+---
+
+## v2.3.19 变更
+
+本次版本聚焦后台任务启动体验：
+
+- **修复批量上款时弹出黑色控制台窗口**
+  - `lovart_bridge.py` 的 `run_minimized(cmd, cwd, wait, no_console)` 新增 `no_console` 参数。
+  - 当 `no_console=True` 时，使用 `CREATE_NO_WINDOW` 创建子进程，并将 `stdout`/`stderr` 重定向到 `DEVNULL`，避免弹出 CMD 黑窗。
+  - `/api/batch-upload` 启动 `wb_listing.py`、以及 `/api/upload/refresh-online-listed` 启动 `check_online_listed.py` 时，均传入 `no_console=True`。
+  - `wb_listing.py` 与 `check_online_listed.py` 各自维护文件日志（`D:\Semems WB\_debug`），控制台重定向不影响排错。
 
 ---
 

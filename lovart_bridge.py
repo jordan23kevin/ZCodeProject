@@ -1,16 +1,22 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.18
+Y2 Bridge Server v2.3.19
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
 
+变更 v2.3.19：
+  - 修复批量上款 / 刷新在线已上款时弹出黑色控制台窗口的问题。
+  - `run_minimized()` 新增 `no_console` 参数；`wb_listing.py` / `check_online_listed.py` 启动时传 `no_console=True`。
+  - 使用 `CREATE_NO_WINDOW` 替代 `CREATE_NEW_CONSOLE`，并把 stdout/stderr 重定向到 `DEVNULL`。
+  - 这两个脚本本身会把日志写入 `D:\Semems WB\_debug`，不依赖控制台窗口。
+
 变更 v2.3.18：
   - `upload.html`（WB 上款页面）新增「📋 复制未上款」按钮。
-  - 一键复制当前未上款列表中的所有 DX 款号到剪贴板（换行分隔）。
+  - 一键复制当前未上款列表中的所有 DX 款号到剪贴板（逗号分隔）。
   - 兼容 `navigator.clipboard` 与 `document.execCommand('copy')` 兜底。
 
 变更 v2.3.17：
@@ -298,8 +304,13 @@ def _remove_from_lovart_track(img_path: Path) -> int:
 # ============================================================================
 # 工具函数：Windows 下最小化启动子进程（不抢焦点）
 # ============================================================================
-def run_minimized(cmd, cwd=None, wait=False):
-    """以最小化/不激活窗口启动子进程，用于 check_rem / PS 贴图等任务。"""
+def run_minimized(cmd, cwd=None, wait=False, no_console=False):
+    """以最小化/不激活窗口启动子进程，用于 check_rem / PS 贴图等任务。
+
+    参数:
+      no_console: True 时使用 CREATE_NO_WINDOW，不弹控制台黑窗，同时把 stdout/stderr 重定向到 DEVNULL。
+                  适用于 wb_listing.py / check_online_listed.py 这种自己有日志文件的后台任务。
+    """
     import subprocess
     import ctypes
     from ctypes import wintypes
@@ -314,8 +325,13 @@ def run_minimized(cmd, cwd=None, wait=False):
 
     kwargs = {
         "startupinfo": si,
-        "creationflags": subprocess.CREATE_NEW_CONSOLE,
     }
+    if no_console:
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        kwargs["stdout"] = subprocess.DEVNULL
+        kwargs["stderr"] = subprocess.DEVNULL
+    else:
+        kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
     if cwd:
         kwargs["cwd"] = str(cwd)
 
@@ -2876,7 +2892,7 @@ def api_upload_refresh_online_listed():
         }), 404
 
     try:
-        proc = run_minimized([sys.executable, str(script_path)], wait=False)
+        proc = run_minimized([sys.executable, str(script_path)], wait=False, no_console=True)
         return jsonify({
             "ok": True,
             "msg": "已开始刷新在线已上款，请等待 30~120 秒后查看结果",
@@ -2993,7 +3009,8 @@ def api_batch_upload():
 
     try:
         # wait=False: wb_listing.py 运行时间较长，API 立即返回，后台执行
-        run_minimized(args, wait=False)
+        # no_console=True: 不弹控制台黑窗（wb_listing.py 自己写日志到 D:\Semems WB\_debug）
+        run_minimized(args, wait=False, no_console=True)
     except Exception as e:
         print(f"[batch-upload] 启动 {valid_dx} 失败: {e}", flush=True)
         return jsonify({"ok": False, "error": f"启动脚本失败: {e}"}), 500
@@ -3335,7 +3352,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.18              ║")
+    print("║   Y2 Bridge Server v2.3.19              ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")

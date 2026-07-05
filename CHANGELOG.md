@@ -12,6 +12,18 @@
 
 ---
 
+## v2.3.19 (2026-07-05) — 修复批量上款时弹出黑色控制台窗口
+
+### 🐛 修复
+
+- **修复批量上款 / 刷新在线已上款时弹出黑色控制台窗口**
+  - 根因：`run_minimized()` 统一使用 `CREATE_NEW_CONSOLE` 启动子进程，`wb_listing.py` / `check_online_listed.py` 运行时都会弹出一个最小化的 CMD 黑窗。
+  - 解决：`run_minimized()` 新增 `no_console` 参数；调用 `wb_listing.py` 与 `check_online_listed.py` 时传 `no_console=True`。
+  - 使用 `CREATE_NO_WINDOW` 替代 `CREATE_NEW_CONSOLE`，并把 stdout/stderr 重定向到 `DEVNULL`。
+  - 这两个脚本内部已把日志写入 `D:\Semems WB\_debug`，不依赖控制台窗口输出。
+
+---
+
 ## v2.3.17 (2026-07-05) — Bridge 面板限制窗口大小 + 同步 wb上款 v1.3.20
 
 ### 🔧 联动
