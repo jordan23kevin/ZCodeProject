@@ -63,7 +63,7 @@ if %ERRORLEVEL% EQU 0 (
     if "%OPEN_BROWSER%"=="1" (
         echo Opening Chrome...
         if exist "%CHROME%" (
-            start "" cmd /c ""%CHROME%" --new-window "http://%HOST%:%PORT%" >nul 2>&1"
+            start "" cmd /c ""%CHROME%" --new-window --window-size=1400,900 "http://%HOST%:%PORT%" >nul 2>&1"
         ) else (
             start "" cmd /c "start http://%HOST%:%PORT% >nul 2>&1"
         )
@@ -76,7 +76,7 @@ if %ERRORLEVEL% EQU 0 (
 call :rotate_log
 
 echo ========================================
-echo   Y2 Bridge v2.3.6
+echo   Y2 Bridge v2.3.17
 echo   Panel: http://%HOST%:%PORT%
 echo   INBOX: D:\Semems WB\01_INBOX\
 echo   Lovart: E:\Claude code\lovart-official\
@@ -109,7 +109,7 @@ if "%OPEN_BROWSER%"=="1" (
     echo.
     echo Opening Chrome...
     if exist "%CHROME%" (
-        start "" cmd /c ""%CHROME%" --new-window "http://%HOST%:%PORT%" >nul 2>&1"
+        start "" cmd /c ""%CHROME%" --new-window --window-size=1400,900 "http://%HOST%:%PORT%" >nul 2>&1"
     ) else (
         start "" cmd /c "start http://%HOST%:%PORT% >nul 2>&1"
     )

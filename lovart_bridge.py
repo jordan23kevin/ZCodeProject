@@ -1,12 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.16
+Y2 Bridge Server v2.3.17
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.17：
+  - `lovart_bridge.bat` 启动 Chrome 增加 `--window-size=1400,900`，避免 Bridge 面板默认最大化占据整个屏幕。
+  - 同步 wb上款 v1.3.20：Edge 自动化期间默认最小化到任务栏。
 
 变更 v2.3.16：
   - 同步 wb上款 v1.3.19：
@@ -3326,7 +3330,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.16              ║")
+    print("║   Y2 Bridge Server v2.3.17              ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")
