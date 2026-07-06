@@ -1,12 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.22
+Y2 Bridge Server v2.3.23
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.23：
+  - 同步 wb上款 v2.2.2：
+    * 修复 EdgeService 窗口操作误匹配夸克/Chrome 等 Chromium 浏览器的问题。
+    * `_find_edge_windows()` 增加 `msedge.exe` 进程名校验，不再按类名误操作夸克窗口。
+    * `show_for_user()` / `prepare_for_interaction()` / `hide_for_automation()` / `hide_at_bottom()`
+      全部按 Edge 自身进程树执行，避免把夸克透明窗口提到前台或恢复不透明导致遮挡屏幕。
+  - Bridge 自身代码无改动，仅更新依赖版本与文档。
 
 变更 v2.3.22：
   - 集成 Temu 报活动控制台 (`/activity`) 与报活动引擎 v4.1.3。

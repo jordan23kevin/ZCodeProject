@@ -1,5 +1,22 @@
 # Y2 一体化控制系统 — 更新日志
 
+## v2.3.23 (2026-07-06) — 同步 wb上款 v2.2.2 窗口隔离修复
+
+### 🐛 修复
+
+- **上款时夸克/Chrome 窗口被误操作**
+  - 同步 wb上款 v2.2.2：`browser_kernel/service/edge_service.py` 增加进程名校验与 Edge 进程树遍历。
+  - `_find_edge_windows()` 不再只按 `Chrome_WidgetWin_1/2` 类名匹配，额外校验进程名必须为 `msedge.exe`。
+  - `show_for_user()` / `prepare_for_interaction()` / `hide_for_automation()` / `hide_at_bottom()` 全部按 Edge 自身进程树执行。
+  - 解决上款时夸克透明窗口被提到前台、遮挡屏幕中间的问题。
+
+### 📚 文档与版本
+
+- 版本号统一升级到 v2.3.23：`lovart_bridge.py`、`lovart_bridge.bat`、`SKILL.md`、`ARCHITECTURE.md`、`CHANGELOG.md`、`REPRODUCIBILITY.md`。
+- 依赖版本同步：`wb_listing.py v2.2.2`。
+
+---
+
 ## v2.3.22 (2026-07-06) — 集成 Temu 报活动控制台
 
 ### ✨ 新增
