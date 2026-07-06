@@ -9,11 +9,15 @@
   - `_find_edge_windows()` 不再只按 `Chrome_WidgetWin_1/2` 类名匹配，额外校验进程名必须为 `msedge.exe`。
   - `show_for_user()` / `prepare_for_interaction()` / `hide_for_automation()` / `hide_at_bottom()` 全部按 Edge 自身进程树执行。
   - 解决上款时夸克透明窗口被提到前台、遮挡屏幕中间的问题。
+- 同步 check_online_listed.py v1.3.20：修复「刷新已上款」选择 300 条/页未生效的问题。
+  - `switch_pagination()` 增加 loading 检测与切换结果校验（页大小 / 行数）。
+  - 多策略重试（JS 操作 vxe-table / 原生 select、Playwright 点击、纯 JS 点击），确保真正加载约 300 行后再提取。
+  - 解决 DX0448/DX0449/DX0450 等已上款款号仍被分到未上款的问题。
 
 ### 📚 文档与版本
 
 - 版本号统一升级到 v2.3.23：`lovart_bridge.py`、`lovart_bridge.bat`、`SKILL.md`、`ARCHITECTURE.md`、`CHANGELOG.md`、`REPRODUCIBILITY.md`。
-- 依赖版本同步：`wb_listing.py v2.2.2`。
+- 依赖版本同步：`wb_listing.py v2.2.2` + `check_online_listed.py v1.3.20`。
 
 ---
 

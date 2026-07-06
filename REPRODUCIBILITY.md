@@ -1,6 +1,6 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.3.23` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.2` + `temu-hengjia-engine v5.2.1` + `temu-activity-engine v4.1.3`
+> 对应版本: `lovart_bridge.py v2.3.23` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.2` + `check_online_listed.py v1.3.20` + `temu-hengjia-engine v5.2.1` + `temu-activity-engine v4.1.3`
 > 最后更新: 2026-07-06
 
 ---

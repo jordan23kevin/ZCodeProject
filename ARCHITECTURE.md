@@ -7,11 +7,16 @@
 
 ## v2.3.23 变更
 
-本次版本同步 wb上款 v2.2.2 的窗口隔离修复：
+本次版本同步 wb上款 v2.2.2 与 check_online_listed.py v1.3.20：
 
-- **问题**：点击 Bridge「批量上款」后，用户观察到夸克浏览器自动启动/透明窗口遮挡屏幕中间。
-- **根因**：Edge 与夸克/Chrome 同为 Chromium 内核，窗口类名相同；wb上款 `EdgeService.show_for_user()` 等窗口操作在 PID 匹配不到窗口时按类名兜底，可能误把夸克透明窗口提到前台并恢复不透明，导致遮挡。
-- **解决**：`browser_kernel/service/edge_service.py` 增加进程名校验与 Edge 进程树遍历，窗口操作只影响 `msedge.exe`，不再误操作夸克/Chrome 窗口。
+- **问题 1**：点击 Bridge「批量上款」后，用户观察到夸克浏览器自动启动/透明窗口遮挡屏幕中间。
+- **根因 1**：Edge 与夸克/Chrome 同为 Chromium 内核，窗口类名相同；wb上款 `EdgeService.show_for_user()` 等窗口操作在 PID 匹配不到窗口时按类名兜底，可能误把夸克透明窗口提到前台并恢复不透明，导致遮挡。
+- **解决 1**：`browser_kernel/service/edge_service.py` 增加进程名校验与 Edge 进程树遍历，窗口操作只影响 `msedge.exe`，不再误操作夸克/Chrome 窗口。
+
+- **问题 2**：Bridge「刷新已上款」选择 300 条/页后，实际页面仍停留在 50 条/页，导致 DX0448/DX0449/DX0450 等已上款款号被漏判为未上款。
+- **根因 2**：`check_online_listed.py` 的 `switch_pagination()` 点击 300 选项后只固定 sleep 4 秒，未等待 loading 结束，也未校验是否真正切换成功。
+- **解决 2**：`check_online_listed.py v1.3.20` 增加 loading 检测、切换后校验页大小和行数、多策略重试，确保真正加载约 300 行后再提取。
+
 - **Bridge 侧**：无代码改动，更新依赖版本号与文档；`lovart_bridge.py` / `lovart_bridge.bat` 版本号升级到 v2.3.23。
 
 ---
