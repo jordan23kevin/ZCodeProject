@@ -1,6 +1,6 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.3.20` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.0` + `temu-hengjia-engine v5.2.1`
+> 对应版本: `lovart_bridge.py v2.3.21` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.0` + `temu-hengjia-engine v5.2.1`
 > 最后更新: 2026-07-06
 
 ---
@@ -113,7 +113,7 @@ git reset --hard HEAD~1
 # ZCodeProject
 cd C:\Users\Administrator\ZCodeProject
 git fetch origin --tags
-git checkout v2.3.17
+git checkout v2.3.21
 
 # lovart-official
 cd "E:\Claude code\lovart-official"
@@ -204,7 +204,16 @@ git checkout v1.3.23
 
 ---
 
-## 8. 本次更新关键点（v2.3.20 / temu-hengjia-engine v5.2.1）
+## 8. 本次更新关键点（v2.3.21）
+
+| 问题 | 根因 | 解决方案 | 文件位置 |
+|------|------|----------|----------|
+| WB 上款缩略图黑白错位 | `re.sub(r'[^A-Za-z0-9_.-]', '_', filename)` 把 `白`/`黑` 等中文统一替换为下划线，导致缓存文件名冲突 | safe_name 只替换 Windows 非法字符 `\ / * ? : " < > \|`，保留中文；清空旧缓存 | `lovart_bridge.py::_get_upload_thumb` / `_get_ai_thumb` |
+| 点击上款图片后文件夹不前台弹出 | `os.startfile` 复用已存在的资源管理器窗口时不强制激活 | 新增 `_open_folder_front()`，打开后通过 `win32gui` 查找 `CabinetWClass` 窗口并 `SetForegroundWindow()` | `lovart_bridge.py::_open_folder_front` / `api_open_dx` / `api_open_recycle` |
+
+---
+
+## 9. 本次更新关键点（v2.3.20 / temu-hengjia-engine v5.2.1）
 
 | 问题 | 根因 | 解决方案 | 文件位置 |
 |------|------|----------|----------|

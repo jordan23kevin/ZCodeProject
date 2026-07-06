@@ -1,12 +1,23 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.20
+Y2 Bridge Server v2.3.21
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.21：
+  - 修复 WB 上款页面缩略图黑白错位。
+    * 根因：`_get_upload_thumb` / `_get_ai_thumb` 用 `re.sub(r'[^A-Za-z0-9_.-]', '_', filename)` 把
+      文件名中的中文统一替换为下划线，导致 `DX_B_白T.jpg` 与 `DX_B_黑T.jpg` 生成同一个缓存文件名。
+    * 解决：safe_name 只替换 Windows 文件系统非法字符（`\ / * ? : " < > |`），保留中文。
+    * 清理：`D:\Semems WB\_upload_thumbs` 与 `_ai_review_thumbs` 中的错误缓存已清空，重新加载页面会自动重建正确缩略图。
+  - 修复点击上款图片/回收站按钮后文件夹不自动前台弹出的问题。
+    * 根因：`os.startfile` 打开已存在的资源管理器窗口时不会强制激活。
+    * 解决：新增 `_open_folder_front()`，使用 `explorer.exe` 打开并在打开后通过 `win32gui` 查找窗口、
+      `ShowWindow(SW_RESTORE)` + `SetForegroundWindow()` 强制置顶。
 
 变更 v2.3.20：
   - 集成 Temu 核价控制台 (`/pricing`) 与 Hermes 核价引擎。
@@ -956,8 +967,9 @@ def move_ai_to_trash(dx: str, filename: str) -> tuple:
     except Exception:
         pass
 
-    # 清理 AI 对比缩略图缓存
-    for tf in AI_THUMB_DIR.glob(f"{dx}__{safe}.*"):
+    # 清理 AI 对比缩略图缓存（使用与 _get_ai_thumb 一致的 safe_name）
+    thumb_safe = re.sub(r'[\\/*?:"<>|]', '_', safe)
+    for tf in AI_THUMB_DIR.glob(f"{dx}__{thumb_safe}.*"):
         try:
             tf.unlink()
         except Exception:
@@ -1384,7 +1396,7 @@ def _get_upload_thumb(dx: str, filename: str):
     if not src.exists():
         return None
     UPLOAD_THUMB_DIR.mkdir(parents=True, exist_ok=True)
-    safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', filename)
+    safe_name = re.sub(r'[\\/*?:"<>|]', '_', filename)
     thumb_file = UPLOAD_THUMB_DIR / f"{dx}__{safe_name}.jpg"
     # 缓存有效：缩略图存在且严格比源文件新（mtime 相等时认为可能已更新，重新生成）
     if thumb_file.exists():
@@ -1434,7 +1446,7 @@ def _get_ai_thumb(dx: str, filename: str, source: str = "01_AI"):
     if not src.exists():
         return None
     AI_THUMB_DIR.mkdir(parents=True, exist_ok=True)
-    safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', filename)
+    safe_name = re.sub(r'[\\/*?:"<>|]', '_', filename)
     thumb_file = AI_THUMB_DIR / f"{dx}__{safe_name}.jpg"
     if thumb_file.exists() and thumb_file.stat().st_mtime > src.stat().st_mtime:
         return thumb_file
@@ -2075,14 +2087,7 @@ def api_open_recycle():
     """打开本地回收站目录（前台显示）"""
     try:
         TRASH_DIR.mkdir(parents=True, exist_ok=True)
-        try:
-            ctypes.windll.user32.AllowSetForegroundWindow(-1)
-        except Exception:
-            pass
-        try:
-            os.startfile(str(TRASH_DIR))
-        except Exception:
-            subprocess.Popen(f'start "" "{TRASH_DIR}"', shell=True)
+        _open_folder_front(TRASH_DIR)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -2823,7 +2828,7 @@ def api_upload_delete():
         return jsonify({"ok": False, "error": "文件不存在"}), 404
     ok = send_to_recycle_bin(str(target))
     if ok:
-        safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', filename)
+        safe_name = re.sub(r'[\\/*?:"<>|]', '_', filename)
         for tf in UPLOAD_THUMB_DIR.glob(f"{dx}__{safe_name}.*"):
             try:
                 tf.unlink()
@@ -2982,6 +2987,59 @@ def api_upload_refresh_online_listed():
         }), 500
 
 
+def _open_folder_front(folder_path: Path):
+    """打开文件夹并尝试强制资源管理器窗口前台显示。"""
+    folder = str(folder_path)
+    # 允许当前进程创建/激活前台窗口
+    try:
+        import ctypes
+        ctypes.windll.user32.AllowSetForegroundWindow(-1)
+    except Exception:
+        pass
+
+    # 使用 explorer.exe 打开，避免 os.startfile 复用已最小化窗口时不激活
+    try:
+        subprocess.Popen(['explorer.exe', folder])
+    except Exception:
+        try:
+            os.startfile(folder)
+        except Exception:
+            subprocess.Popen(f'explorer.exe "{folder}"', shell=True)
+
+    # 尝试找到新打开的资源管理器窗口并置顶
+    try:
+        import win32gui
+        import win32con
+        import time
+
+        folder_name = folder_path.name
+        best_hwnd = None
+
+        def _enum(hwnd, _):
+            nonlocal best_hwnd
+            if not win32gui.IsWindowVisible(hwnd):
+                return True
+            title = win32gui.GetWindowText(hwnd)
+            # 资源管理器窗口标题通常包含文件夹名；也可用类名 CabinetWClass
+            if folder_name in title and 'CabinetWClass' in win32gui.GetClassName(hwnd):
+                best_hwnd = hwnd
+                return False
+            return True
+
+        # 轮询最多 1 秒，等待窗口创建
+        for _ in range(10):
+            time.sleep(0.1)
+            win32gui.EnumWindows(_enum, None)
+            if best_hwnd:
+                break
+
+        if best_hwnd:
+            win32gui.ShowWindow(best_hwnd, win32con.SW_RESTORE)
+            win32gui.SetForegroundWindow(best_hwnd)
+    except Exception:
+        pass
+
+
 @app.route('/api/open')
 def api_open_dx():
     """打开指定 DX 的子文件夹（ai/rem/up）"""
@@ -2992,16 +3050,7 @@ def api_open_dx():
     sub = {"ai": "01_AI", "rem": "02_REM_BG", "up": "03_UPLOAD"}[which]
     folder = PROJECTS_DIR / dx / sub
     if folder.exists():
-        try:
-            # 允许非前台进程启动的窗口获得焦点，确保文件夹直接展示在前台
-            import ctypes
-            ctypes.windll.user32.AllowSetForegroundWindow(-1)
-        except Exception:
-            pass
-        try:
-            os.startfile(str(folder))
-        except Exception:
-            subprocess.Popen(f'explorer.exe "{folder}"', shell=True)
+        _open_folder_front(folder)
         return jsonify({"ok": True})
     return jsonify({"ok": False, "error": "文件夹不存在"}), 404
 
@@ -3727,7 +3776,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.20              ║")
+    print("║   Y2 Bridge Server v2.3.21              ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")

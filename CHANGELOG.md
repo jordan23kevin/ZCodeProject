@@ -1,5 +1,28 @@
 # Y2 一体化控制系统 — 更新日志
 
+## v2.3.21 (2026-07-06) — 修复上款缩略图黑白错位 + 文件夹前台打开
+
+### 🐛 修复
+
+- **修复 WB 上款页面缩略图黑白错位**
+  - 根因：`_get_upload_thumb` / `_get_ai_thumb` 使用 `re.sub(r'[^A-Za-z0-9_.-]', '_', filename)` 生成缓存文件名，
+    把文件名中的中文（白/黑）统一替换成下划线，导致 `DX_B_白T.jpg` 与 `DX_B_黑T.jpg` 映射到同一个缓存文件。
+  - 解决：safe_name 只替换 Windows 文件系统非法字符（`\ / * ? : " < > |`），保留中文；
+    同时清空 `D:\Semems WB\_upload_thumbs` 与 `_ai_review_thumbs` 中的旧错误缓存，重新加载页面时自动重建正确缩略图。
+  - 影响文件：`lovart_bridge.py`
+
+- **修复点击上款图片/回收站按钮后文件夹不自动前台弹出**
+  - 根因：`os.startfile` 打开已存在的资源管理器窗口时，Windows 不会强制激活窗口，导致窗口只在任务栏闪烁。
+  - 解决：新增 `_open_folder_front()` 辅助函数，先用 `explorer.exe` 打开文件夹，再用 `win32gui` 查找对应的
+    `CabinetWClass` 窗口，调用 `ShowWindow(SW_RESTORE)` + `SetForegroundWindow()` 强制置顶。
+  - 影响文件：`lovart_bridge.py`
+
+### 📚 文档与版本
+
+- 版本号统一升级到 v2.3.21：`lovart_bridge.py`、`lovart_bridge.bat`、`SKILL.md`、`ARCHITECTURE.md`、`CHANGELOG.md`、`REPRODUCIBILITY.md`。
+
+---
+
 ## v2.3.20 (2026-07-06) — 集成 Temu 核价控制台并修复长页滚动回顶
 
 ### ✨ 新增
