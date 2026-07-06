@@ -1,12 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.21
+Y2 Bridge Server v2.3.22
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.3.22：
+  - 集成 Temu 报活动控制台 (`/activity`) 与报活动引擎 v4.1.3。
+  - 新增 `/api/activity/*` 端点：启动报活动、停止、状态轮询。
+  - 新增 `activity.html` 前端页面，支持启动/停止、状态徽章、实时日志、当前步骤与已完成步骤展示。
+  - `lovart_control.html` 工具栏新增「报活动」按钮，可在新标签页打开 `/activity`。
+  - `/api/activity/status` 按 contract 返回 `{status, log: [str], state_info}`，state.json 不存在时返回空 state_info。
 
 变更 v2.3.21：
   - 修复 WB 上款页面缩略图黑白错位。
@@ -263,6 +270,13 @@ PRICING_STATE_FILE = PRICING_DIR / "hengjia_state.json"
 PRICING_OUTPUT_DIR = Path(r"C:\Users\Administrator\Desktop\核价档案")
 
 # ============================================================================
+# Temu 报活动项目路径
+# ============================================================================
+ACTIVITY_DIR        = 'E:/Claude code/Temu自动化/报活动'
+ACTIVITY_ENTRYPOINT = ACTIVITY_DIR + '/entrypoint/run.py'
+ACTIVITY_STATE_FILE = ACTIVITY_DIR + '/state/state.json'
+
+# ============================================================================
 # 工具函数：处理 Lovart 去重记录
 # ============================================================================
 def _compute_sha256(path: str) -> str:
@@ -462,6 +476,20 @@ pricing_task = {
     "page_records": [],
 }
 pricing_lock = threading.Lock()
+
+
+# ============================================================================
+# 报活动任务状态
+# ============================================================================
+activity_task = {
+    "status": "idle",          # idle | running | completed | error | stopped
+    "started_at": None,
+    "completed_at": None,
+    "proc": None,
+    "log": [],
+    "log_index": 0,            # 前端已读取到的位置
+}
+activity_lock = threading.Lock()
 
 
 _lock = threading.Lock()
@@ -3461,6 +3489,208 @@ def api_pricing_signal():
 
 
 # ============================================================================
+# Temu 报活动集成
+# ============================================================================
+
+def _read_activity_state():
+    """读取报活动状态文件，失败或不存在返回空字典。"""
+    path = Path(ACTIVITY_STATE_FILE)
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"[activity] 读取状态失败: {e}", flush=True)
+        return {}
+
+
+def _activity_log_reader(proc):
+    """后台线程：读取报活动脚本 stdout/stderr 并写入 activity_task 日志。"""
+    def _read_stream(stream, kind):
+        try:
+            for raw in iter(stream.readline, b""):
+                line = None
+                for enc in ("utf-8", "gbk", "gb2312"):
+                    try:
+                        line = raw.decode(enc, errors="strict").rstrip("\r\n")
+                        break
+                    except Exception:
+                        continue
+                if line is None:
+                    line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                if not line:
+                    continue
+                with activity_lock:
+                    if kind == "error":
+                        activity_task["log"].append(f"[ERR] {line}")
+                    else:
+                        activity_task["log"].append(line)
+        except Exception as e:
+            with activity_lock:
+                activity_task["log"].append(f"[ERR] 日志读取异常: {e}")
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    threads = []
+    if proc.stdout:
+        t = threading.Thread(target=_read_stream, args=(proc.stdout, ""), daemon=True)
+        t.start()
+        threads.append(t)
+    if proc.stderr:
+        t = threading.Thread(target=_read_stream, args=(proc.stderr, "error"), daemon=True)
+        t.start()
+        threads.append(t)
+
+    rc = proc.wait()
+    for t in threads:
+        t.join(timeout=2)
+
+    with activity_lock:
+        if activity_task["status"] == "running":
+            if rc == 0:
+                activity_task["status"] = "completed"
+            else:
+                activity_task["status"] = "error"
+        activity_task["completed_at"] = datetime.now().isoformat()
+        activity_task["proc"] = None
+
+
+def _start_activity_script(label):
+    """通用启动 Temu 报活动子进程。"""
+    with activity_lock:
+        if activity_task.get("status") == "running" and activity_task.get("proc") and activity_task["proc"].poll() is None:
+            return {"success": False, "message": "已有报活动任务在运行，请先停止"}, 409
+
+        activity_task["status"] = "running"
+        activity_task["started_at"] = datetime.now().isoformat()
+        activity_task["completed_at"] = None
+        activity_task["log"] = [f"[{datetime.now().strftime('%H:%M:%S')}] 启动: {label}"]
+        activity_task["log_index"] = 0
+
+    if not os.path.exists(ACTIVITY_DIR):
+        with activity_lock:
+            activity_task["status"] = "error"
+            activity_task["completed_at"] = datetime.now().isoformat()
+        return {"success": False, "message": f"报活动项目目录不存在: {ACTIVITY_DIR}"}, 404
+
+    if not os.path.exists(ACTIVITY_ENTRYPOINT):
+        with activity_lock:
+            activity_task["status"] = "error"
+            activity_task["completed_at"] = datetime.now().isoformat()
+        return {"success": False, "message": f"报活动入口脚本不存在: {ACTIVITY_ENTRYPOINT}"}, 404
+
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+
+    try:
+        proc = subprocess.Popen(
+            [get_python(), ACTIVITY_ENTRYPOINT],
+            cwd=ACTIVITY_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=1,
+            env=env,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except Exception as e:
+        with activity_lock:
+            activity_task["status"] = "error"
+            activity_task["completed_at"] = datetime.now().isoformat()
+            activity_task["proc"] = None
+        return {"success": False, "message": f"启动脚本失败: {e}"}, 500
+
+    with activity_lock:
+        activity_task["proc"] = proc
+
+    threading.Thread(target=_activity_log_reader, args=(proc,), daemon=True).start()
+    return {"success": True, "message": f"已启动 {label}"}, 200
+
+
+@app.route('/activity')
+def activity_page():
+    """Temu 报活动页面。"""
+    return send_file(str(Path(__file__).parent / 'activity.html'))
+
+
+@app.route('/api/activity/start', methods=['POST'])
+def api_activity_start():
+    """启动 Temu 报活动脚本。"""
+    resp, code = _start_activity_script("报活动")
+    return jsonify(resp), code
+
+
+@app.route('/api/activity/stop', methods=['POST'])
+def api_activity_stop():
+    """停止当前报活动任务。"""
+    with activity_lock:
+        proc = activity_task.get("proc")
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            except Exception as e:
+                return jsonify({"success": False, "message": f"停止失败: {e}"}), 500
+        activity_task["status"] = "stopped"
+        activity_task["completed_at"] = datetime.now().isoformat()
+        activity_task["proc"] = None
+    return jsonify({"success": True})
+
+
+@app.route('/api/activity/status')
+def api_activity_status():
+    """获取报活动任务状态、增量日志和状态文件信息。"""
+    with activity_lock:
+        state_info = _read_activity_state()
+
+        # 返回未读取过的日志（按 contract 返回字符串数组）
+        idx = activity_task.get("log_index", 0)
+        all_logs = activity_task.get("log", [])
+        logs = []
+        for entry in all_logs[idx:]:
+            if isinstance(entry, dict):
+                logs.append(entry.get("line", ""))
+            else:
+                logs.append(str(entry))
+        activity_task["log_index"] = len(all_logs)
+
+        # 计算运行时长
+        elapsed = 0
+        if activity_task.get("status") == "running" and activity_task.get("started_at"):
+            try:
+                elapsed = int((datetime.now() - datetime.fromisoformat(activity_task["started_at"])).total_seconds())
+            except Exception:
+                pass
+
+        # 状态映射：stopped 对前端显示为 idle
+        raw_status = activity_task.get("status", "idle")
+        display_status = "idle" if raw_status == "stopped" else raw_status
+
+        # state_info 不存在时返回 None，保持 graceful
+        if not state_info:
+            state_info = None
+
+        return jsonify({
+            "status": display_status,
+            "started_at": activity_task.get("started_at"),
+            "elapsed_sec": elapsed,
+            "log": logs,
+            "state_info": {
+                "current_step": state_info.get("current_step"),
+                "completed_steps": state_info.get("completed_steps", []),
+                "errors": state_info.get("errors", []),
+                "meta": state_info.get("meta", {}),
+            } if state_info else None,
+        })
+
+
+# ============================================================================
 # 后台生图任务
 # ============================================================================
 
@@ -3784,7 +4014,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.21              ║")
+    print("║   Y2 Bridge Server v2.3.22              ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")

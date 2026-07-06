@@ -1,6 +1,6 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.3.21` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.0` + `temu-hengjia-engine v5.2.1`
+> 对应版本: `lovart_bridge.py v2.3.22` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.0` + `temu-hengjia-engine v5.2.1` + `temu-activity-engine v4.1.3`
 > 最后更新: 2026-07-06
 
 ---
@@ -14,6 +14,7 @@
 | ps（贴图流水线） | `E:\Claude code\ps` | （未纳入本次推送） | — | PS 贴图 + BW 合成 |
 | wb上款 | `E:\Claude code\wb上款` | `https://github.com/jordan23kevin/wb-listing.git` | `main` | 批量上款 |
 | temu-hengjia-engine | `E:\Claude code\Temu自动化\核价` | `https://github.com/jordan23kevin/temu-hengjia-engine.git` | `main` | Temu 批量核价引擎 |
+| temu-activity-engine | `E:\Claude code\Temu自动化\报活动` | （未纳入本次推送） | — | Temu 批量报活动 |
 
 ---
 
@@ -37,6 +38,10 @@ git pull origin main
 # Temu 核价引擎
 cd "E:\Claude code\Temu自动化\核价"
 git pull origin main
+
+# Temu 报活动引擎
+cd "E:\Claude code\Temu自动化\报活动"
+# 本地项目，无远程仓库，直接运行
 ```
 
 ### 2.2 安装/检查依赖
@@ -70,6 +75,8 @@ python check_rem.py
 浏览器访问：
 - Y2 控制台：`http://127.0.0.1:8765`
 - AI 生图对比：`http://127.0.0.1:8765/ai-review`
+- Temu 核价：`http://127.0.0.1:8765/pricing`
+- Temu 报活动：`http://127.0.0.1:8765/activity`
 - 去背预览：`http://127.0.0.1:8766`
 
 ---
@@ -113,7 +120,7 @@ git reset --hard HEAD~1
 # ZCodeProject
 cd C:\Users\Administrator\ZCodeProject
 git fetch origin --tags
-git checkout v2.3.21
+git checkout v2.3.22
 
 # lovart-official
 cd "E:\Claude code\lovart-official"
@@ -204,7 +211,15 @@ git checkout v1.3.23
 
 ---
 
-## 8. 本次更新关键点（v2.3.21）
+## 8. 本次更新关键点（v2.3.22）
+
+| 问题 | 根因 | 解决方案 | 文件位置 |
+|------|------|----------|----------|
+| Temu 报活动无统一入口 | 报活动脚本独立运行，无 Web 控制台 | Bridge 新增 `/activity` 页面 + `/api/activity/*` 端点，子进程调用 `entrypoint/run.py` | `lovart_bridge.py` / `activity.html` |
+
+---
+
+## 9. 本次更新关键点（v2.3.21）
 
 | 问题 | 根因 | 解决方案 | 文件位置 |
 |------|------|----------|----------|
@@ -213,7 +228,7 @@ git checkout v1.3.23
 
 ---
 
-## 9. 本次更新关键点（v2.3.20 / temu-hengjia-engine v5.2.1）
+## 10. 本次更新关键点（v2.3.20 / temu-hengjia-engine v5.2.1）
 
 | 问题 | 根因 | 解决方案 | 文件位置 |
 |------|------|----------|----------|
@@ -235,4 +250,7 @@ cd "E:\Claude code\lovart-official" && git log --oneline -5
 
 # temu-hengjia-engine
 cd "E:\Claude code\Temu自动化\核价" && git log --oneline -5
+
+# temu-activity-engine（本地项目）
+cd "E:\Claude code\Temu自动化\报活动" && git log --oneline -5
 ```

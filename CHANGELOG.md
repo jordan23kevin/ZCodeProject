@@ -1,5 +1,22 @@
 # Y2 一体化控制系统 — 更新日志
 
+## v2.3.22 (2026-07-06) — 集成 Temu 报活动控制台
+
+### ✨ 新增
+
+- **Temu 报活动页面 (`/activity`)**
+  - 新增 `activity.html` 前端页面，提供「启动报活动」「停止」功能，实时展示当前步骤、已完成步骤、进度条与日志。
+  - 新增 `/api/activity/*` 后端端点：启动报活动、停止、状态轮询。
+  - Bridge 通过子进程调用 `E:/Claude code/Temu自动化/报活动/entrypoint/run.py` 执行实际报活动逻辑（v4.1.3 九步流程）。
+  - 状态通过读取 `E:/Claude code/Temu自动化/报活动/state/state.json` 同步，支持显示 `current_step`、`completed_steps`、`errors`、`meta`。
+  - `lovart_control.html` 工具栏新增「🎉 报活动」按钮，可在新标签页打开 `/activity`。
+
+### 📚 文档与版本
+
+- 版本号统一升级到 v2.3.22：`lovart_bridge.py`、`lovart_bridge.bat`、`SKILL.md`、`ARCHITECTURE.md`、`CHANGELOG.md`、`REPRODUCIBILITY.md`。
+
+---
+
 ## v2.3.21 (2026-07-06) — 修复上款缩略图黑白错位 + 文件夹前台打开
 
 ### 🐛 修复

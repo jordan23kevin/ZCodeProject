@@ -1,7 +1,23 @@
-# Y2 系统架构文档 v2.3.21
+# Y2 系统架构文档 v2.3.22
 
-> 工程类型: 图像生产血缘数据库 + 控制面板 + 贴图成品流水线 + AI 生图对比复审 + Temu 核价集成
+> 工程类型: 图像生产血缘数据库 + 控制面板 + 贴图成品流水线 + AI 生图对比复审 + Temu 核价集成 + Temu 报活动集成
 > 遵循: B+ 四层血缘闭环架构
+
+---
+
+## v2.3.22 变更
+
+本次版本集成 Temu 报活动控制台：
+
+- **新增 `/activity` 页面**
+  - `activity.html` 作为独立前端，通过 `/api/activity/*` 与 Bridge 通信。
+  - 支持启动报活动、停止、实时日志、当前步骤与已完成步骤展示。
+
+- **Bridge 端集成 Temu 报活动引擎**
+  - `lovart_bridge.py` 中新增 `ACTIVITY_DIR` 等路径常量，指向 `E:/Claude code/Temu自动化/报活动`。
+  - 新增 `_start_activity_script()` 通用子进程启动器，调用 `entrypoint/run.py`。
+  - 新增 `activity_task` 状态字典与 `activity_lock`，支持前端轮询实时日志与步骤进度。
+  - 报活动状态通过读取 `state/state.json` 同步。
 
 ---
 
