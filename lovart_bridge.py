@@ -3904,6 +3904,17 @@ def api_retail_price_status():
         })
 
 
+@app.route('/api/retail_price/signal', methods=['POST'])
+def api_retail_price_signal():
+    """创建 go.signal 文件，通知脚本用户已准备好。"""
+    signal_path = RETAIL_PRICE_DIR / "go.signal"
+    try:
+        signal_path.write_text("", encoding="utf-8")
+        return jsonify({"ok": True, "msg": "已发送'好了'信号"})
+    except Exception as e:
+        return jsonify({"error": f"创建信号文件失败: {e}"}), 500
+
+
 # ============================================================================
 # 后台生图任务
 # ============================================================================
