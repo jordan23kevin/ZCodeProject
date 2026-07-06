@@ -3681,14 +3681,14 @@ def _retail_price_log_reader(proc):
     for t in threads:
         t.join(timeout=2)
 
-    elapsed = 0
-    if retail_price_task.get("started_at"):
-        try:
-            elapsed = int((datetime.now() - datetime.fromisoformat(retail_price_task["started_at"])).total_seconds())
-        except Exception:
-            pass
-
     with retail_price_lock:
+        elapsed = 0
+        if retail_price_task.get("started_at"):
+            try:
+                elapsed = int((datetime.now() - datetime.fromisoformat(retail_price_task["started_at"])).total_seconds())
+            except Exception:
+                pass
+
         retail_price_task["elapsed_sec"] = elapsed
         if retail_price_task["status"] == "running":
             if rc == 0:
@@ -3719,12 +3719,14 @@ def _start_retail_price_script(label):
         with retail_price_lock:
             retail_price_task["status"] = "error"
             retail_price_task["completed_at"] = datetime.now().isoformat()
+            retail_price_task["proc"] = None
         return {"error": f"建议零售价项目目录不存在: {RETAIL_PRICE_DIR}"}, 404
 
     if not RETAIL_PRICE_SCRIPT.exists():
         with retail_price_lock:
             retail_price_task["status"] = "error"
             retail_price_task["completed_at"] = datetime.now().isoformat()
+            retail_price_task["proc"] = None
         return {"error": f"建议零售价脚本不存在: {RETAIL_PRICE_SCRIPT}"}, 404
 
     env = os.environ.copy()
@@ -3861,6 +3863,10 @@ def api_retail_price_stop():
                 except subprocess.TimeoutExpired:
                     proc.kill()
             except Exception as e:
+                retail_price_task["status"] = "error"
+                retail_price_task["task_label"] = "停止失败"
+                retail_price_task["proc"] = None
+                retail_price_task["log"].append({"line": f"[{datetime.now().strftime('%H:%M:%S')}] 停止失败: {e}", "kind": "error"})
                 return jsonify({"error": f"停止失败: {e}"}), 500
         retail_price_task["status"] = "stopped"
         retail_price_task["task_label"] = "已停止"

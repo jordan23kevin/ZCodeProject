@@ -77,14 +77,18 @@ function formatDuration(s){
 }
 
 var pollTimer=null;
+var isRequesting=false;
+var pollFailCount=0;
+var currentStatus='idle';
 
 function setStatus(status,label){
+  currentStatus=status;
   var b=document.getElementById('statusBadge');
   b.className='status-badge status-'+status;
   document.getElementById('statusLabel').textContent=label;
   document.getElementById('statusSpinner').style.display=(status==='running'?'inline-block':'none');
-  document.getElementById('btnStart').disabled=(status==='running');
-  document.getElementById('btnStop').disabled=(status!=='running');
+  document.getElementById('btnStart').disabled=isRequesting||status==='running';
+  document.getElementById('btnStop').disabled=isRequesting||status!=='running';
 }
 
 function appendLog(line,kind){
@@ -100,6 +104,8 @@ function clearLog(){
 }
 
 function startTask(){
+  isRequesting=true;
+  setStatus(currentStatus,document.getElementById('statusLabel').textContent);
   fetch('/api/retail_price/start',{method:'POST'})
     .then(function(r){return r.json();})
     .then(function(d){
@@ -107,19 +113,30 @@ function startTask(){
       appendLog('✅ '+d.msg,'ok');
       setStatus('running','填写中');
       beginPoll();
-    }).catch(function(e){appendLog('❌ 请求失败: '+e,'error');});
+    }).catch(function(e){appendLog('❌ 请求失败: '+e,'error');})
+    .finally(function(){
+      isRequesting=false;
+      setStatus(currentStatus,document.getElementById('statusLabel').textContent);
+    });
 }
 function stopTask(){
+  isRequesting=true;
+  setStatus(currentStatus,document.getElementById('statusLabel').textContent);
   fetch('/api/retail_price/stop',{method:'POST'})
     .then(function(r){return r.json();})
     .then(function(d){
       appendLog(d.msg||'已停止','warn');
       setStatus('idle','就绪');
-    }).catch(function(e){appendLog('❌ 请求失败: '+e,'error');});
+    }).catch(function(e){appendLog('❌ 请求失败: '+e,'error');})
+    .finally(function(){
+      isRequesting=false;
+      setStatus(currentStatus,document.getElementById('statusLabel').textContent);
+    });
 }
 
 function beginPoll(){
   if(pollTimer)clearInterval(pollTimer);
+  pollFailCount=0;
   pollTimer=setInterval(pollStatus,1200);
   pollStatus();
 }
@@ -129,6 +146,7 @@ function stopPoll(){
 
 function pollStatus(){
   fetch('/api/retail_price/status').then(function(r){return r.json();}).then(function(d){
+    pollFailCount=0;
     document.getElementById('startTime').textContent=formatTime(d.started_at);
     document.getElementById('totalElapsed').textContent=formatDuration(d.elapsed_sec);
 
@@ -148,8 +166,18 @@ function pollStatus(){
       setStatus('idle','就绪');
       stopPoll();
     }
-  }).catch(function(e){console.log('poll error',e);});
+  }).catch(function(e){
+    pollFailCount++;
+    appendLog('❌ 轮询失败 ('+pollFailCount+'): '+e,'error');
+    console.log('poll error',e);
+    if(pollFailCount>=5){
+      appendLog('❌ 轮询连续失败 5 次，停止自动刷新','error');
+      stopPoll();
+    }
+  });
 }
+
+window.addEventListener('beforeunload', stopPoll);
 
 setStatus('idle','就绪');
 pollStatus();
