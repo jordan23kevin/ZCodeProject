@@ -1,6 +1,6 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.3.22` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.0` + `temu-hengjia-engine v5.2.1` + `temu-activity-engine v4.1.3`
+> 对应版本: `lovart_bridge.py v2.3.22` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.1` + `temu-hengjia-engine v5.2.1` + `temu-activity-engine v4.1.3`
 > 最后更新: 2026-07-06
 
 ---
@@ -130,7 +130,7 @@ git checkout v6.1.1
 # wb上款
 cd "E:\Claude code\wb上款"
 git fetch origin --tags
-git checkout v1.3.23
+git checkout v2.2.1
 ```
 
 ### 4.3 回滚后重启
