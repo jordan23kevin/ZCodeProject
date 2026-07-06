@@ -14,7 +14,7 @@
 | ps（贴图流水线） | `E:\Claude code\ps` | （未纳入本次推送） | — | PS 贴图 + BW 合成 |
 | wb上款 | `E:\Claude code\wb上款` | `https://github.com/jordan23kevin/wb-listing.git` | `main` | 批量上款 |
 | temu-hengjia-engine | `E:\Claude code\Temu自动化\核价` | `https://github.com/jordan23kevin/temu-hengjia-engine.git` | `main` | Temu 批量核价引擎 |
-| temu-activity-engine | `E:\Claude code\Temu自动化\报活动` | （未纳入本次推送） | — | Temu 批量报活动 |
+| temu-activity-engine | `E:\Claude code\Temu自动化\报活动` | `git@github.com:jordan23kevin/temu-baohuodong.git` | `master` | Temu 批量报活动 |
 
 ---
 
@@ -41,7 +41,7 @@ git pull origin main
 
 # Temu 报活动引擎
 cd "E:\Claude code\Temu自动化\报活动"
-# 本地项目，无远程仓库，直接运行
+git pull origin master
 ```
 
 ### 2.2 安装/检查依赖
