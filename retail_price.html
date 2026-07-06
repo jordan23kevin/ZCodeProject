@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Temu 建议零售价填写</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px;min-height:100vh}
+  h1{text-align:center;font-size:28px;margin:0 0 16px}
+  .toolbar{text-align:center;margin-bottom:18px;position:sticky;top:0;background:#1a1a1a;padding:12px 0;z-index:20;border-bottom:1px solid #333}
+  .toolbar button{padding:11px 20px;font-size:15px;border-radius:5px;border:1px solid #555;background:#2a2a2a;color:#eee;margin-left:8px;cursor:pointer;font-weight:600}
+  .toolbar button:hover:not(:disabled){background:#333}
+  .toolbar button:disabled{opacity:.45;cursor:not-allowed}
+  .btn-green{background:#4CAF50;color:#fff;border:none}
+  .btn-green:hover:not(:disabled){background:#388e3c}
+  .btn-red{background:#e53935;color:#fff;border:none}
+  .btn-red:hover:not(:disabled){background:#b71c1c}
+  .panel{background:#252525;border:1px solid #444;border-radius:10px;padding:16px 20px;margin:0 auto 22px;max-width:1200px}
+  .panel-title{font-size:18px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
+  .status-row{display:flex;gap:20px;flex-wrap:wrap;font-size:15px;color:#bbb;margin-bottom:10px}
+  .status-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:12px;font-size:13px;font-weight:500;border:1px solid}
+  .status-idle{background:#1b3a1b;color:#7ee787;border-color:#2e7d32}
+  .status-running{background:#3d2e0b;color:#f7c843;border-color:#9e6a03}
+  .status-completed{background:#1b3a1b;color:#7ee787;border-color:#2e7d32}
+  .status-error{background:#3d0f0f;color:#f87171;border-color:#a42c2c}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid #8b949e;border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .log-box{background:#0d0d0d;border:1px solid #333;border-radius:6px;padding:10px 14px;height:420px;overflow-y:auto;font-family:"Cascadia Code",Consolas,monospace;font-size:12px;line-height:1.6;white-space:pre-wrap}
+  .log-box .line{color:#8b949e}
+  .log-box .line.ok{color:#7ee787}
+  .log-box .line.warn{color:#f7c843}
+  .log-box .line.error{color:#f87171}
+</style>
+</head>
+<body>
+<h1>Temu 建议零售价填写</h1>
+
+<div class="toolbar">
+  <button class="btn-green" onclick="startTask()" id="btnStart">🚀 开始填写</button>
+  <button class="btn-red" onclick="stopTask()" id="btnStop" disabled>⏹ 停止</button>
+</div>
+
+<div class="panel">
+  <div class="panel-title">
+    <span>任务状态</span>
+    <span id="statusBadge" class="status-badge status-idle"><span class="spinner" id="statusSpinner" style="display:none"></span><span id="statusLabel">就绪</span></span>
+  </div>
+  <div class="status-row">
+    <span>启动时间: <b id="startTime">-</b></span>
+    <span>总耗时: <b id="totalElapsed" class="num">0s</b></span>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-title">
+    <span>实时日志</span>
+    <button onclick="clearLog()" style="padding:5px 12px;font-size:13px;background:#9c27b0;color:#fff;border:none;border-radius:4px;cursor:pointer">清空</button>
+  </div>
+  <div id="logBox" class="log-box"></div>
+</div>
+
+<script>
+function formatTime(d){
+  if(!d)return '-';
+  var x=new Date(d);
+  return x.getFullYear()+'-'+(x.getMonth()+1).toString().padStart(2,'0')+'-'+x.getDate().toString().padStart(2,'0')+' '+x.getHours().toString().padStart(2,'0')+':'+x.getMinutes().toString().padStart(2,'0')+':'+x.getSeconds().toString().padStart(2,'0');
+}
+function formatDuration(s){
+  if(s===undefined||s===null||s==='')return '-';
+  s=parseInt(s,10);
+  if(s<60)return s+'s';
+  var m=Math.floor(s/60),sec=s%60;
+  if(m<60)return m+'m '+sec+'s';
+  var h=Math.floor(m/60);m=m%60;
+  return h+'h '+m+'m';
+}
+
+var pollTimer=null;
+
+function setStatus(status,label){
+  var b=document.getElementById('statusBadge');
+  b.className='status-badge status-'+status;
+  document.getElementById('statusLabel').textContent=label;
+  document.getElementById('statusSpinner').style.display=(status==='running'?'inline-block':'none');
+  document.getElementById('btnStart').disabled=(status==='running');
+  document.getElementById('btnStop').disabled=(status!=='running');
+}
+
+function appendLog(line,kind){
+  var box=document.getElementById('logBox');
+  var div=document.createElement('div');
+  div.className='line '+(kind||'');
+  div.textContent=line;
+  box.appendChild(div);
+  box.scrollTop=box.scrollHeight;
+}
+function clearLog(){
+  document.getElementById('logBox').innerHTML='';
+}
+
+function startTask(){
+  fetch('/api/retail_price/start',{method:'POST'})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.error){appendLog('❌ '+d.error,'error');return;}
+      appendLog('✅ '+d.msg,'ok');
+      setStatus('running','填写中');
+      beginPoll();
+    }).catch(function(e){appendLog('❌ 请求失败: '+e,'error');});
+}
+function stopTask(){
+  fetch('/api/retail_price/stop',{method:'POST'})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      appendLog(d.msg||'已停止','warn');
+      setStatus('idle','就绪');
+    }).catch(function(e){appendLog('❌ 请求失败: '+e,'error');});
+}
+
+function beginPoll(){
+  if(pollTimer)clearInterval(pollTimer);
+  pollTimer=setInterval(pollStatus,1200);
+  pollStatus();
+}
+function stopPoll(){
+  if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
+}
+
+function pollStatus(){
+  fetch('/api/retail_price/status').then(function(r){return r.json();}).then(function(d){
+    document.getElementById('startTime').textContent=formatTime(d.started_at);
+    document.getElementById('totalElapsed').textContent=formatDuration(d.elapsed_sec);
+
+    if(d.log && d.log.length){
+      d.log.forEach(function(e){appendLog(e.line,e.kind);});
+    }
+
+    if(d.status==='running'){
+      setStatus('running',d.task_label||'填写中');
+    }else if(d.status==='error'){
+      setStatus('error','出错');
+      stopPoll();
+    }else if(d.status==='completed'){
+      setStatus('completed','完成');
+      stopPoll();
+    }else{
+      setStatus('idle','就绪');
+      stopPoll();
+    }
+  }).catch(function(e){console.log('poll error',e);});
+}
+
+setStatus('idle','就绪');
+pollStatus();
+</script>
+</body>
+</html>
