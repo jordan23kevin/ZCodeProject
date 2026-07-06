@@ -88,6 +88,7 @@
 __version__ = "2.2.6"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue
+from datetime import datetime
 from pathlib import Path
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, quote
@@ -101,6 +102,31 @@ if sys.stdout.encoding != 'utf-8':
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
     except Exception:
         pass
+
+# ── 文件日志：check_rem.py 启动后把 stdout/stderr 重定向到 _debug，便于排查去背失败 ──
+_LOG_FILE = None
+_ORIG_STDOUT = None
+_ORIG_STDERR = None
+
+def _setup_file_logging():
+    """把当前进程的 stdout/stderr 同时写入 _debug/check_rem_YYYYMMDD_HHMMSS.log。
+    保留原始 stdout/stderr 引用，供子进程/外部工具需要时恢复。"""
+    global _LOG_FILE, _ORIG_STDOUT, _ORIG_STDERR
+    log_dir = WB_ROOT / "_debug"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"check_rem_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    try:
+        f = open(log_path, "a", encoding="utf-8", buffering=1)
+        _LOG_FILE = f
+        _ORIG_STDOUT = sys.stdout
+        _ORIG_STDERR = sys.stderr
+        sys.stdout = f
+        sys.stderr = f
+        print(f"[check_rem] 日志重定向到: {log_path}", flush=True)
+        return log_path
+    except Exception as e:
+        print(f"[check_rem] 文件日志启用失败: {e}", flush=True)
+        return None
 
 # ── UID 元数据系统 ──────────────────────────────────
 try:
@@ -743,8 +769,15 @@ def rembg_one_file(dx, ai_file):
         proc = run_minimized(
             [sys.executable, str(MEITU_SCRIPT)],
             cwd=str(MEITU_SCRIPT.parent),
+            capture_output=True, timeout=600,
         )
         ok = proc.returncode == 0
+        # 把美图脚本的完整输出写入日志，便于排查「未产出结果」原因
+        if proc.stdout:
+            print("  [重去背] 美图 stdout:\n" + proc.stdout.decode('utf-8', errors='replace'), flush=True)
+        if proc.stderr:
+            print("  [重去背] 美图 stderr:\n" + proc.stderr.decode('utf-8', errors='replace'), flush=True)
+        print(f"  [重去背] 美图 returncode={proc.returncode}", flush=True)
     except Exception as e:
         ok = False
         print(f"  [重去背] {dx}/{ai_file} 美图运行异常: {e}", flush=True)
@@ -882,6 +915,12 @@ def batch_rembg(dx_files):
             capture_output=True, timeout=600,
         )
         ok = proc.returncode == 0
+        # 把美图脚本的完整输出写入日志，便于排查「未产出结果」原因
+        if proc.stdout:
+            print("  [批量去背] 美图 stdout:\n" + proc.stdout.decode('utf-8', errors='replace'), flush=True)
+        if proc.stderr:
+            print("  [批量去背] 美图 stderr:\n" + proc.stderr.decode('utf-8', errors='replace'), flush=True)
+        print(f"  [批量去背] 美图 returncode={proc.returncode}", flush=True)
     except subprocess.TimeoutExpired:
         ok = False
         print("  [批量去背] 美图超时", flush=True)
@@ -2321,6 +2360,9 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
 # ── 入口 ────────────────────────────────────────────
 def main():
+    # 先把 stdout/stderr 写入文件日志，避免最小化控制台后输出丢失
+    _setup_file_logging()
+
     # 首次启动若发现遗留锁/未恢复config，自动清理
     if CONFIG_BACKUP.exists():
         _restore_config()

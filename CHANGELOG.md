@@ -1,5 +1,28 @@
 # Y2 一体化控制系统 — 更新日志
 
+## v2.3.20 (2026-07-06) — 集成 Temu 核价控制台并修复长页滚动回顶
+
+### ✨ 新增
+
+- **Temu 核价页面 (`/pricing`)**
+  - 新增 `pricing.html` 前端页面，提供「完整自动核价」「仅核价不提交」「继续提交」「重试指定页」「导出结果」功能。
+  - 新增 `/api/pricing/*` 后端端点：启动核价、停止、状态轮询、导出结果、下载 Excel、发送 "好了" 信号。
+  - Bridge 通过子进程调用 `E:/Claude code/Temu自动化/核价/hengjia.py` 执行实际核价逻辑。
+  - 核价结果输出到 `C:\Users\Administrator\Desktop\核价档案`，支持下载 `.xlsx`。
+
+### 🔧 联动
+
+- **联动 `temu-hengjia-engine v5.2.1`**
+  - 修复长页核价时抽屉滚动回顶导致无法完成的问题。
+  - 根因：`utils/js_helpers.py` 中 `__scanAndCheckPage` / `__fillPage` 每次被调用都执行 `sc.scrollTop = 0`。
+  - 解决：移除 JS 内部重置，由 `core/engine.py` 在 `check_prices()` / `fill_prices()` 入口统一重置一次；后续循环调用从当前位置继续，直到真正到底。
+
+### 📚 文档与版本
+
+- 版本号统一升级到 v2.3.20：`lovart_bridge.py`、`lovart_bridge.bat`、`SKILL.md`、`ARCHITECTURE.md`、`CHANGELOG.md`、`REPRODUCIBILITY.md`。
+
+---
+
 ## v2.3.18 (2026-07-05) — WB 上款页面新增「复制未上款」按钮
 
 ### 🎨 UI

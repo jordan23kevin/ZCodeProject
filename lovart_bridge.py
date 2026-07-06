@@ -1,20 +1,21 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.19
+Y2 Bridge Server v2.3.20
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
 
-变更 v2.3.19：
-  - 修复批量上款 / 刷新在线已上款时弹出黑色控制台窗口的问题。
-  - `run_minimized()` 新增 `no_console` 参数；`wb_listing.py` / `check_online_listed.py` 启动时传 `no_console=True`。
-  - 使用 `CREATE_NO_WINDOW` 替代 `CREATE_NEW_CONSOLE`，并把 stdout/stderr 重定向到 `DEVNULL`。
-  - 这两个脚本本身会把日志写入 `D:\Semems WB\_debug`，不依赖控制台窗口。
+变更 v2.3.20：
+  - 集成 Temu 核价控制台 (`/pricing`) 与 Hermes 核价引擎。
+  - 新增 `/api/pricing/*` 端点：启动核价、停止、状态轮询、导出结果、下载 Excel、发送 "好了" 信号。
+  - 新增 `pricing.html` 前端页面，支持完整自动核价 / 仅核价不提交 / 继续提交 / 重试指定页 / 导出结果。
+  - 修复长页核价时滚动回顶导致无法完成的问题（联动 temu-hengjia-engine v5.2.1）。
+  - 核价结果输出到 `C:\Users\Administrator\Desktop\核价档案`。
 
-变更 v2.3.18：
+变更 v2.3.19：
   - `upload.html`（WB 上款页面）新增「📋 复制未上款」按钮。
   - 一键复制当前未上款列表中的所有 DX 款号到剪贴板（逗号分隔）。
   - 兼容 `navigator.clipboard` 与 `document.execCommand('copy')` 兜底。
@@ -242,6 +243,15 @@ AI_THUMB_DIR   = BASE_DIR / "_ai_review_thumbs"  # AI 对比页缩略图缓存
 LOVART_TRACK_FILE = Path("E:/Claude code/lovart-official/.processed_track.json")
 
 # ============================================================================
+# Temu 核价（Hermes）项目路径
+# ============================================================================
+PRICING_DIR        = Path("E:/Claude code/Temu自动化/核价")
+PRICING_ENTRYPOINT = PRICING_DIR / "entrypoint"
+PRICING_MAIN       = PRICING_DIR / "hengjia.py"
+PRICING_STATE_FILE = PRICING_DIR / "hengjia_state.json"
+PRICING_OUTPUT_DIR = Path(r"C:\Users\Administrator\Desktop\核价档案")
+
+# ============================================================================
 # 工具函数：处理 Lovart 去重记录
 # ============================================================================
 def _compute_sha256(path: str) -> str:
@@ -422,6 +432,25 @@ def _load_state():
                 task_state = saved
         except Exception:
             pass
+
+
+# ============================================================================
+# 核价任务状态（Hermes / Temu 核价）
+# ============================================================================
+pricing_task = {
+    "status": "idle",          # idle | running | completed | error | stopped
+    "mode": None,              # full | no-submit | continue | retry | export
+    "task_label": "",
+    "started_at": None,
+    "completed_at": None,
+    "proc": None,
+    "log": [],
+    "log_index": 0,            # 前端已读取到的位置
+    "processed_pages": 0,
+    "elapsed_sec": 0,
+    "page_records": [],
+}
+pricing_lock = threading.Lock()
 
 
 _lock = threading.Lock()
@@ -860,6 +889,20 @@ def empty_trash_to_system_recycle() -> int:
             except: pass
             count += 1
     return count
+
+
+def send_to_recycle_bin(path: str) -> bool:
+    """将指定文件直接送入系统回收站（可手动还原）"""
+    try:
+        fileop = SHFILEOPSTRUCTW()
+        fileop.hwnd = 0
+        fileop.wFunc = FO_DELETE
+        fileop.pFrom = str(path) + "\0"
+        fileop.pTo = None
+        fileop.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION
+        return ctypes.windll.shell32.SHFileOperationW(ctypes.byref(fileop)) == 0
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -1333,18 +1376,23 @@ def _role_from_ai_name(filename: str, dx: str) -> str:
 
 
 def _get_upload_thumb(dx: str, filename: str):
-    """返回 03_UPLOAD 缩略图路径（不存在则生成 220px 高）。
+    """返回 03_UPLOAD 缩略图路径（不存在或源文件已更新则重新生成 220px 高）。
     优先使用已缓存缩略图；透明 PNG 则合成白底。"""
-    if "/" in filename or "\\" in filename:
+    if "/" in filename or "\\" in filename or not re.match(r"^DX\d+$", dx):
         return None
     src = PROJECTS_DIR / dx / "03_UPLOAD" / filename
     if not src.exists():
         return None
     UPLOAD_THUMB_DIR.mkdir(parents=True, exist_ok=True)
-    safe_name = filename.replace("/", "_").replace("\\", "_")
+    safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', filename)
     thumb_file = UPLOAD_THUMB_DIR / f"{dx}__{safe_name}.jpg"
+    # 缓存有效：缩略图存在且严格比源文件新（mtime 相等时认为可能已更新，重新生成）
     if thumb_file.exists():
-        return thumb_file
+        try:
+            if thumb_file.stat().st_mtime > src.stat().st_mtime:
+                return thumb_file
+        except Exception:
+            pass
     try:
         from PIL import Image
         img = Image.open(src)
@@ -1386,9 +1434,9 @@ def _get_ai_thumb(dx: str, filename: str, source: str = "01_AI"):
     if not src.exists():
         return None
     AI_THUMB_DIR.mkdir(parents=True, exist_ok=True)
-    safe_name = filename.replace("/", "_").replace("\\", "_")
+    safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', filename)
     thumb_file = AI_THUMB_DIR / f"{dx}__{safe_name}.jpg"
-    if thumb_file.exists() and thumb_file.stat().st_mtime >= src.stat().st_mtime:
+    if thumb_file.exists() and thumb_file.stat().st_mtime > src.stat().st_mtime:
         return thumb_file
     try:
         from PIL import Image
@@ -2024,10 +2072,17 @@ def api_restore():
 
 @app.route('/api/open/recycle')
 def api_open_recycle():
-    """打开本地回收站目录"""
+    """打开本地回收站目录（前台显示）"""
     try:
         TRASH_DIR.mkdir(parents=True, exist_ok=True)
-        subprocess.Popen(f'start "" "{TRASH_DIR}"', shell=True)
+        try:
+            ctypes.windll.user32.AllowSetForegroundWindow(-1)
+        except Exception:
+            pass
+        try:
+            os.startfile(str(TRASH_DIR))
+        except Exception:
+            subprocess.Popen(f'start "" "{TRASH_DIR}"', shell=True)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -2755,6 +2810,28 @@ def api_upload_original():
     return r
 
 
+@app.route('/api/upload/delete', methods=['POST'])
+def api_upload_delete():
+    """将 03_UPLOAD 中的成品图删除到系统回收站"""
+    data = request.get_json(force=True, silent=True) or {}
+    dx = (data.get("dx") or request.args.get("dx", "")).strip()
+    filename = (data.get("file") or request.args.get("file", "")).strip()
+    if not re.match(r"^DX\d+$", dx) or not filename or "/" in filename or "\\" in filename:
+        return jsonify({"ok": False, "error": "参数非法"}), 400
+    target = PROJECTS_DIR / dx / "03_UPLOAD" / filename
+    if not target.exists():
+        return jsonify({"ok": False, "error": "文件不存在"}), 404
+    ok = send_to_recycle_bin(str(target))
+    if ok:
+        safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', filename)
+        for tf in UPLOAD_THUMB_DIR.glob(f"{dx}__{safe_name}.*"):
+            try:
+                tf.unlink()
+            except Exception:
+                pass
+    return jsonify({"ok": ok, "msg": f"已送回收站: {filename}" if ok else "删除失败"})
+
+
 def _read_completed_md():
     """读取 已上款货号_wb.md 中的所有 DX 货号（已弃用，仅兼容旧逻辑）"""
     md = BASE_DIR / "已上款货号_wb.md"
@@ -2916,6 +2993,12 @@ def api_open_dx():
     folder = PROJECTS_DIR / dx / sub
     if folder.exists():
         try:
+            # 允许非前台进程启动的窗口获得焦点，确保文件夹直接展示在前台
+            import ctypes
+            ctypes.windll.user32.AllowSetForegroundWindow(-1)
+        except Exception:
+            pass
+        try:
             os.startfile(str(folder))
         except Exception:
             subprocess.Popen(f'explorer.exe "{folder}"', shell=True)
@@ -3026,6 +3109,298 @@ def api_batch_upload():
         "force": force,
         "removed": removed,
     })
+
+
+# ============================================================================
+# Temu 核价（Hermes）集成
+# ============================================================================
+
+def _read_pricing_state():
+    """读取 Hermes 核价状态文件，失败返回空字典。"""
+    if not PRICING_STATE_FILE.exists():
+        return {}
+    try:
+        return json.loads(PRICING_STATE_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"[pricing] 读取状态失败: {e}", flush=True)
+        return {}
+
+
+def _pricing_log_reader(proc, mode):
+    """后台线程：读取核价脚本 stdout/stderr 并写入 pricing_task 日志。"""
+    def _read_stream(stream, kind):
+        try:
+            for raw in iter(stream.readline, b""):
+                # Hermes 脚本在 PIPE 下受 PYTHONIOENCODING=utf-8 影响输出 UTF-8；优先 UTF-8，失败回退 GBK
+                line = None
+                for enc in ("utf-8", "gbk", "gb2312"):
+                    try:
+                        line = raw.decode(enc, errors="strict").rstrip("\r\n")
+                        break
+                    except Exception:
+                        continue
+                if line is None:
+                    line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                if not line:
+                    continue
+                with pricing_lock:
+                    pricing_task["log"].append({"line": line, "kind": kind})
+        except Exception as e:
+            with pricing_lock:
+                pricing_task["log"].append({"line": f"日志读取异常: {e}", "kind": "error"})
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    threads = []
+    if proc.stdout:
+        t = threading.Thread(target=_read_stream, args=(proc.stdout, ""), daemon=True)
+        t.start()
+        threads.append(t)
+    if proc.stderr:
+        t = threading.Thread(target=_read_stream, args=(proc.stderr, "error"), daemon=True)
+        t.start()
+        threads.append(t)
+
+    # 等待进程结束
+    rc = proc.wait()
+    for t in threads:
+        t.join(timeout=2)
+
+    elapsed = 0
+    if pricing_task.get("started_at"):
+        try:
+            elapsed = int((datetime.now() - datetime.fromisoformat(pricing_task["started_at"])).total_seconds())
+        except Exception:
+            pass
+
+    with pricing_lock:
+        pricing_task["elapsed_sec"] = elapsed
+        state = _read_pricing_state()
+        pricing_task["page_records"] = state.get("page_records", [])
+        pricing_task["processed_pages"] = len(pricing_task["page_records"])
+        if pricing_task["status"] == "running":
+            if rc == 0:
+                pricing_task["status"] = "completed"
+                pricing_task["task_label"] = f"{mode} 完成"
+            else:
+                pricing_task["status"] = "error"
+                pricing_task["task_label"] = f"{mode} 退出码 {rc}"
+        pricing_task["completed_at"] = datetime.now().isoformat()
+        pricing_task["proc"] = None
+
+
+def _start_pricing_script(mode, args, label):
+    """通用启动 Hermes 核价子进程。"""
+    with pricing_lock:
+        if pricing_task.get("status") == "running" and pricing_task.get("proc") and pricing_task["proc"].poll() is None:
+            return {"error": "已有核价任务在运行，请先停止"}, 409
+
+        pricing_task["status"] = "running"
+        pricing_task["mode"] = mode
+        pricing_task["task_label"] = label
+        pricing_task["started_at"] = datetime.now().isoformat()
+        pricing_task["completed_at"] = None
+        pricing_task["log"] = [{"line": f"[{datetime.now().strftime('%H:%M:%S')}] 启动: {label}", "kind": ""}]
+        pricing_task["log_index"] = 0
+        pricing_task["processed_pages"] = 0
+        pricing_task["elapsed_sec"] = 0
+        pricing_task["page_records"] = []
+
+    if not PRICING_DIR.exists():
+        return {"error": f"核价项目目录不存在: {PRICING_DIR}"}, 404
+
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+
+    try:
+        proc = subprocess.Popen(
+            args,
+            cwd=str(PRICING_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=1,
+            env=env,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except Exception as e:
+        with pricing_lock:
+            pricing_task["status"] = "error"
+            pricing_task["task_label"] = f"启动失败: {e}"
+            pricing_task["completed_at"] = datetime.now().isoformat()
+            pricing_task["proc"] = None
+        return {"error": f"启动脚本失败: {e}"}, 500
+
+    with pricing_lock:
+        pricing_task["proc"] = proc
+
+    threading.Thread(target=_pricing_log_reader, args=(proc, mode), daemon=True).start()
+    return {"ok": True, "msg": f"已启动 {label}"}, 200
+
+
+@app.route('/pricing')
+def pricing_page():
+    """Temu 核价页面。"""
+    return send_file(str(Path(__file__).parent / 'pricing.html'))
+
+
+@app.route('/api/pricing/start', methods=['POST'])
+def api_pricing_start():
+    """启动完整核价或仅核价不提交。
+
+    body: {"mode": "full" | "no-submit"}
+    """
+    data = request.get_json(silent=True) or {}
+    mode = data.get("mode", "full")
+    if mode == "no-submit":
+        args = [get_python(), str(PRICING_MAIN), "--no-submit"]
+        label = "仅核价不提交"
+    else:
+        args = [get_python(), str(PRICING_MAIN)]
+        label = "完整自动核价"
+    resp, code = _start_pricing_script(mode, args, label)
+    return jsonify(resp), code
+
+
+@app.route('/api/pricing/continue', methods=['POST'])
+def api_pricing_continue():
+    """从已填价状态继续提交。"""
+    script = PRICING_ENTRYPOINT / "continue_run.py"
+    if not script.exists():
+        return jsonify({"error": f"脚本不存在: {script}"}), 404
+    resp, code = _start_pricing_script("continue", [get_python(), str(script)], "继续提交")
+    return jsonify(resp), code
+
+
+@app.route('/api/pricing/retry', methods=['POST'])
+def api_pricing_retry():
+    """重试指定页。body: {"pages": "2 5"}。"""
+    data = request.get_json(silent=True) or {}
+    pages = data.get("pages", "").strip()
+    if not pages:
+        return jsonify({"error": "请输入页码"}), 400
+    script = PRICING_ENTRYPOINT / "retry_pages.py"
+    if not script.exists():
+        return jsonify({"error": f"脚本不存在: {script}"}), 404
+    pages_list = pages.split()
+    args = [get_python(), str(script)] + pages_list
+    resp, code = _start_pricing_script("retry", args, f"重试页 {pages}")
+    return jsonify(resp), code
+
+
+@app.route('/api/pricing/export', methods=['POST'])
+def api_pricing_export():
+    """导出核价结果到 Excel。"""
+    script = PRICING_ENTRYPOINT / "export_prices.py"
+    if not script.exists():
+        return jsonify({"error": f"脚本不存在: {script}"}), 404
+    resp, code = _start_pricing_script("export", [get_python(), str(script)], "导出核价结果")
+    return jsonify(resp), code
+
+
+@app.route('/api/pricing/stop', methods=['POST'])
+def api_pricing_stop():
+    """停止当前核价任务。"""
+    with pricing_lock:
+        proc = pricing_task.get("proc")
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            except Exception as e:
+                return jsonify({"error": f"停止失败: {e}"}), 500
+        pricing_task["status"] = "stopped"
+        pricing_task["task_label"] = "已停止"
+        pricing_task["completed_at"] = datetime.now().isoformat()
+        pricing_task["proc"] = None
+    return jsonify({"ok": True, "msg": "已停止核价任务"})
+
+
+@app.route('/api/pricing/status')
+def api_pricing_status():
+    """获取核价任务状态、增量日志和分页记录。"""
+    with pricing_lock:
+        state = _read_pricing_state()
+        page_records = state.get("page_records", [])
+        processed = len(page_records)
+
+        # 计算运行时长
+        elapsed = pricing_task.get("elapsed_sec", 0)
+        if pricing_task.get("status") == "running" and pricing_task.get("started_at"):
+            try:
+                elapsed = int((datetime.now() - datetime.fromisoformat(pricing_task["started_at"])).total_seconds())
+            except Exception:
+                pass
+
+        # 返回未读取过的日志（使用绝对长度作为下标，避免追加日志时漏读）
+        idx = pricing_task.get("log_index", 0)
+        all_logs = pricing_task.get("log", [])
+        logs = all_logs[idx:]
+        pricing_task["log_index"] = len(all_logs)
+
+        return jsonify({
+            "status": pricing_task.get("status", "idle"),
+            "mode": pricing_task.get("mode"),
+            "task_label": pricing_task.get("task_label", ""),
+            "task": pricing_task.get("task_label", ""),
+            "started_at": pricing_task.get("started_at"),
+            "completed_at": pricing_task.get("completed_at"),
+            "processed_pages": processed,
+            "elapsed_sec": elapsed,
+            "page_records": page_records,
+            "log": logs,
+        })
+
+
+@app.route('/api/pricing/result-files')
+def api_pricing_result_files():
+    """列出 OUTPUT_DIR 中的核价 Excel 结果文件。"""
+    files = []
+    if PRICING_OUTPUT_DIR.exists():
+        for p in sorted(PRICING_OUTPUT_DIR.glob("*.xlsx"), key=lambda x: x.stat().st_mtime, reverse=True):
+            size = p.stat().st_size
+            size_str = f"{size/1024/1024:.2f} MB" if size > 1024*1024 else f"{size/1024:.1f} KB"
+            files.append({
+                "name": p.name,
+                "path": str(p),
+                "size": size_str,
+                "mtime": datetime.fromtimestamp(p.stat().st_mtime).isoformat(),
+            })
+    return jsonify({"files": files})
+
+
+@app.route('/api/pricing/download')
+def api_pricing_download():
+    """下载核价结果 Excel 文件。"""
+    filename = request.args.get("file", "").strip()
+    if not filename:
+        return jsonify({"error": "请指定文件名"}), 400
+    # 安全校验：只取文件名，不允许路径穿越
+    filename = os.path.basename(filename)
+    if not filename.endswith(".xlsx"):
+        return jsonify({"error": "仅支持 .xlsx 文件"}), 400
+    path = PRICING_OUTPUT_DIR / filename
+    if not path.exists():
+        return jsonify({"error": "文件不存在"}), 404
+    return send_file(str(path), as_attachment=True, download_name=filename)
+
+
+@app.route('/api/pricing/signal', methods=['POST'])
+def api_pricing_signal():
+    """创建 go.signal 文件，通知 Hermes 脚本用户已准备好开始核价。"""
+    signal_path = PRICING_DIR / "go.signal"
+    try:
+        signal_path.write_text("go", encoding="utf-8")
+        exists = signal_path.exists()
+        return jsonify({"ok": True, "msg": "已发送 '好了' 信号，核价脚本将继续运行", "path": str(signal_path), "exists": exists})
+    except Exception as e:
+        return jsonify({"error": f"创建 signal 文件失败: {e}"}), 500
 
 
 # ============================================================================
@@ -3352,7 +3727,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.19              ║")
+    print("║   Y2 Bridge Server v2.3.20              ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")

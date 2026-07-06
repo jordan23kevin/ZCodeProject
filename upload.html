@@ -9,15 +9,15 @@
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
   h1{text-align:center;font-size:32px;margin:0 0 16px}
   h1 .v{font-size:15px;color:#666;font-weight:normal;margin-left:8px}
-  .toolbar{text-align:center;margin-bottom:18px;position:sticky;top:0;background:#1a1a1a;padding:12px 0;z-index:20;border-bottom:1px solid #333}
-  .toolbar input,.toolbar select{padding:11px 16px;font-size:16px;border-radius:5px;border:1px solid #555;background:#2a2a2a;color:#eee;margin-left:8px}
-  .toolbar button{padding:11px 20px;font-size:16px;cursor:pointer;background:#2196F3;color:#fff;border:none;border-radius:5px;margin-left:8px;font-weight:600}
+  .toolbar{text-align:center;margin-bottom:18px;position:sticky;top:0;background:#1a1a1a;padding:12px 0;z-index:20;border-bottom:1px solid #333;display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:8px}
+  .toolbar input,.toolbar select{padding:11px 16px;font-size:16px;border-radius:5px;border:1px solid #555;background:#2a2a2a;color:#eee}
+  .toolbar button{padding:11px 20px;font-size:16px;cursor:pointer;background:#2196F3;color:#fff;border:none;border-radius:5px;font-weight:600}
   .toolbar button:hover{background:#1976D2}
   .toolbar button:disabled{opacity:.45;cursor:not-allowed}
-  .toolbar label{color:#eee;cursor:pointer;user-select:none;margin-left:10px;font-size:16px}
+  .toolbar label{color:#eee;cursor:pointer;user-select:none;font-size:16px}
   .btn-upload{background:#4CAF50 !important}
   .btn-upload:hover:not(:disabled){background:#388e3c !important}
-  .toolbar .cnt{color:#aaa;margin-left:14px;font-size:15px}
+  .toolbar .cnt{color:#aaa;font-size:15px}
 
   .progress-panel{display:none;background:#252525;border:1px solid #444;border-radius:10px;padding:16px 20px;margin:0 auto 22px;max-width:1200px}
   .progress-panel.active{display:block}
@@ -30,7 +30,7 @@
 
   .section-title{font-size:22px;font-weight:700;margin:26px 0 14px;padding-bottom:8px;border-bottom:2px solid #333}
   .section-title .sub{font-size:14px;color:#888;font-weight:normal;margin-left:10px}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(560px,1fr));gap:20px;max-width:1920px;margin:0 auto}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(520px,1fr));gap:16px;max-width:2500px;margin:0 auto}
   .card{background:#1e1e1e;border-radius:12px;border:1px solid #333;overflow:hidden}
   .card.completed{opacity:.72;border-color:#2e4a2e}
   .card-head{display:flex;align-items:center;gap:12px;padding:14px 18px;background:#252525;border-bottom:1px solid #333}
@@ -43,9 +43,12 @@
   .up-group-header{display:flex;align-items:center;gap:8px}
   .up-group-imgs{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   .up-item{display:flex;flex-direction:column;align-items:center}
-  .up-thumb{width:100%;height:260px;border-radius:8px;overflow:hidden;background:#fff;cursor:pointer;position:relative;border:1px solid #333}
-  .up-thumb img{width:100%;height:100%;object-fit:contain;transition:transform .15s}
+  .up-thumb{width:100%;aspect-ratio:1/1;height:auto;border-radius:8px;overflow:hidden;background:#fff;cursor:pointer;position:relative;border:1px solid #333}
+  .up-thumb img{width:100%;height:100%;object-fit:contain;transition:transform .15s;display:block}
   .up-thumb:hover img{transform:scale(1.05)}
+  .up-thumb .del-overlay{position:absolute;top:4px;right:4px;width:26px;height:26px;background:#e53935;color:#fff;border:none;border-radius:4px;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:5}
+  .up-thumb .del-overlay:hover{background:#b71c1c}
+  .up-item.deleted{opacity:.3}
   .up-label{color:#aaa;font-size:15px;margin-top:7px;text-align:center;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .badge{display:inline-block;font-size:13px;font-weight:bold;padding:3px 9px;border-radius:4px;margin-right:5px}
   .badge-bw{background:#9c27b0;color:#fff}
@@ -76,6 +79,7 @@
     <input type="checkbox" id="forceReupload" style="width:20px;height:20px;accent-color:#ff9800;vertical-align:middle;"> 强制重新上款
   </label>
   <button class="btn-upload" onclick="batchUpload()" id="uploadBtn" disabled>📤 批量上传 (0)</button>
+  <button onclick="openRecycleBin()" title="打开系统回收站" style="background:#607d8b;">🗑 回收站</button>
   <span class="cnt" id="cnt">0 款</span>
 </div>
 
@@ -114,6 +118,41 @@ function showToast(m){
   var t=document.getElementById('toast');
   t.textContent=m;t.style.display='block';
   setTimeout(function(){t.style.display='none';},3500);
+}
+
+function copyDx(dx){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(dx).then(function(){showToast('已复制 '+dx);}).catch(function(){showToast('复制失败，请手动复制');});
+  }else{
+    var ta=document.createElement('textarea');
+    ta.value=dx;ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();
+    try{document.execCommand('copy');showToast('已复制 '+dx);}catch(e){showToast('复制失败');}
+    document.body.removeChild(ta);
+  }
+}
+
+function delUploadImg(btn,dx,file){
+  if(!confirm('删除 '+dx+'/'+file+' ？（送回收站，可撤销）'))return;
+  fetch('/api/upload/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx:dx,file:file})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      showToast(d.msg||d.error||'未知结果');
+      if(d.ok){
+        var item=btn.closest('.up-item');
+        if(item) item.classList.add('deleted');
+      }
+    }).catch(function(e){showToast('❌ 请求失败: '+e);});
+}
+
+function openRecycleBin(){
+  fetch('/api/open/recycle').then(function(r){return r.json();}).then(function(d){
+    if(d.ok){
+      showToast('🗑 已打开回收站');
+    }else{
+      showToast('❌ '+(d.error||'打开失败'));
+    }
+  }).catch(function(){showToast('❌ 打开回收站请求失败');});
 }
 
 var allProjects=[];
@@ -193,9 +232,11 @@ function buildCard(p){
     if(!groups[g])return;
     var thumbs=groups[g].map(function(f){
       var ts=f.mtime;
+      var safeFile=f.name.replace(/'/g,"\\'");
       return '<div class="up-item">'
-        +'<div class="up-thumb cell" data-src="/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'">'
-        +'<img src="/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts+'" loading="lazy" decoding="async">'
+        +'<div class="up-thumb cell" data-src="/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts+'" onclick="openDxFolder(\''+p.dx+'\')" title="点击打开 '+p.dx+'/03_UPLOAD">'
+        +'<button class="del-overlay" onclick="event.stopPropagation();delUploadImg(this,\''+p.dx+'\',\''+safeFile+'\')" title="删除成品图">×</button>'
+        +'<img src="/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts+'" loading="lazy" decoding="async" onerror="this.onerror=null;this.src=\'/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts+'\'">'
         +'</div>'
         +'<div class="up-label" title="'+f.name+'">'+upLabel(f.name,p.dx)+'</div>'
         +'</div>';
@@ -213,7 +254,7 @@ function buildCard(p){
   return '<div class="card" data-dx="'+p.dx+'" id="card-'+p.dx+'">'
     +'<div class="card-head">'
     +'<input type="checkbox" class="dx-check" data-dx="'+p.dx+'" onchange="updateUploadBtn()">'
-    +'<span class="dxname" onclick="openDxFolder(\''+p.dx+'\')">'+p.dx+'</span>'
+    +'<span class="dxname" onclick="copyDx(\''+p.dx+'\')" title="点击复制款号">'+p.dx+'</span>'
     +onlineBadge
     +'<span class="pcount">'+(p.files?p.files.length:0)+' 张'+doneInfo+'</span>'
     +'</div>'

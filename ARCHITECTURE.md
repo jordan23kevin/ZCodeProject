@@ -1,7 +1,27 @@
-# Y2 系统架构文档 v2.3.19
+# Y2 系统架构文档 v2.3.20
 
-> 工程类型: 图像生产血缘数据库 + 控制面板 + 贴图成品流水线 + AI 生图对比复审
+> 工程类型: 图像生产血缘数据库 + 控制面板 + 贴图成品流水线 + AI 生图对比复审 + Temu 核价集成
 > 遵循: B+ 四层血缘闭环架构
+
+---
+
+## v2.3.20 变更
+
+本次版本集成 Temu 核价控制台：
+
+- **新增 `/pricing` 页面**
+  - `pricing.html` 作为独立前端，通过 `/api/pricing/*` 与 Bridge 通信。
+  - 支持完整自动核价、仅核价不提交、继续提交、重试指定页、导出结果。
+
+- **Bridge 端集成 Hermes 核价引擎**
+  - `lovart_bridge.py` 中新增 `PRICING_DIR` 等路径常量，指向 `E:/Claude code/Temu自动化/核价`。
+  - 新增 `_start_pricing_script()` 通用子进程启动器，调用 `hengjia.py` / `continue_run.py` / `retry_pages.py` / `export_prices.py`。
+  - 新增 `pricing_task` 状态字典与 `pricing_lock`，支持前端轮询实时日志、分页记录、处理进度。
+  - 核价状态通过读取 `hengjia_state.json#page_records` 同步。
+
+- **修复长页滚动回顶问题（联动 temu-hengjia-engine v5.2.1）**
+  - 根因：`utils/js_helpers.py` 的 JS 辅助函数每次 `_eval()` 调用都重置抽屉滚动到顶部。
+  - 解决：JS 内部不再重置，改由 `core/engine.py` 在步骤入口统一重置一次，后续调用从当前位置继续。
 
 ---
 

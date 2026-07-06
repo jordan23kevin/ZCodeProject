@@ -1,7 +1,7 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.3.19` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.0`
-> 最后更新: 2026-07-05
+> 对应版本: `lovart_bridge.py v2.3.20` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.0` + `temu-hengjia-engine v5.2.1`
+> 最后更新: 2026-07-06
 
 ---
 
@@ -13,6 +13,7 @@
 | lovart-official | `E:\Claude code\lovart-official` | `https://github.com/jordan23kevin/lovart-official.git` | `main` | Lovart 生图管线 |
 | ps（贴图流水线） | `E:\Claude code\ps` | （未纳入本次推送） | — | PS 贴图 + BW 合成 |
 | wb上款 | `E:\Claude code\wb上款` | `https://github.com/jordan23kevin/wb-listing.git` | `main` | 批量上款 |
+| temu-hengjia-engine | `E:\Claude code\Temu自动化\核价` | `https://github.com/jordan23kevin/temu-hengjia-engine.git` | `main` | Temu 批量核价引擎 |
 
 ---
 
@@ -31,6 +32,10 @@ git pull origin main
 
 # wb上款
 cd "E:\Claude code\wb上款"
+git pull origin main
+
+# Temu 核价引擎
+cd "E:\Claude code\Temu自动化\核价"
 git pull origin main
 ```
 
@@ -199,7 +204,18 @@ git checkout v1.3.23
 
 ---
 
-## 8. 提交历史
+## 8. 本次更新关键点（v2.3.20 / temu-hengjia-engine v5.2.1）
+
+| 问题 | 根因 | 解决方案 | 文件位置 |
+|------|------|----------|----------|
+| Temu 核价无统一入口 | 核价脚本独立运行，无 Web 控制台 | Bridge 新增 `/pricing` 页面 + `/api/pricing/*` 端点，子进程调用 `hengjia.py` | `lovart_bridge.py` / `pricing.html` |
+| 核价时长页无法完成 | `utils/js_helpers.py` 中 JS 辅助函数每次 `_eval()` 都 `sc.scrollTop = 0` 重置到顶部 | 移除 JS 内部重置，由 `core/engine.py` 入口 `_reset_scroll()` 统一重置；循环调用从当前位置继续 | `temu-hengjia-engine/utils/js_helpers.py` / `core/engine.py` |
+| 核价结果散落 | 输出目录不固定 | 统一输出到 `C:\Users\Administrator\Desktop\核价档案`，Bridge 提供下载 API | `lovart_bridge.py` |
+| 版本号不一致 | `lovart_bridge.bat` 标题/横幅与 Python 端不一致 | 全部统一为 v2.3.20 | `lovart_bridge.py` / `lovart_bridge.bat` |
+
+---
+
+## 9. 提交历史
 
 ```bash
 # ZCodeProject
@@ -207,4 +223,7 @@ git log --oneline -5
 
 # lovart-official
 cd "E:\Claude code\lovart-official" && git log --oneline -5
+
+# temu-hengjia-engine
+cd "E:\Claude code\Temu自动化\核价" && git log --oneline -5
 ```
