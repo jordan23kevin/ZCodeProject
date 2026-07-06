@@ -270,6 +270,12 @@ PRICING_STATE_FILE = PRICING_DIR / "hengjia_state.json"
 PRICING_OUTPUT_DIR = Path(r"C:\Users\Administrator\Desktop\核价档案")
 
 # ============================================================================
+# Temu 建议零售价填写项目路径
+# ============================================================================
+RETAIL_PRICE_DIR   = Path("E:/Claude code/WB Lovart")
+RETAIL_PRICE_SCRIPT = RETAIL_PRICE_DIR / "建议零售价.js"
+
+# ============================================================================
 # Temu 报活动项目路径
 # ============================================================================
 ACTIVITY_DIR        = 'E:/Claude code/Temu自动化/报活动'
@@ -490,6 +496,22 @@ activity_task = {
     "log_index": 0,            # 前端已读取到的位置
 }
 activity_lock = threading.Lock()
+
+
+# ============================================================================
+# 建议零售价填写任务状态
+# ============================================================================
+retail_price_task = {
+    "status": "idle",          # idle | running | completed | error | stopped
+    "task_label": "",
+    "started_at": None,
+    "completed_at": None,
+    "proc": None,
+    "log": [],
+    "log_index": 0,            # 前端已读取到的位置
+    "elapsed_sec": 0,
+}
+retail_price_lock = threading.Lock()
 
 
 _lock = threading.Lock()
@@ -3608,6 +3630,121 @@ def _start_activity_script(label):
 
     threading.Thread(target=_activity_log_reader, args=(proc,), daemon=True).start()
     return {"success": True, "message": f"已启动 {label}"}, 200
+
+
+def _retail_price_log_reader(proc):
+    """后台线程：读取建议零售价脚本 stdout/stderr 并写入 retail_price_task 日志。"""
+    def _read_stream(stream, kind):
+        try:
+            for raw in iter(stream.readline, b""):
+                line = None
+                for enc in ("utf-8", "gbk", "gb2312"):
+                    try:
+                        line = raw.decode(enc, errors="strict").rstrip("\r\n")
+                        break
+                    except Exception:
+                        continue
+                if line is None:
+                    line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                if not line:
+                    continue
+                with retail_price_lock:
+                    retail_price_task["log"].append({"line": line, "kind": kind})
+        except Exception as e:
+            with retail_price_lock:
+                retail_price_task["log"].append({"line": f"日志读取异常: {e}", "kind": "error"})
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    threads = []
+    if proc.stdout:
+        t = threading.Thread(target=_read_stream, args=(proc.stdout, ""), daemon=True)
+        t.start()
+        threads.append(t)
+    if proc.stderr:
+        t = threading.Thread(target=_read_stream, args=(proc.stderr, "error"), daemon=True)
+        t.start()
+        threads.append(t)
+
+    rc = proc.wait()
+    for t in threads:
+        t.join(timeout=2)
+
+    elapsed = 0
+    if retail_price_task.get("started_at"):
+        try:
+            elapsed = int((datetime.now() - datetime.fromisoformat(retail_price_task["started_at"])).total_seconds())
+        except Exception:
+            pass
+
+    with retail_price_lock:
+        retail_price_task["elapsed_sec"] = elapsed
+        if retail_price_task["status"] == "running":
+            if rc == 0:
+                retail_price_task["status"] = "completed"
+                retail_price_task["task_label"] = "填写完成"
+            else:
+                retail_price_task["status"] = "error"
+                retail_price_task["task_label"] = f"填写失败 (退出码 {rc})"
+        retail_price_task["completed_at"] = datetime.now().isoformat()
+        retail_price_task["proc"] = None
+
+
+def _start_retail_price_script(label):
+    """通用启动 Temu 建议零售价填写子进程。"""
+    with retail_price_lock:
+        if retail_price_task.get("status") == "running" and retail_price_task.get("proc") and retail_price_task["proc"].poll() is None:
+            return {"error": "已有建议零售价任务在运行，请先停止"}, 409
+
+        retail_price_task["status"] = "running"
+        retail_price_task["task_label"] = label
+        retail_price_task["started_at"] = datetime.now().isoformat()
+        retail_price_task["completed_at"] = None
+        retail_price_task["log"] = [{"line": f"[{datetime.now().strftime('%H:%M:%S')}] 启动: {label}", "kind": ""}]
+        retail_price_task["log_index"] = 0
+        retail_price_task["elapsed_sec"] = 0
+
+    if not RETAIL_PRICE_DIR.exists():
+        with retail_price_lock:
+            retail_price_task["status"] = "error"
+            retail_price_task["completed_at"] = datetime.now().isoformat()
+        return {"error": f"建议零售价项目目录不存在: {RETAIL_PRICE_DIR}"}, 404
+
+    if not RETAIL_PRICE_SCRIPT.exists():
+        with retail_price_lock:
+            retail_price_task["status"] = "error"
+            retail_price_task["completed_at"] = datetime.now().isoformat()
+        return {"error": f"建议零售价脚本不存在: {RETAIL_PRICE_SCRIPT}"}, 404
+
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+
+    try:
+        proc = subprocess.Popen(
+            ["node", str(RETAIL_PRICE_SCRIPT), "--no-close-browser"],
+            cwd=str(RETAIL_PRICE_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=1,
+            env=env,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except Exception as e:
+        with retail_price_lock:
+            retail_price_task["status"] = "error"
+            retail_price_task["completed_at"] = datetime.now().isoformat()
+            retail_price_task["proc"] = None
+        return {"error": f"启动脚本失败: {e}"}, 500
+
+    with retail_price_lock:
+        retail_price_task["proc"] = proc
+
+    threading.Thread(target=_retail_price_log_reader, args=(proc,), daemon=True).start()
+    return {"ok": True, "msg": f"已启动 {label}"}, 200
 
 
 @app.route('/activity')
