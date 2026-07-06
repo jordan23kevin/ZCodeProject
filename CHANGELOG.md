@@ -8,7 +8,7 @@
   - 新增 `pricing.html` 前端页面，提供「完整自动核价」「仅核价不提交」「继续提交」「重试指定页」「导出结果」功能。
   - 新增 `/api/pricing/*` 后端端点：启动核价、停止、状态轮询、导出结果、下载 Excel、发送 "好了" 信号。
   - Bridge 通过子进程调用 `E:/Claude code/Temu自动化/核价/hengjia.py` 执行实际核价逻辑。
-  - 核价结果输出到 `C:\Users\Administrator\Desktop\核价档案`，支持下载 `.xlsx`。
+  - 核价结果输出到 `C:/Users/Administrator/Desktop/核价档案`，支持下载 `.xlsx`。
 
 ### 🔧 联动
 

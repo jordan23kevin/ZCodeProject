@@ -210,7 +210,7 @@ git checkout v1.3.23
 |------|------|----------|----------|
 | Temu 核价无统一入口 | 核价脚本独立运行，无 Web 控制台 | Bridge 新增 `/pricing` 页面 + `/api/pricing/*` 端点，子进程调用 `hengjia.py` | `lovart_bridge.py` / `pricing.html` |
 | 核价时长页无法完成 | `utils/js_helpers.py` 中 JS 辅助函数每次 `_eval()` 都 `sc.scrollTop = 0` 重置到顶部 | 移除 JS 内部重置，由 `core/engine.py` 入口 `_reset_scroll()` 统一重置；循环调用从当前位置继续 | `temu-hengjia-engine/utils/js_helpers.py` / `core/engine.py` |
-| 核价结果散落 | 输出目录不固定 | 统一输出到 `C:\Users\Administrator\Desktop\核价档案`，Bridge 提供下载 API | `lovart_bridge.py` |
+| 核价结果散落 | 输出目录不固定 | 统一输出到 `C:/Users/Administrator/Desktop/核价档案`，Bridge 提供下载 API | `lovart_bridge.py` |
 | 版本号不一致 | `lovart_bridge.bat` 标题/横幅与 Python 端不一致 | 全部统一为 v2.3.20 | `lovart_bridge.py` / `lovart_bridge.bat` |
 
 ---
