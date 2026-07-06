@@ -3827,6 +3827,69 @@ def api_activity_status():
         })
 
 
+@app.route('/retail_price')
+def retail_price_page():
+    """Temu 建议零售价填写页面。"""
+    return send_file(str(Path(__file__).parent / 'retail_price.html'))
+
+
+@app.route('/api/retail_price/start', methods=['POST'])
+def api_retail_price_start():
+    """启动 Temu 建议零售价填写脚本。"""
+    resp, code = _start_retail_price_script("建议零售价填写")
+    return jsonify(resp), code
+
+
+@app.route('/api/retail_price/stop', methods=['POST'])
+def api_retail_price_stop():
+    """停止当前建议零售价填写任务。"""
+    with retail_price_lock:
+        proc = retail_price_task.get("proc")
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            except Exception as e:
+                return jsonify({"error": f"停止失败: {e}"}), 500
+        retail_price_task["status"] = "stopped"
+        retail_price_task["task_label"] = "已停止"
+        retail_price_task["completed_at"] = datetime.now().isoformat()
+        retail_price_task["proc"] = None
+    return jsonify({"ok": True, "msg": "已停止"})
+
+
+@app.route('/api/retail_price/status')
+def api_retail_price_status():
+    """获取建议零售价填写任务状态与增量日志。"""
+    with retail_price_lock:
+        idx = retail_price_task.get("log_index", 0)
+        all_logs = retail_price_task.get("log", [])
+        logs = all_logs[idx:]
+        retail_price_task["log_index"] = len(all_logs)
+
+        elapsed = 0
+        if retail_price_task.get("status") == "running" and retail_price_task.get("started_at"):
+            try:
+                elapsed = int((datetime.now() - datetime.fromisoformat(retail_price_task["started_at"])).total_seconds())
+            except Exception:
+                pass
+
+        raw_status = retail_price_task.get("status", "idle")
+        display_status = "idle" if raw_status == "stopped" else raw_status
+
+        return jsonify({
+            "status": display_status,
+            "task_label": retail_price_task.get("task_label", ""),
+            "started_at": retail_price_task.get("started_at"),
+            "completed_at": retail_price_task.get("completed_at"),
+            "elapsed_sec": elapsed,
+            "log": logs,
+        })
+
+
 # ============================================================================
 # 后台生图任务
 # ============================================================================
