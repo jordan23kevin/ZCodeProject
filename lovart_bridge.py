@@ -1098,6 +1098,7 @@ def _scan_upload_projects():
         up_dir = d / "03_UPLOAD"
         if not up_dir.is_dir():
             continue
+        dx = d.name
         files = []
         for f in sorted(up_dir.iterdir()):
             if not f.is_file():
@@ -1105,10 +1106,12 @@ def _scan_upload_projects():
             ext = f.suffix.lower()
             if ext not in ('.png', '.jpg', '.jpeg', '.webp'):
                 continue
-            files.append({"name": f.name, "mtime": int(f.stat().st_mtime)})
+            src_mtime = int(f.stat().st_mtime)
+            thumb = _upload_thumb_path(dx, f.name)
+            thumb_mtime = int(thumb.stat().st_mtime) if thumb.exists() else src_mtime
+            files.append({"name": f.name, "mtime": src_mtime, "thumb_mtime": thumb_mtime})
         if not files:
             continue
-        dx = d.name
         dx_date = _dx_dir_date(d)
         projects.append({"dx": dx, "date": dx_date, "files": files})
     return projects
@@ -1387,6 +1390,12 @@ def _role_from_ai_name(filename: str, dx: str) -> str:
     return ""
 
 
+def _upload_thumb_path(dx: str, filename: str) -> Path:
+    """返回 03_UPLOAD 缩略图缓存文件路径（不检查是否存在、不生成）。"""
+    safe_name = re.sub(r'[\\/*?:"<>|]', '_', filename)
+    return UPLOAD_THUMB_DIR / f"{dx}__{safe_name}.jpg"
+
+
 def _get_upload_thumb(dx: str, filename: str):
     """返回 03_UPLOAD 缩略图路径（不存在或源文件已更新则重新生成 220px 高）。
     优先使用已缓存缩略图；透明 PNG 则合成白底。"""
@@ -1396,8 +1405,7 @@ def _get_upload_thumb(dx: str, filename: str):
     if not src.exists():
         return None
     UPLOAD_THUMB_DIR.mkdir(parents=True, exist_ok=True)
-    safe_name = re.sub(r'[\\/*?:"<>|]', '_', filename)
-    thumb_file = UPLOAD_THUMB_DIR / f"{dx}__{safe_name}.jpg"
+    thumb_file = _upload_thumb_path(dx, filename)
     # 缓存有效：缩略图存在且严格比源文件新（mtime 相等时认为可能已更新，重新生成）
     if thumb_file.exists():
         try:

@@ -231,12 +231,13 @@ function buildCard(p){
   order.forEach(function(g){
     if(!groups[g])return;
     var thumbs=groups[g].map(function(f){
-      var ts=f.mtime;
+      var ts=f.thumb_mtime || f.mtime;
+      var origTs=f.mtime;
       var safeFile=f.name.replace(/'/g,"\\'");
       return '<div class="up-item">'
-        +'<div class="up-thumb cell" data-src="/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts+'" onclick="openDxFolder(\''+p.dx+'\')" title="点击打开 '+p.dx+'/03_UPLOAD">'
+        +'<div class="up-thumb cell" data-src="/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+origTs+'" onclick="openDxFolder(\''+p.dx+'\')" title="点击打开 '+p.dx+'/03_UPLOAD">'
         +'<button class="del-overlay" onclick="event.stopPropagation();delUploadImg(this,\''+p.dx+'\',\''+safeFile+'\')" title="删除成品图">×</button>'
-        +'<img src="/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts+'" loading="lazy" decoding="async" onerror="this.onerror=null;this.src=\'/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts+'\'">'
+        +'<img src="/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts+'" loading="lazy" decoding="async" onerror="this.onerror=null;this.src=\'/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+origTs+'\'">'
         +'</div>'
         +'<div class="up-label" title="'+f.name+'">'+upLabel(f.name,p.dx)+'</div>'
         +'</div>';

@@ -208,7 +208,7 @@ git checkout v1.3.23
 
 | 问题 | 根因 | 解决方案 | 文件位置 |
 |------|------|----------|----------|
-| WB 上款缩略图黑白错位 | `re.sub(r'[^A-Za-z0-9_.-]', '_', filename)` 把 `白`/`黑` 等中文统一替换为下划线，导致缓存文件名冲突 | safe_name 只替换 Windows 非法字符 `\ / * ? : " < > \|`，保留中文；清空旧缓存 | `lovart_bridge.py::_get_upload_thumb` / `_get_ai_thumb` |
+| WB 上款缩略图黑白错位 | ① `re.sub(r'[^A-Za-z0-9_.-]', '_', filename)` 把 `白`/`黑` 等中文统一替换为下划线，导致缓存文件名冲突；② 前端用源文件 mtime 作为缓存破坏参数，缩略图重建后浏览器仍用旧缓存 | ① safe_name 只替换 Windows 非法字符 `\ / * ? : " < > \|`，保留中文；② `/api/upload/projects` 返回 `thumb_mtime`，前端用其作为缩略图 URL 的 `t` 参数；清空旧缓存 | `lovart_bridge.py::_get_upload_thumb` / `_upload_thumb_path` / `_scan_upload_projects`、`upload.html` |
 | 点击上款图片后文件夹不前台弹出 | `os.startfile` 复用已存在的资源管理器窗口时不强制激活 | 新增 `_open_folder_front()`，打开后通过 `win32gui` 查找 `CabinetWClass` 窗口并 `SetForegroundWindow()` | `lovart_bridge.py::_open_folder_front` / `api_open_dx` / `api_open_recycle` |
 
 ---

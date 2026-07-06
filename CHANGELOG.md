@@ -4,12 +4,16 @@
 
 ### 🐛 修复
 
-- **修复 WB 上款页面缩略图黑白错位**
-  - 根因：`_get_upload_thumb` / `_get_ai_thumb` 使用 `re.sub(r'[^A-Za-z0-9_.-]', '_', filename)` 生成缓存文件名，
+- **彻底修复 WB 上款页面缩略图黑白错位**
+  - 根因 1：`_get_upload_thumb` 使用 `re.sub(r'[^A-Za-z0-9_.-]', '_', filename)` 生成缓存文件名，
     把文件名中的中文（白/黑）统一替换成下划线，导致 `DX_B_白T.jpg` 与 `DX_B_黑T.jpg` 映射到同一个缓存文件。
-  - 解决：safe_name 只替换 Windows 文件系统非法字符（`\ / * ? : " < > |`），保留中文；
+  - 解决 1：safe_name 只替换 Windows 文件系统非法字符（`\ / * ? : " < > |`），保留中文；
     同时清空 `D:\Semems WB\_upload_thumbs` 与 `_ai_review_thumbs` 中的旧错误缓存，重新加载页面时自动重建正确缩略图。
-  - 影响文件：`lovart_bridge.py`
+  - 根因 2：前端缩略图 URL 使用源文件 `mtime` 作为缓存破坏参数，但缩略图是后端独立生成的；
+    源文件未变时，即使缩略图缓存已重建，浏览器仍会复用旧的错误缩略图。
+  - 解决 2：`/api/upload/projects` 新增返回每个文件的 `thumb_mtime`；前端 `upload.html` 用 `thumb_mtime` 作为
+    缩略图 URL 的 `t` 参数，确保缩略图重建后浏览器立即刷新。
+  - 影响文件：`lovart_bridge.py`、`upload.html`
 
 - **修复点击上款图片/回收站按钮后文件夹不自动前台弹出**
   - 根因：`os.startfile` 打开已存在的资源管理器窗口时，Windows 不会强制激活窗口，导致窗口只在任务栏闪烁。
