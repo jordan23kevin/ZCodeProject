@@ -356,13 +356,37 @@ python check_rem.py
 # 打开 http://127.0.0.1:8765 或 http://127.0.0.1:8766
 ```
 
+## 刷新已上款增量游标机制（v2.4.0）
+
+「刷新已上款」从"全量覆盖/合并"升级为增量游标，兼顾速度与下架款清理。
+
+### 数据结构（D:\Semems WB\.wb_online_listed.json）
+
+| 字段 | 说明 |
+|---|---|
+| `dx_set` | 全量在线款集合（无序），供 /upload 页面判断 online_listed |
+| `ordered_list` | 上次抓到的前N条有序款号（最新在前），增量对比基准 |
+| `last_oldest_dx` | 边界游标 = 上次第300款，下次翻到此款为止 |
+| `last_removed` | 本次移除的下架款，便于排查 |
+| `mode` | incremental / deep |
+
+### 三种运行模式
+
+- **incremental（日常，默认）**：无 last_oldest → 全量建库；有 → 翻到边界款为止，`removed = set(prev_ordered) - fresh_set` 移除下架款，`dx_set = (prev_dx_set - removed) | fresh_set`
+- **deep（深度清理）**：全量翻完所有页覆盖 + 重置边界，清理盲区（边界款之后的更老款）
+
+### 前提与盲区
+
+- 前提：店小秘在线页排序稳定（按上架时间倒序）
+- 盲区：边界款之后的更老款默认未删，定期 deep 清理
+
 ## 可复现性清单
 
 完整复现/回滚步骤见 [`REPRODUCIBILITY.md`](./REPRODUCIBILITY.md)。
 
 要点：
 - 两个主仓库：`ZCodeProject`（Bridge / 控制台）和 `lovart-official`（生图管线）
-- 当前 Tag：`ZCodeProject v2.3.0`、`lovart-official v6.1`
+- 当前 Tag：`ZCodeProject v2.4.0`、`lovart-official v6.1`
 - Python 依赖：`flask`, `Pillow`, `requests`, `pywin32`, `pythoncom`, `numpy`
 - Photoshop 路径：`D:\Program Files\Adobe Photoshop 2025 v26.0\Adobe Photoshop 2025\Photoshop.exe`
 - 项目根目录：`D:\Semems WB\02_PROJECTS`

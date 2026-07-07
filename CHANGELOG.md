@@ -1,5 +1,27 @@
 # Y2 一体化控制系统 — 更新日志
 
+## v2.4.0 (2026-07-07) — 刷新已上款增量游标 + 轮询修复 + 深度清理
+
+### ✨ 新功能
+
+- **刷新已上款增量游标模式**（联动 check_online_listed.py v1.4.0）
+  - `.wb_online_listed.json` 新增 `ordered_list`（上次前N条有序款号）+ `last_oldest_dx`（边界游标）字段
+  - 日常刷新（incremental）：翻到上次边界款为止，`removed = set(prev_ordered) - fresh_set` 集合相减自动移除下架款；首次无边界则全量建库
+  - 深度清理（deep）：全量翻完所有页覆盖，重置边界，清理盲区
+  - `/api/upload/refresh-online-listed` 支持 `?mode=incremental|deep`，`/api/upload/projects` 返回 `online_mode`
+- **「🧹 深度清理」按钮**：全量覆盖移除所有下架款（约2分钟）
+
+### 🐛 修复
+
+- **「刷新已上款」前端轮询提前停止**：原停止条件 `online_count` 连续3次不变，无上款任务时 count 恒0导致9~12秒假完成；改为检测 `online_updated_at` 变化，json 真正更新才停止，最长等6分钟
+
+### 📚 文档与版本
+
+- 版本号 v2.3.23 → v2.4.0：`lovart_bridge.py`、`lovart_bridge.bat`、`upload.html`
+- 依赖：`check_online_listed.py v1.4.0` + `wb_listing.py v2.2.4`
+
+---
+
 ## v2.3.23 (2026-07-06) — 同步 wb上款 v2.2.2 窗口隔离修复
 
 ### 🐛 修复

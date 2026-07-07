@@ -1,12 +1,21 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.3.23
+Y2 Bridge Server v2.4.0
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.4.0：
+  - 刷新已上款改为增量游标模式（联动 check_online_listed.py v1.4.0）：
+    * json 新增 ordered_list / last_oldest_dx 字段，日常刷新翻到上次边界款为止，集合相减自动移除下架款
+    * 首次运行全量建库；深度清理模式全量覆盖重置边界
+    * /api/upload/refresh-online-listed 支持 ?mode=incremental|deep
+  - 修复「刷新已上款」前端轮询提前停止：停止条件改为检测 online_updated_at 变化，不再 9 秒假完成
+  - 新增「🧹 深度清理」按钮（全量覆盖，移除所有下架款）
+  - /api/upload/projects 返回 online_mode
 
 变更 v2.3.23：
   - 同步 wb上款 v2.2.2：
@@ -2847,7 +2856,7 @@ def api_upload_projects():
     online_set = _read_online_listed()
     for p in projects:
         p["online_listed"] = p.get("dx", "") in online_set
-    return jsonify({"ok": True, "projects": projects, "online_updated_at": _online_listed_updated_at()})
+    return jsonify({"ok": True, "projects": projects, "online_updated_at": _online_listed_updated_at(), "online_mode": _online_listed_mode()})
 
 
 @app.route('/api/upload/thumb')
@@ -2944,6 +2953,17 @@ def _online_listed_updated_at():
         return None
 
 
+def _online_listed_mode():
+    """返回在线已上款数据上次刷新的模式（quick/deep），供前端显示"""
+    if not ONLINE_LISTED_FILE.exists():
+        return None
+    try:
+        data = json.loads(ONLINE_LISTED_FILE.read_text(encoding="utf-8"))
+        return data.get("mode")
+    except Exception:
+        return None
+
+
 def _remove_from_completed_md(dx_list):
     """强制重新上款时，从 已上款货号_wb.md 中删除指定 DX 货号行。
     返回实际删除了哪些款号。"""
@@ -3023,7 +3043,15 @@ def api_upload_progress():
 
 @app.route('/api/upload/refresh-online-listed', methods=['POST'])
 def api_upload_refresh_online_listed():
-    """启动 check_online_listed.py，从店小秘在线产品页刷新真正已上款的 DX 集合"""
+    """启动 check_online_listed.py，从店小秘在线产品页刷新真正已上款的 DX 集合
+
+    mode=incremental（默认）：日常增量，翻到上次边界款为止，集合相减自动移除下架款；首次运行全量建库
+    mode=deep：深度清理，翻完所有页，全量覆盖（准确移除所有已下架款，并重置边界）
+    """
+    mode = (request.args.get("mode") or "incremental").lower()
+    if mode not in ("incremental", "deep"):
+        mode = "incremental"
+
     lock_file = BASE_DIR / ".check_online_listed.lock"
     if lock_file.exists():
         return jsonify({
@@ -3040,11 +3068,13 @@ def api_upload_refresh_online_listed():
         }), 404
 
     try:
-        proc = run_minimized([sys.executable, str(script_path)], wait=False, no_console=True)
+        proc = run_minimized([sys.executable, str(script_path), "--mode", mode], wait=False, no_console=True)
+        mode_label = "深度清理" if mode == "deep" else "增量刷新"
         return jsonify({
             "ok": True,
-            "msg": "已开始刷新在线已上款，请等待 30~120 秒后查看结果",
+            "msg": f"已开始刷新在线已上款（{mode_label}），完成后页面自动刷新",
             "pid": proc.pid,
+            "mode": mode,
         })
     except Exception as e:
         return jsonify({

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.3.0</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.4.0</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -62,7 +62,7 @@
 </style>
 </head>
 <body>
-<h1>WB 上款 <span class="v">v2.3.0</span></h1>
+<h1>WB 上款 <span class="v">v2.4.0</span></h1>
 <div class="toolbar">
   <select id="dateSel" onchange="switchDate(this.value)">
     <option value="">全部日期</option>
@@ -71,6 +71,7 @@
   <button onclick="filterCards()">🔍 搜索</button>
   <button onclick="refreshAll()">🔄 刷新</button>
   <button onclick="refreshOnlineListed()" id="refreshOnlineBtn">🌐 刷新已上款</button>
+  <button onclick="deepCleanOnlineListed()" id="deepCleanBtn" title="翻完所有页全量覆盖，准确移除已下架款（较慢，约2分钟）">🧹 深度清理</button>
   <button onclick="copyPendingSkus()" id="copyPendingBtn" title="复制当前未上款列表中的所有款号">📋 复制未上款</button>
   <label>
     <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)" style="width:20px;height:20px;accent-color:#4CAF50;vertical-align:middle;"> 全选
@@ -355,14 +356,13 @@ function refreshAll(){
 function refreshOnlineListed(){
   var btn=document.getElementById('refreshOnlineBtn');
   btn.disabled=true;btn.textContent='⏳ 刷新中…';
-  showToast('🌐 正在从店小秘在线产品页拉取已上款信息…');
+  showToast('🌐 正在增量刷新：翻到上次边界款为止，自动检测并移除下架款…');
   fetch('/api/upload/refresh-online-listed',{method:'POST'})
     .then(function(r){return r.json();})
     .then(function(d){
       showToast(d.ok?'✅ '+d.msg:'❌ '+(d.error||'未知错误'));
       if(d.ok){
-        // 轮询进度，等待在线数据更新
-        startOnlinePolling();
+        startOnlinePolling('incremental');
       }else{
         btn.disabled=false;btn.textContent='🌐 刷新已上款';
       }
@@ -372,27 +372,57 @@ function refreshOnlineListed(){
     });
 }
 
+function deepCleanOnlineListed(){
+  if(!confirm('深度清理将翻完店小秘在线页所有页（约2分钟），\n全量覆盖已上款列表，准确移除已下架款。\n\n期间请勿关闭浏览器。是否继续？'))return;
+  var btn=document.getElementById('deepCleanBtn');
+  btn.disabled=true;btn.textContent='⏳ 清理中…';
+  showToast('🧹 正在深度清理：翻完所有页，全量覆盖…');
+  fetch('/api/upload/refresh-online-listed?mode=deep',{method:'POST'})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      showToast(d.ok?'✅ '+d.msg:'❌ '+(d.error||'未知错误'));
+      if(d.ok){
+        startOnlinePolling('deep');
+      }else{
+        btn.disabled=false;btn.textContent='🧹 深度清理';
+      }
+    }).catch(function(e){
+      showToast('❌ 请求失败: '+e);
+      btn.disabled=false;btn.textContent='🧹 深度清理';
+    });
+}
+
 var onlinePollTimer=null;
-function startOnlinePolling(){
+function startOnlinePolling(modeLabel){
   if(onlinePollTimer)clearInterval(onlinePollTimer);
   var btn=document.getElementById('refreshOnlineBtn');
-  var lastCount=-1;
+  var deepBtn=document.getElementById('deepCleanBtn');
+  // 记录刷新前的 online_updated_at，json 真正更新过才视为完成
+  var prevUpdatedAt=(progressData&&progressData.online_updated_at)||'';
+  var startTime=Date.now();
   var stableRounds=0;
+  var updated=false;
+  // quick 最长等 120s，deep 最长等 240s
+  var maxWait=360000; // 统一6分钟，覆盖首次全量建库/深度清理最坏情况；正常增量几十秒即完成
+  var label=(modeLabel==='deep')?'深度清理':'在线已上款刷新';
   onlinePollTimer=setInterval(function(){
     Promise.all([loadProjects(), loadProgress()]).then(function(){
       renderCards();
       updateProgressPanel();
-      var onlineCount=progressData&&progressData.online_count||0;
-      if(onlineCount===lastCount){
+      var curUpdatedAt=(progressData&&progressData.online_updated_at)||'';
+      var now=Date.now();
+      if(curUpdatedAt && curUpdatedAt!==prevUpdatedAt){
+        updated=true;
         stableRounds++;
-        if(stableRounds>=3){
-          clearInterval(onlinePollTimer);onlinePollTimer=null;
-          btn.disabled=false;btn.textContent='🌐 刷新已上款';
-          showToast('✅ 在线已上款刷新完成：'+onlineCount+' 款');
-        }
-      }else{
-        lastCount=onlineCount;
-        stableRounds=0;
+      }else if(updated){
+        stableRounds++;
+      }
+      // json 已更新且再稳定 1 轮，或超过最大等待时间，都停止
+      if((updated && stableRounds>=1) || (now-startTime)>maxWait){
+        clearInterval(onlinePollTimer);onlinePollTimer=null;
+        btn.disabled=false;btn.textContent='🌐 刷新已上款';
+        if(deepBtn){deepBtn.disabled=false;deepBtn.textContent='🧹 深度清理';}
+        showToast(updated?('✅ '+label+'完成'):'⚠️ 等待超时，请稍后点「🔄 刷新」查看结果');
       }
     });
   },3000);
