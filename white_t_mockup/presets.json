@@ -2,12 +2,13 @@
   "templates": {
     "W3.psd": {
       "path": "D:\\Semems\\1胚衣\\白\\W3.psd",
-      "method": "legacy",
+      "method": "transform",
       "blend_mode": "multiply",
       "notes": "DX0533旧版PSD，带手部遮罩",
-      "target_height": 677,
-      "top_y": 449,
-      "center_x": 735
+      "scale": 0.40,
+      "rotation_degrees": 0.0,
+      "effective_top_y": 440,
+      "effective_center_x": 730
     },
     "1B.png": {
       "path": "D:\\Semems\\1胚衣\\白\\1B.png",
@@ -38,6 +39,16 @@
       "rotation_degrees": 2.0,
       "effective_top_y": 1011,
       "effective_center_x": 576
+    },
+    "白正2.jpg": {
+      "path": "D:\\Semems\\1胚衣\\白正2.jpg",
+      "method": "transform",
+      "blend_mode": "multiply",
+      "notes": "正面W贴图",
+      "scale": 0.20,
+      "rotation_degrees": -1.0,
+      "effective_top_y": 644,
+      "effective_center_x": 670
     }
   }
 }

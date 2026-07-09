@@ -14,6 +14,7 @@ def test_list_presets_contains_configured_templates():
     assert "1B.png" in presets
     assert "3B.png" in presets
     assert "4B.png" in presets
+    assert "白正2.jpg" in presets
 
 
 def test_get_preset_accepts_name_and_full_path():
@@ -130,14 +131,14 @@ def test_cli_template_filename_auto_matches_preset(monkeypatch, tmp_path):
     assert calls[0]["effective_center_x"] == 649
 
 
-def test_cli_preset_loads_legacy_params(monkeypatch, tmp_path):
+def test_cli_preset_loads_w3_transform_params(monkeypatch, tmp_path):
     calls = []
 
-    def fake_apply_mockup(**kwargs):
+    def fake_apply_mockup_transform(**kwargs):
         calls.append(kwargs)
-        return _fake_legacy_result(kwargs)
+        return _fake_transform_result(kwargs)
 
-    monkeypatch.setattr(cli, "apply_mockup", fake_apply_mockup)
+    monkeypatch.setattr(cli, "apply_mockup_transform", fake_apply_mockup_transform)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -148,9 +149,10 @@ def test_cli_preset_loads_legacy_params(monkeypatch, tmp_path):
 
     assert len(calls) == 1
     assert calls[0]["template_path"] == r"D:\Semems\1胚衣\白\W3.psd"
-    assert calls[0]["target_height"] == 677
-    assert calls[0]["top_y"] == 449
-    assert calls[0]["center_x"] == 735
+    assert calls[0]["scale"] == 0.40
+    assert calls[0]["rotation_degrees"] == 0.0
+    assert calls[0]["effective_top_y"] == 440
+    assert calls[0]["effective_center_x"] == 730
     assert calls[0]["blend_mode"] == "multiply"
 
 
@@ -164,3 +166,4 @@ def test_cli_list_presets(monkeypatch, capsys):
     assert "1B.png" in output
     assert "3B.png" in output
     assert "4B.png" in output
+    assert "白正2.jpg" in output

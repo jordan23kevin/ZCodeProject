@@ -94,10 +94,11 @@ apply_mockup_transform(
 
 | 模板 | 方法 | 缩放 | 旋转 | 最高点 y | 中心 x | 混合 |
 |------|------|------|------|----------|--------|------|
-| `W3.psd` | legacy | 677px | 0 | 449 | 735 | multiply |
+| `W3.psd` | transform | 40% | 0 | 440 | 730 | multiply |
 | `1B.png` | transform | 40% | 0 | 725 | 649 | multiply |
 | `3B.png` | transform | 32% | 逆时针 3° | 700 | 777 | multiply |
 | `4B.png` | transform | 28% | 顺时针 2° | 1011 | 576 | multiply |
+| `白正2.jpg` | transform | 20% | 逆时针 1° | 644 | 670 | multiply |
 
 新增胚衣时，先让用户用 Excel 填写 `docs/胚衣参数表_模板.csv` 并保存/导出为 CSV UTF-8；再读取该 CSV，转换成 `docs/胚衣参数表.md`，并同步到 `white_t_mockup/presets.json`。
 
