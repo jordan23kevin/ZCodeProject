@@ -318,12 +318,13 @@ def _rgb_to_hsv(rgb: np.ndarray) -> np.ndarray:
     nonzero = delta != 0
     r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
 
-    h = np.where(nonzero & (maxc == r), ((g - b) / delta) % 6, h)
-    h = np.where(nonzero & (maxc == g), ((b - r) / delta) + 2, h)
-    h = np.where(nonzero & (maxc == b), ((r - g) / delta) + 4, h)
-    h = h / 6.0
+    with np.errstate(divide="ignore", invalid="ignore"):
+        h = np.where(nonzero & (maxc == r), ((g - b) / delta) % 6, h)
+        h = np.where(nonzero & (maxc == g), ((b - r) / delta) + 2, h)
+        h = np.where(nonzero & (maxc == b), ((r - g) / delta) + 4, h)
+        h = h / 6.0
 
-    s = np.where(nonzero, delta / maxc, s)
+        s = np.where(nonzero, delta / maxc, s)
 
     return np.stack([h, s, v], axis=-1)
 
