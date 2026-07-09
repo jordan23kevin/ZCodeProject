@@ -19,7 +19,7 @@ from white_t_mockup.core import (
 
 
 def test_version_bumped():
-    assert __version__ == "1.2.0"
+    assert __version__ == "1.2.1"
 
 
 def test_apply_transform_scales_correctly():

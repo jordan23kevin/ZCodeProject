@@ -28,6 +28,16 @@
       "effective_center_x": 840,
       "blend_mode": "multiply",
       "notes": "白 T 模特模板，用于 BW/B 贴图（背面）"
+    },
+    "3B.png": {
+      "path": "D:\\Semems\\1胚衣\\白\\3B.png",
+      "method": "transform",
+      "scale": 0.32,
+      "rotation_degrees": -3.0,
+      "effective_top_y": 700,
+      "effective_center_x": 777,
+      "blend_mode": "multiply",
+      "notes": "白 T 模特模板，用于 B/BW 贴图；逆时针旋转 3°（内部存储为 -3.0）"
     }
   }
 }

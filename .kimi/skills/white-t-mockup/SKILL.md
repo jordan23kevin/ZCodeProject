@@ -97,6 +97,7 @@ apply_mockup_transform(
 | `3.psd` | legacy | 677px | 0 | 449 | 735 | multiply |
 | `W4.png` | transform | 40% | 1° | 490 | 780 | multiply |
 | `1B.png` | transform | 40% | 0 | 925 | 840 | multiply |
+| `3B.png` | transform | 32% | 逆时针 3° | 700 | 777 | multiply |
 
 新增模板时，在 `white_t_mockup/presets.json` 添加一条记录即可。
 

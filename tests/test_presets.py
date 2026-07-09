@@ -13,6 +13,7 @@ def test_list_presets_contains_configured_templates():
     assert "3.psd" in presets
     assert "W4.png" in presets
     assert "1B.png" in presets
+    assert "3B.png" in presets
 
 
 def test_get_preset_accepts_name_and_full_path():
@@ -27,6 +28,18 @@ def test_get_preset_accepts_name_and_full_path():
     assert by_name["effective_top_y"] == 925
     assert by_name["effective_center_x"] == 840
     assert by_name["blend_mode"] == "multiply"
+
+
+def test_get_preset_3b_png():
+    preset = get_preset("3B.png")
+
+    assert preset is not None
+    assert preset["method"] == "transform"
+    assert preset["scale"] == 0.32
+    assert preset["rotation_degrees"] == -3.0
+    assert preset["effective_top_y"] == 700
+    assert preset["effective_center_x"] == 777
+    assert preset["blend_mode"] == "multiply"
 
 
 def _fake_transform_result(kwargs):
