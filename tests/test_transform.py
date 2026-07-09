@@ -76,7 +76,7 @@ def test_calculate_effective_position():
 
 
 def test_load_png_template():
-    template_path = Path(r"D:\Semems\1胚衣\白\W4.png")
+    template_path = Path(r"D:\Semems\1胚衣\白\1B.png")
     if not template_path.exists():
         pytest.skip("PNG 模板不存在，跳过此测试")
 
@@ -90,7 +90,7 @@ def test_load_png_template():
 
 
 def test_load_any_template_png():
-    template_path = Path(r"D:\Semems\1胚衣\白\W4.png")
+    template_path = Path(r"D:\Semems\1胚衣\白\1B.png")
     if not template_path.exists():
         pytest.skip("PNG 模板不存在，跳过此测试")
 
@@ -103,7 +103,7 @@ def test_load_any_template_png():
 
 
 def test_apply_mockup_transform_with_png_template():
-    template_path = Path(r"D:\Semems\1胚衣\白\W4.png")
+    template_path = Path(r"D:\Semems\1胚衣\白\1B.png")
     design_path = Path("examples/dx0533/input/DX0533_BW_cut.png")
     output_path = Path("tests/_test_transform_output.jpg")
 
@@ -118,18 +118,18 @@ def test_apply_mockup_transform_with_png_template():
         output_path=output_path,
         template_path=template_path,
         scale=0.40,
-        rotation_degrees=1.0,
-        effective_top_y=490,
-        effective_center_x=780,
+        rotation_degrees=0.0,
+        effective_top_y=725,
+        effective_center_x=649,
         blend_mode="multiply",
         quality=95,
     )
 
     assert result["output_size"] == expected_output_size
     assert result["scale"] == 0.40
-    assert result["rotation_degrees"] == 1.0
-    assert result["effective_top"] == 490
-    assert result["effective_center_x"] == 780
+    assert result["rotation_degrees"] == 0.0
+    assert result["effective_top"] == 725
+    assert result["effective_center_x"] == 649
     assert output_path.exists()
 
     output_path.unlink(missing_ok=True)

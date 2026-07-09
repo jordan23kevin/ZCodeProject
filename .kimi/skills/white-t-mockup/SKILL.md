@@ -95,8 +95,7 @@ apply_mockup_transform(
 | 模板 | 方法 | 缩放 | 旋转 | 最高点 y | 中心 x | 混合 |
 |------|------|------|------|----------|--------|------|
 | `W3.psd` | legacy | 677px | 0 | 449 | 735 | multiply |
-| `W4.png` | transform | 40% | 顺时针 1° | 490 | 780 | multiply |
-| `1B.png` | transform | 40% | 0 | 925 | 840 | multiply |
+| `1B.png` | transform | 40% | 0 | 725 | 649 | multiply |
 | `3B.png` | transform | 32% | 逆时针 3° | 700 | 777 | multiply |
 | `4B.png` | transform | 28% | 顺时针 2° | 1011 | 576 | multiply |
 

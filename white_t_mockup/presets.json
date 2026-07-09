@@ -9,16 +9,6 @@
       "top_y": 449,
       "center_x": 735
     },
-    "W4.png": {
-      "path": "D:\\Semems\\1胚衣\\白\\W4.png",
-      "method": "transform",
-      "blend_mode": "multiply",
-      "notes": "正面W贴图",
-      "scale": 0.4,
-      "rotation_degrees": 1.0,
-      "effective_top_y": 490,
-      "effective_center_x": 780
-    },
     "1B.png": {
       "path": "D:\\Semems\\1胚衣\\白\\1B.png",
       "method": "transform",
@@ -26,8 +16,8 @@
       "notes": "背面B贴图",
       "scale": 0.4,
       "rotation_degrees": 0.0,
-      "effective_top_y": 925,
-      "effective_center_x": 840
+      "effective_top_y": 725,
+      "effective_center_x": 649
     },
     "3B.png": {
       "path": "D:\\Semems\\1胚衣\\白\\3B.png",

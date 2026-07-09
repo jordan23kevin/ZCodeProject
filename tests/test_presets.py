@@ -11,7 +11,6 @@ def test_list_presets_contains_configured_templates():
     presets = list_presets()
 
     assert "W3.psd" in presets
-    assert "W4.png" in presets
     assert "1B.png" in presets
     assert "3B.png" in presets
     assert "4B.png" in presets
@@ -26,8 +25,8 @@ def test_get_preset_accepts_name_and_full_path():
     assert by_name["method"] == "transform"
     assert by_name["scale"] == 0.40
     assert by_name["rotation_degrees"] == 0.0
-    assert by_name["effective_top_y"] == 925
-    assert by_name["effective_center_x"] == 840
+    assert by_name["effective_top_y"] == 725
+    assert by_name["effective_center_x"] == 649
     assert by_name["blend_mode"] == "multiply"
 
 
@@ -97,8 +96,8 @@ def test_cli_preset_loads_transform_params(monkeypatch, tmp_path):
     assert calls[0]["template_path"] == r"D:\Semems\1胚衣\白\1B.png"
     assert calls[0]["scale"] == 0.40
     assert calls[0]["rotation_degrees"] == 0.0
-    assert calls[0]["effective_top_y"] == 925
-    assert calls[0]["effective_center_x"] == 840
+    assert calls[0]["effective_top_y"] == 725
+    assert calls[0]["effective_center_x"] == 649
     assert calls[0]["blend_mode"] == "multiply"
 
 
@@ -118,7 +117,7 @@ def test_cli_template_filename_auto_matches_preset(monkeypatch, tmp_path):
             "design.png",
             str(tmp_path / "out.jpg"),
             "--template",
-            r"D:\Semems\1胚衣\白\W4.png",
+            r"D:\Semems\1胚衣\白\1B.png",
         ],
     )
 
@@ -126,9 +125,9 @@ def test_cli_template_filename_auto_matches_preset(monkeypatch, tmp_path):
 
     assert len(calls) == 1
     assert calls[0]["scale"] == 0.40
-    assert calls[0]["rotation_degrees"] == 1.0
-    assert calls[0]["effective_top_y"] == 490
-    assert calls[0]["effective_center_x"] == 780
+    assert calls[0]["rotation_degrees"] == 0.0
+    assert calls[0]["effective_top_y"] == 725
+    assert calls[0]["effective_center_x"] == 649
 
 
 def test_cli_preset_loads_legacy_params(monkeypatch, tmp_path):
@@ -162,7 +161,6 @@ def test_cli_list_presets(monkeypatch, capsys):
 
     output = capsys.readouterr().out
     assert "W3.psd" in output
-    assert "W4.png" in output
     assert "1B.png" in output
     assert "3B.png" in output
     assert "4B.png" in output
