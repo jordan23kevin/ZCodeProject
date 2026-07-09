@@ -18,6 +18,8 @@
   .btn-red:hover:not(:disabled){background:#b71c1c}
   .btn-blue{background:#2196F3;color:#fff;border:none}
   .btn-blue:hover:not(:disabled){background:#1976D2}
+  .btn-purple{background:#9C27B0;color:#fff;border:none}
+  .btn-purple:hover:not(:disabled){background:#7B1FA2}
   .panel{background:#252525;border:1px solid #444;border-radius:10px;padding:16px 20px;margin:0 auto 22px;max-width:1200px}
   .panel-title{font-size:18px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
   .status-row{display:flex;gap:20px;flex-wrap:wrap;font-size:15px;color:#bbb;margin-bottom:10px}
@@ -40,6 +42,7 @@
 
 <div class="toolbar">
   <button class="btn-green" onclick="startTask()" id="btnStart">🚀 开始填写</button>
+  <button class="btn-purple" onclick="startDiagnose()" id="btnDiagnose">🔍 诊断结构</button>
   <button class="btn-red" onclick="stopTask()" id="btnStop" disabled>⏹ 停止</button>
   <button class="btn-blue" onclick="sendSignal()" id="btnSignal" disabled>👌 好了</button>
 </div>
@@ -91,6 +94,7 @@ function setStatus(status,label){
   document.getElementById('statusLabel').textContent=label;
   document.getElementById('statusSpinner').style.display=(status==='running'?'inline-block':'none');
   document.getElementById('btnStart').disabled=isRequesting||status==='running';
+  document.getElementById('btnDiagnose').disabled=isRequesting||status==='running';
   document.getElementById('btnStop').disabled=isRequesting||status!=='running';
   document.getElementById('btnSignal').disabled=isRequesting||status!=='running';
 }
@@ -116,6 +120,23 @@ function startTask(){
       if(d.error){appendLog('❌ '+d.error,'error');return;}
       appendLog('✅ '+d.msg,'ok');
       setStatus('running','填写中');
+      beginPoll();
+    }).catch(function(e){appendLog('❌ 请求失败: '+e,'error');})
+    .finally(function(){
+      isRequesting=false;
+      setStatus(currentStatus,document.getElementById('statusLabel').textContent);
+    });
+}
+function startDiagnose(){
+  isRequesting=true;
+  setStatus(currentStatus,document.getElementById('statusLabel').textContent);
+  fetch('/api/retail_price/start_diagnose',{method:'POST'})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.error){appendLog('❌ '+d.error,'error');return;}
+      appendLog('✅ '+d.msg,'ok');
+      appendLog('📋 脚本启动后，请在 Edge 登录并打开「商品管理 → 商品列表」，再点「👌 好了」触发诊断','');
+      setStatus('running','诊断中');
       beginPoll();
     }).catch(function(e){appendLog('❌ 请求失败: '+e,'error');})
     .finally(function(){

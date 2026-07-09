@@ -87,7 +87,20 @@ function rembg(dx,file){
   var msg='重新去背 '+dx+'/'+file+' ？\n将启动美图秀秀自动操作（接管屏幕），期间请勿动键鼠。\n旧去背图会先备份，失败可自动还原。';
   if(!confirm(msg))return;
   showToast('⏳ 正在启动美图秀秀…请勿动键鼠');
-  fetch('/rembg?dx='+dx+'&file='+encodeURIComponent(file)).then(r=>r.json()).then(d=>{showToast(d.msg);if(d.ok)setTimeout(()=>location.reload(),4000);});
+  fetch('/rembg?dx='+dx+'&file='+encodeURIComponent(file)).then(r=>r.json()).then(d=>{
+    if(!d.ok&&d.can_stop){
+      if(confirm('⚠️ '+d.msg+'\n\n是否强制停止卡死的任务并自动重试？')){
+        showToast('⏳ 正在强制停止卡死任务…');
+        fetch('/rembg_stop').then(r=>r.json()).then(s=>{
+          showToast(s.msg);
+          setTimeout(()=>{rembg(dx,file);},1500);
+        });
+      }
+      return;
+    }
+    showToast(d.msg);
+    if(d.ok)setTimeout(()=>location.reload(),4000);
+  });
 }
 function switchDate(d){window.location.href = d ? '/'+d+'/' : '/';}
 function psSticker(dx){

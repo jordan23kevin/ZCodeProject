@@ -1135,6 +1135,25 @@ def run_minimized(cmd, cwd=None, wait=True, **extra):
     return subprocess.Popen(cmd, **kwargs)
 
 
+def _is_rembg_lock_stale(lock):
+    """去背锁是否过期：>15分钟 或 锁文件格式损坏(旧版纯文本)。
+    防止美图脚本卡死/崩溃后锁永久残留导致"已有去背任务在运行"死锁。"""
+    try:
+        info = json.loads(lock.read_text(encoding="utf-8"))
+        age = time.time() - info.get("ts", 0)
+        return age > 900  # 15 分钟
+    except Exception:
+        return True  # 旧格式(纯文本)或损坏 → 视为过期
+
+
+def _has_missing(proj):
+    """判断一个 project 是否真正缺图（只检查 AI/REM 文件缺失，不检查 B/W 配对）。"""
+    for pr in proj["pairs"]:
+        if pr["ai_file"] is None or pr["rem_file"] is None:
+            return True
+    return False
+
+
 # ── HTTP 服务 ───────────────────────────────────────
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -1172,6 +1191,8 @@ class Handler(BaseHTTPRequestHandler):
             self._batch_rembg()
         elif path == "/api/check-rembg-lock":
             self._check_rembg_lock()
+        elif path == "/rembg_stop":
+            self._rembg_stop()
         elif path == "/batch-result":
             self._batch_result()
         elif path == "/api/projects":
@@ -1230,18 +1251,7 @@ class Handler(BaseHTTPRequestHandler):
             )
         date_opts_html = "\n".join(date_opts)
         # 卡片HTML（缺图的款排前面，其余按DX号）
-        # "缺图"包括：缺AI图、缺去背、B无配对W、W无配对B
-        def _has_missing(proj):
-            stems = [pr["stem"] for pr in proj["pairs"]]
-            for pr in proj["pairs"]:
-                if pr["ai_file"] is None or pr["rem_file"] is None:
-                    return True
-                pfx = pr["stem"][:-2]
-                if pr["stem"].endswith("_B") and pfx + "_W" not in stems:
-                    return True
-                if pr["stem"].endswith("_W") and pfx + "_B" not in stems:
-                    return True
-            return False
+        # "缺图"包括：缺AI图、缺去背
         projects = sorted(projects, key=lambda p: (
             0 if _has_missing(p) else 1, p["dx"]
         ))
@@ -1678,8 +1688,13 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         # 检查是否已有任务在跑
         lock = TEMP_REMBG / ".rembg_lock"
         if lock.exists():
-            self._send_json({"ok": False, "msg": "已有去背任务在运行，请等其完成"}); return
-        lock.write_text(f"{dx}\t{file}", encoding="utf-8")
+            if _is_rembg_lock_stale(lock):
+                try: lock.unlink()
+                except Exception: pass
+                print("  [rembg] 检测到过期锁，已自动清除", flush=True)
+            else:
+                self._send_json({"ok": False, "msg": "已有去背任务在运行，请等其完成。如卡死可点「强制停止」", "can_stop": True}); return
+        lock.write_text(json.dumps({"pid": os.getpid(), "ts": time.time(), "type": "single", "dx": dx, "file": file}), encoding="utf-8")
         # 启动后台 worker（最小化控制台窗口），HTTP 立即返回
         worker = Path(__file__).parent / "_rembg_worker.py"
         run_minimized([sys.executable, str(worker), dx, file], wait=False)
@@ -1689,7 +1704,27 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
     def _check_rembg_lock(self):
         lock = TEMP_REMBG / ".rembg_lock"
         locked = lock.exists()
+        if locked and _is_rembg_lock_stale(lock):
+            try: lock.unlink(); locked = False
+            except Exception: pass
         self._send_json({"locked": locked})
+
+    # 强制停止去背任务：杀美图+脚本进程，清锁
+    def _rembg_stop(self):
+        """强制停止卡死的去背任务：杀 XiuXiu.exe + wb_meitu_batch/_rembg_worker python，清锁。"""
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Get-Process XiuXiu -ErrorAction SilentlyContinue | Stop-Process -Force; "
+                 "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*wb_meitu_batch*' -or $_.CommandLine -like '*_rembg_worker*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
+                capture_output=True, timeout=10)
+        except Exception as e:
+            print(f"  [rembg_stop] 杀进程异常: {e}", flush=True)
+        lock = TEMP_REMBG / ".rembg_lock"
+        try:
+            if lock.exists(): lock.unlink()
+        except Exception: pass
+        self._send_json({"ok": True, "msg": "已强制停止去背任务并清除锁，可重新点击去背"})
 
     # 批量去背（一次美图处理全部）
     def _batch_rembg(self):
@@ -1726,7 +1761,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         def _run():
             lock = TEMP_REMBG / ".rembg_lock"
             try:
-                lock.write_text("batch", encoding="utf-8")
+                lock.write_text(json.dumps({"pid": os.getpid(), "ts": time.time(), "type": "batch"}), encoding="utf-8")
                 results = batch_rembg(dx_files)
                 ok_count = sum(1 for r in results if r[2])
                 fail_count = len(results) - ok_count
@@ -1890,6 +1925,14 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         ok, msg = runner([sys.executable, str(sticker_script), dx], label="PS贴图")
         if not ok:
             return False, f"PS贴图失败: {dx} ({msg})"
+
+        # 2.5) 额外随机 W 胚衣贴图（当前如 W3.psd），不影响原有贴图结果
+        try:
+            from w_mockup_extra import generate_w_template_mockup
+            w_ok, w_msg = generate_w_template_mockup(dx, BASE, runner)
+        except Exception as e:
+            w_ok, w_msg = False, f"W胚衣贴图异常: {e}"
+        print(f"  [贴图流水线] {w_msg}", flush=True)
 
         # 3) 用贴好的 B/W 合成 BW
         ok, msg = runner([sys.executable, str(batch_script), dx], label="BW合成")

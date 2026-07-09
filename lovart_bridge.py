@@ -1,12 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.4.0
+Y2 Bridge Server v2.4.1
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.4.1：
+  - 建议零售价填写新增「🔍 诊断结构」网页按钮：复用现有「👌 好了」信号机制，
+    免手动建 go.signal 文件即可触发 --diagnose 模式。
+  - _start_retail_price_script 增加 diagnose 参数，diagnose=True 时 node 命令附加 --diagnose。
+  - 新增 /api/retail_price/start_diagnose 端点；建议零售价.js 诊断结果同时写入 建议零售价_diagnose.json。
 
 变更 v2.4.0：
   - 刷新已上款改为增量游标模式（联动 check_online_listed.py v1.4.0）：
@@ -413,15 +419,37 @@ def _port_ready(host, port, timeout=2):
 
 
 def _check_rem_daemon():
-    """后台守护线程：Bridge 启动后保持 check_rem.py（端口 8766）常驻运行。"""
+    """后台守护线程：Bridge 启动后保持 check_rem.py（端口 8766）常驻运行。
+
+    使用 CREATE_NO_WINDOW 启动，避免依赖桌面窗口（无头/后台环境下也能拉起）；
+    输出重定向到 check_rem_daemon.log 便于排查。每 5 秒检测一次端口，
+    若 check_rem 崩溃退出会自动重拉，实现自愈。
+    """
+    import subprocess
     script = Path("D:/Semems WB/04_OS/engine/check_rem.py")
     if not script.exists():
+        print("  [check_rem daemon] 脚本不存在，跳过守护", flush=True)
         return
+    log_path = script.parent / "check_rem_daemon.log"
     while True:
         try:
-            if not _port_ready("127.0.0.1", 8766, timeout=2):
+            if not _port_ready("127.0.0.1", 8766, timeout=3):
+                ts = time.strftime("%Y-%m-%d %H:%M:%S")
                 try:
-                    run_minimized([sys.executable, str(script)], cwd=str(script.parent))
+                    env = dict(os.environ)
+                    env["OPEN_BROWSER"] = "0"
+                    logf = open(log_path, "a", encoding="utf-8")
+                    logf.write(f"[{ts}] 端口 8766 未就绪，启动 check_rem.py ...\n")
+                    logf.flush()
+                    proc = subprocess.Popen(
+                        [sys.executable, str(script)],
+                        cwd=str(script.parent),
+                        env=env,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                        stdout=logf,
+                        stderr=subprocess.STDOUT,
+                    )
+                    print(f"  [check_rem daemon] 已启动 check_rem.py (PID={proc.pid})", flush=True)
                 except Exception as e:
                     print(f"  [check_rem daemon] 启动失败: {e}", flush=True)
             time.sleep(5)
@@ -836,7 +864,7 @@ def auto_uppercase_inbox():
         return 0
     count = 0
     # 匹配: 数字 + B/W/BW/WB + .png (不区分大小写)
-    pattern = re.compile(r'^(\d+)([bw]+)(\.png)$', re.IGNORECASE)
+    pattern = re.compile(r'^(\d+)([bw]+)(\.(png|jpg|jpeg|webp))$', re.IGNORECASE)
     for fname in list(os.listdir(INBOX_DIR)):
         if fname.startswith('_'):
             continue
@@ -1437,7 +1465,7 @@ def _design_number_from_inbox(filename: str) -> int:
     """从 INBOX 文件名提取编号，如 12B.png -> 12"""
     if not filename:
         return 0
-    m = re.match(r"^(\d+)(B|W|BW|WB)\.png$", filename, re.IGNORECASE)
+    m = re.match(r"^(\d+)(B|W|BW|WB)\.(png|jpg|jpeg|webp)$", filename, re.IGNORECASE)
     if m:
         return int(m.group(1))
     return 0
@@ -1670,10 +1698,10 @@ def group_inbox_files() -> list:
         return []
 
     files = [f for f in os.listdir(INBOX_DIR)
-             if f.endswith('.png') and not f.startswith('_')]
+             if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')) and not f.startswith('_')]
 
     groups = {}
-    pattern = re.compile(r'^(\d+)(B|W|BW|WB)\.png$', re.IGNORECASE)
+    pattern = re.compile(r'^(\d+)(B|W|BW|WB)\.(png|jpg|jpeg|webp)$', re.IGNORECASE)
     for fname in files:
         m = pattern.match(fname)
         if not m:
@@ -1720,7 +1748,7 @@ def api_inbox():
 
     all_files = []
     for fname in os.listdir(INBOX_DIR):
-        if not fname.endswith('.png') or fname.startswith('_'):
+        if not fname.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')) or fname.startswith('_'):
             continue
         fp = INBOX_DIR / fname
         try:
@@ -1746,7 +1774,14 @@ def api_preview(filename):
     if not filepath.exists():
         abort(404)
     try:
-        return send_file(str(filepath), mimetype='image/png', max_age=3600)
+        ext = safe_name.lower()
+        if ext.endswith('.jpg') or ext.endswith('.jpeg'):
+            ct = 'image/jpeg'
+        elif ext.endswith('.webp'):
+            ct = 'image/webp'
+        else:
+            ct = 'image/png'
+        return send_file(str(filepath), mimetype=ct, max_age=3600)
     except Exception:
         abort(404)
 
@@ -3731,8 +3766,8 @@ def _retail_price_log_reader(proc):
         retail_price_task["proc"] = None
 
 
-def _start_retail_price_script(label):
-    """通用启动 Temu 建议零售价填写子进程。"""
+def _start_retail_price_script(label, diagnose=False):
+    """通用启动 Temu 建议零售价填写子进程。diagnose=True 时附加 --diagnose 参数（仅 dump 抽屉结构，不填写/不提交）。"""
     with retail_price_lock:
         if retail_price_task.get("status") == "running" and retail_price_task.get("proc") and retail_price_task["proc"].poll() is None:
             return {"error": "已有建议零售价任务在运行，请先停止"}, 409
@@ -3764,8 +3799,12 @@ def _start_retail_price_script(label):
     env.setdefault("PYTHONIOENCODING", "utf-8")
 
     try:
+        node_args = ["node", str(RETAIL_PRICE_SCRIPT), "--no-close-browser"]
+        if diagnose:
+            # --diagnose 插在脚本名之后、--no-close-browser 之前，保持参数顺序清晰
+            node_args.insert(2, "--diagnose")
         proc = subprocess.Popen(
-            ["node", str(RETAIL_PRICE_SCRIPT), "--no-close-browser"],
+            node_args,
             cwd=str(RETAIL_PRICE_DIR),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -3877,6 +3916,13 @@ def retail_price_page():
 def api_retail_price_start():
     """启动 Temu 建议零售价填写脚本。"""
     resp, code = _start_retail_price_script("建议零售价填写")
+    return jsonify(resp), code
+
+
+@app.route('/api/retail_price/start_diagnose', methods=['POST'])
+def api_retail_price_start_diagnose():
+    """启动 Temu 建议零售价诊断：仅 dump 抽屉结构，不填写/不提交。复用「👌 好了」信号触发。"""
+    resp, code = _start_retail_price_script("建议零售价诊断", diagnose=True)
     return jsonify(resp), code
 
 
@@ -4064,6 +4110,9 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUNBUFFERED"] = "1"
         env["BRIDGE_UID_MANIFEST"] = str(UID_MANIFEST_FILE)
+        # 强制生成：用户点“开始 Lovart 生图”即明确要生图，忽略去重
+        # （原图编号会复用, 每批从1开始, 否则正常生图会被旧记录误拦）
+        env["LOVART_FORCE"] = "1"
         # 重新生图时使用统一提示词文件，并传入目标 DX 复用映射
         if task_id and task_id.startswith("TASK_REGEN_"):
             prompt_path = LOVART_DIR / "config" / "POD AI VIRAL FACTORY v3.md"
@@ -4088,20 +4137,13 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
             env=env,
         )
 
-        # 逐行读取输出，更新进度
+        # 逐行读取输出，更新进度（完整透传 Lovart 输出，避免“静默完成”看不出原因）
         for line in proc.stdout:
             line = line.rstrip()
             if not line:
                 continue
-            # 提取关键信息更新进度
-            lower = line.lower()
-            if any(kw in lower for kw in ("generating", "生成", "processing", "处理",
-                                          "complete", "完成", "done", "成功",
-                                          "error", "错误", "fail", "失败",
-                                          "upload", "上传", "download", "下载",
-                                          "group", "组", "register", "注册")):
-                log(line[:300])
-                task_state["progress"] = line[:200]
+            log(line[:400])
+            task_state["progress"] = line[:200]
 
         proc.wait()
 
@@ -4264,7 +4306,7 @@ if __name__ == '__main__':
         reg = load_registry()
         reg = ensure_registry_v4(reg)
         for fname in os.listdir(INBOX_DIR):
-            if fname.endswith('.png') and not fname.startswith('_'):
+            if fname.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')) and not fname.startswith('_'):
                 reg["name_index"][fname] = ""
         save_registry(reg)
 
