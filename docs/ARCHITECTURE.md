@@ -6,7 +6,10 @@
 输入 PNG 设计图
     │
     ▼
-resize_design() ──▶ 等比缩放到 target_height
+[可选] prepare_design_for_shirt() ──▶ 亮度反相 / 剪影 / 无处理
+    │
+    ▼
+resize_design() / apply_transform() ──▶ 缩放、旋转
     │
     ▼
 paste_with_blend() ──▶ 按 (center_x, top_y) 定位，使用 Multiply 等混合模式贴到背景上
@@ -93,7 +96,7 @@ result = base * blend / 255
 | 模块 | 职责 |
 |------|------|
 | `config.py` | 集中管理默认参数与模板预设（`presets.json`），避免硬编码 |
-| `core.py` | 模板加载（PSD/PNG）、缩放、旋转、有效像素定位、混合、合成等无状态函数 |
+| `core.py` | 模板加载（PSD/PNG）、缩放、旋转、有效像素定位、混合、**预处理**、合成等无状态函数 |
 | `cli.py` | 命令行参数解析，支持 `--preset` / `--list-presets`，自动判断新版/旧版方法，输出打印 |
 | `__main__.py` | 支持 `python -m white_t_mockup` |
 | `scripts/apply_mockup.py` | 兼容旧用法的单文件入口 |
@@ -112,3 +115,4 @@ result = base * blend / 255
 | `paste_with_blend()` | 按混合模式贴图 |
 | `apply_mockup()` | 旧版高层封装 |
 | `apply_mockup_transform()` | 新版高层封装 |
+| `prepare_design_for_shirt()` | 根据目标 T 恤颜色预处理设计图：亮度反相、剪影或不做处理 |

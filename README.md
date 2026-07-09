@@ -49,6 +49,24 @@ python -m white_t_mockup design.png output.jpg \
   --blend-mode multiply
 ```
 
+### 反黑/反白预处理
+
+新版默认使用亮度反相（HSV Value Invert），保留颜色，只反转明暗：
+
+```bash
+# 适合黑色 T 恤
+python -m white_t_mockup design.png out.jpg --preset W4.png --for-black-shirt
+
+# 适合白色 T 恤
+python -m white_t_mockup design.png out.jpg --preset W4.png --for-white-shirt
+
+# 显式选择预处理方法
+python -m white_t_mockup design.png out.jpg --preset W4.png --shirt-color black --prepare-method value_invert
+
+# 回滚到旧剪影模式
+python -m white_t_mockup design.png out.jpg --preset W4.png --shirt-color black --prepare-method silhouette
+```
+
 ### 旧版方法（兼容 DX0533）
 
 ```bash
