@@ -396,13 +396,15 @@ def prepare_design_for_shirt(
             arr[mask, :3] = 0.0
         return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
 
-    # method == "value_invert"
-    rgb = arr[:, :, :3].copy()
-    rgb_norm = rgb / 255.0
-    hsv = _rgb_to_hsv(rgb_norm)
-    hsv[:, :, 2] = 1.0 - hsv[:, :, 2]
-    rgb_inv = _hsv_to_rgb(hsv) * 255.0
+    if method == "value_invert":
+        rgb = arr[:, :, :3].copy()
+        rgb_norm = rgb / 255.0
+        hsv = _rgb_to_hsv(rgb_norm)
+        hsv[:, :, 2] = 1.0 - hsv[:, :, 2]
+        rgb_inv = _hsv_to_rgb(hsv) * 255.0
 
-    result = arr.copy()
-    result[mask, :3] = rgb_inv[mask]
-    return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8), "RGBA")
+        result = arr.copy()
+        result[mask, :3] = rgb_inv[mask]
+        return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8), "RGBA")
+
+    raise ValueError(f"不支持的预处理方法: {method}")
