@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporary exploration files
+psd_env/
+psd_layers/
+psd_layers_v2/
+test_design.png
+test_output.jpg
+DX0533_BW_白T_normal.jpg
+DX0533_BW_白T_multiply.jpg
+
+# Old files
+apply_white_t_mockup.py
+DX0533_白T_mockup_workflow.md
+
+# Pre-existing workspace files (not part of this project)
+extracted_session/
+session_*.zip
+ai_bg_removal_failure_log.md
+go.signal
+
+# OS
+.DS_Store
+Thumbs.db
