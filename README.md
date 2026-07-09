@@ -55,16 +55,16 @@ python -m white_t_mockup design.png output.jpg \
 
 ```bash
 # 适合黑色 T 恤
-python -m white_t_mockup design.png out.jpg --preset W4.png --for-black-shirt
+python -m white_t_mockup design.png out.jpg --preset 1B.png --for-black-shirt
 
 # 适合白色 T 恤
-python -m white_t_mockup design.png out.jpg --preset W4.png --for-white-shirt
+python -m white_t_mockup design.png out.jpg --preset 1B.png --for-white-shirt
 
 # 显式选择预处理方法
-python -m white_t_mockup design.png out.jpg --preset W4.png --shirt-color black --prepare-method value_invert
+python -m white_t_mockup design.png out.jpg --preset 1B.png --shirt-color black --prepare-method value_invert
 
 # 回滚到旧剪影模式
-python -m white_t_mockup design.png out.jpg --preset W4.png --shirt-color black --prepare-method silhouette
+python -m white_t_mockup design.png out.jpg --preset 1B.png --shirt-color black --prepare-method silhouette
 ```
 
 ### 旧版方法（兼容 DX0533）
@@ -142,7 +142,9 @@ apply_mockup_transform(
 │   └── apply_mockup.py    # 兼容旧用法的单文件入口
 ├── tests/
 │   ├── test_core.py       # 旧版方法单元测试
-│   └── test_transform.py  # 新版 transform 方法单元测试
+│   ├── test_transform.py  # 新版 transform 方法单元测试
+│   ├── test_prepare.py    # 反黑/反白预处理单元测试
+│   └── test_presets.py    # 预设与命令行单元测试
 ├── examples/
 │   └── dx0533/            # DX0533 示例输入输出
 ├── docs/
