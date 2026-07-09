@@ -122,12 +122,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default="value_invert",
         help="预处理方法（默认: value_invert）",
     )
-    parser.add_argument(
+    shirt_group = parser.add_mutually_exclusive_group()
+    shirt_group.add_argument(
         "--for-black-shirt",
         action="store_true",
         help="快捷开关：等价于 --shirt-color black --prepare-method value_invert",
     )
-    parser.add_argument(
+    shirt_group.add_argument(
         "--for-white-shirt",
         action="store_true",
         help="快捷开关：等价于 --shirt-color white --prepare-method value_invert",

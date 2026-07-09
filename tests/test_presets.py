@@ -226,3 +226,23 @@ def test_cli_shirt_color_and_prepare_method(monkeypatch, tmp_path):
     assert len(calls) == 1
     assert calls[0]["shirt_color"] == "white"
     assert calls[0]["prepare_method"] == "silhouette"
+
+
+def test_cli_no_shirt_color_defaults_to_none(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_apply_mockup_transform(**kwargs):
+        calls.append(kwargs)
+        return _fake_transform_result(kwargs)
+
+    monkeypatch.setattr(cli, "apply_mockup_transform", fake_apply_mockup_transform)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["white_t_mockup", "design.png", str(tmp_path / "out.jpg"), "--preset", "1B.png"],
+    )
+
+    cli.main()
+
+    assert len(calls) == 1
+    assert calls[0]["shirt_color"] is None
