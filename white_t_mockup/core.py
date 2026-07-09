@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Tuple
+from typing import Literal, Tuple
 
 import numpy as np
 from PIL import Image
@@ -301,3 +301,99 @@ def apply_mockup(
         "design_center": (center_x, top_y + dh // 2),
         "blend_mode": blend_mode or "normal",
     }
+
+
+def _rgb_to_hsv(rgb: np.ndarray) -> np.ndarray:
+    """
+    将 RGB 数组（值域 [0, 1]）批量转换到 HSV（H 值域 [0, 1]）。
+    """
+    maxc = rgb.max(axis=-1)
+    minc = rgb.min(axis=-1)
+    delta = maxc - minc
+
+    h = np.zeros_like(maxc)
+    s = np.zeros_like(maxc)
+    v = maxc
+
+    nonzero = delta != 0
+    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+
+    h = np.where(nonzero & (maxc == r), ((g - b) / delta) % 6, h)
+    h = np.where(nonzero & (maxc == g), ((b - r) / delta) + 2, h)
+    h = np.where(nonzero & (maxc == b), ((r - g) / delta) + 4, h)
+    h = h / 6.0
+
+    s = np.where(nonzero, delta / maxc, s)
+
+    return np.stack([h, s, v], axis=-1)
+
+
+def _hsv_to_rgb(hsv: np.ndarray) -> np.ndarray:
+    """
+    将 HSV 数组（H 值域 [0, 1]）批量转回 RGB（值域 [0, 1]）。
+    """
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    h = np.clip(h, 0.0, 1.0)
+    s = np.clip(s, 0.0, 1.0)
+    v = np.clip(v, 0.0, 1.0)
+
+    h6 = (h * 6.0) % 6.0
+    i = np.floor(h6).astype(np.int32)
+    f = h6 - i
+
+    p = v * (1.0 - s)
+    q = v * (1.0 - f * s)
+    t = v * (1.0 - (1.0 - f) * s)
+
+    r_candidates = np.stack([v, q, p, p, t, v], axis=-1)
+    g_candidates = np.stack([t, v, v, q, p, p], axis=-1)
+    b_candidates = np.stack([p, p, t, v, v, q], axis=-1)
+
+    idx = i[..., None]
+    r = np.take_along_axis(r_candidates, idx, axis=-1).squeeze(-1)
+    g = np.take_along_axis(g_candidates, idx, axis=-1).squeeze(-1)
+    b = np.take_along_axis(b_candidates, idx, axis=-1).squeeze(-1)
+
+    return np.stack([r, g, b], axis=-1)
+
+
+def prepare_design_for_shirt(
+    design: Image.Image,
+    shirt_color: Literal["black", "white"],
+    method: Literal["value_invert", "silhouette", "none"] = "value_invert",
+) -> Image.Image:
+    """
+    在贴图前对设计图做预处理，使其更适合目标 T 恤颜色。
+
+    Args:
+        design: 透明底 RGBA 设计图。
+        shirt_color: 目标 T 恤颜色，"black" 或 "white"。
+        method: 预处理方法，默认 "value_invert"。
+
+    Returns:
+        预处理后的 RGBA 图像。
+    """
+    if method == "none":
+        return design.copy()
+
+    arr = np.array(design).astype(np.float32)
+    alpha = arr[:, :, 3]
+    mask = alpha > 0
+
+    if method == "silhouette":
+        if shirt_color == "black":
+            arr[mask, :3] = 255.0
+        else:
+            arr[mask, :3] = 0.0
+        return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
+
+    # method == "value_invert"
+    rgb = arr[:, :, :3].copy()
+    rgb_norm = rgb / 255.0
+    hsv = _rgb_to_hsv(rgb_norm)
+    hsv[:, :, 2] = 1.0 - hsv[:, :, 2]
+    rgb_inv = _hsv_to_rgb(hsv) * 255.0
+
+    result = arr.copy()
+    result[mask, :3] = rgb_inv[mask]
+    return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8), "RGBA")
