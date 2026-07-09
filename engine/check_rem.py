@@ -1348,22 +1348,18 @@ class Handler(BaseHTTPRequestHandler):
                 b_pr = b_by_prefix.get(prefix)
                 w_pr = w_by_prefix.get(prefix)
 
-                def _half(dx, pr, badge_class, badge_text, missing_text):
-                    if pr:
-                        gid = pr.get("group_id", "")
-                        return f'''<div class="bw-half" data-group-id="{gid}" data-ai-uid="{pr.get("ai_uid") or ""}" data-rem-uid="{pr.get("rem_uid") or ""}" data-stem="{pr["stem"]}">
-                            <div class="stem"><span class="badge {badge_class}">{badge_text}</span>
-                                <button class="ren-btn" onclick="event.stopPropagation();renameStem('{dx}','{pr["stem"]}')" title="改为BW合并图">↗BW</button></div>
-                            {_render_cells(dx, pr)}
-                        </div>'''
-                    else:
-                        return f'''<div class="bw-half">
-                            <div class="stem"><span class="badge {badge_class}">{badge_text}</span></div>
-                            <div class="cell missing" style="height:200px;"><span>{missing_text}</span></div>
-                        </div>'''
+                def _half(dx, pr, badge_class, badge_text):
+                    if not pr:
+                        return ""
+                    gid = pr.get("group_id", "")
+                    return f'''<div class="bw-half" data-group-id="{gid}" data-ai-uid="{pr.get("ai_uid") or ""}" data-rem-uid="{pr.get("rem_uid") or ""}" data-stem="{pr["stem"]}">
+                        <div class="stem"><span class="badge {badge_class}">{badge_text}</span>
+                            <button class="ren-btn" onclick="event.stopPropagation();renameStem('{dx}','{pr["stem"]}')" title="改为BW合并图">↗BW</button></div>
+                        {_render_cells(dx, pr)}
+                    </div>'''
 
-                left  = _half(dx, b_pr, "badge-b", "B", "⚠ 缺B")
-                right = _half(dx, w_pr, "badge-w", "W", "⚠ 缺W")
+                left  = _half(dx, b_pr, "badge-b", "B")
+                right = _half(dx, w_pr, "badge-w", "W")
                 left_gid = b_pr.get("group_id", "") if b_pr else ""
                 right_gid = w_pr.get("group_id", "") if w_pr else ""
                 rows.append(f'<div class="bw-group" data-group-left="{left_gid}" data-group-right="{right_gid}">{left}{right}</div>')
@@ -1471,6 +1467,8 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .badge-bw {{ background:#9c27b0; color:#fff; }}
 .badge-b {{ background:#555; color:#fff; }}
 .badge-w {{ background:#e0e0e0; color:#333; }}
+.bw-group {{ display:flex; gap:10px; }}
+.bw-half {{ flex:1; min-width:0; }}
 .ps-btn {{ display:inline-flex; align-items:center; gap:2px; font-size:12px; padding:2px 10px; border-radius:4px; cursor:pointer; background:#7b1fa2; color:#fff; border:none; line-height:24px; white-space:nowrap; margin-left:auto; }}
 .ps-btn:hover {{ background:#9c27b0; }}
 .ps-btn.ps-done {{ background:#2e7d32; }}
