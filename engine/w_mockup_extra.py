@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import json
-import random
 from pathlib import Path
 
 
@@ -52,7 +51,8 @@ def generate_w_template_mockup(dx: str, base_dir: Path, runner) -> tuple[bool, s
     if not templates:
         return True, "没有 W 胚衣 preset，跳过 W 胚衣"
 
-    template_name = random.choice(templates)
+    # 固定优先使用 W3.psd；不存在时回退到第一个可用模板
+    template_name = "W3.psd" if "W3.psd" in templates else templates[0]
     template_stem = Path(template_name).stem
     out_path = up_dir / f"{dx}_W_{template_stem}_白T.jpg"
     up_dir.mkdir(parents=True, exist_ok=True)
