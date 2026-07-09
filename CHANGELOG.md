@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.1.0] - 2026-07-09
+
+### Added
+- 新版 transform 方法：缩放比例 + 顺时针旋转 + 按有效像素最高点/中心点定位
+- 支持 PNG 单图层模板（无手部遮罩）
+- `apply_mockup_transform()`、`apply_transform()`、`find_effective_bbox()`、`calculate_effective_position()`、`load_png_template()`、`load_any_template()` 等新函数
+- CLI 自动判断新版/旧版方法（提供 `--scale` 即启用新版）
+- 新增 `tests/test_transform.py`，覆盖缩放、旋转、有效像素定位、PNG 模板加载
+
+### Changed
+- 版本号升级为 1.1.0
+- 文档全面更新（README、ARCHITECTURE、TROUBLESHOOTING、Skill）
+
 ## [1.0.0] - 2026-07-09
 
 ### Added

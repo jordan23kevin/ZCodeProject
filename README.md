@@ -4,9 +4,10 @@
 
 ## 特性
 
-- 固定 DX0533 验证过的参数：位置、大小、混合模式
-- 自动识别 PSD 模板中的背景层和手部前景遮罩
+- **新版方法**：缩放比例 + 顺时针旋转 + 按有效像素最高点/中心点定位
+- 支持 PSD（带手部遮罩）和 PNG（单图层）两种模板
 - 支持 `normal`、`multiply`、`screen`、`overlay`、`linear_burn` 混合模式
+- 兼容 DX0533 旧版定位参数
 - 命令行 + Python API 两种调用方式
 - 附带 DX0533 完整示例
 
@@ -26,8 +27,21 @@ pip install -r requirements-dev.txt
 
 ## 快速开始
 
+### 新版方法（推荐）
+
 ```bash
-# 使用默认白 T 参数生成样机
+python -m white_t_mockup design.png output.jpg \
+  --template "D:\Semems\1胚衣\白\W4.png" \
+  --scale 0.40 \
+  --rotate 1 \
+  --effective-top-y 490 \
+  --effective-center-x 780 \
+  --blend-mode multiply
+```
+
+### 旧版方法（兼容 DX0533）
+
+```bash
 python -m white_t_mockup examples/dx0533/input/DX0533_BW_cut.png examples/dx0533/output/DX0533_BW_白T.jpg
 
 # 或使用 scripts 下的兼容入口
@@ -36,37 +50,44 @@ python scripts/apply_mockup.py examples/dx0533/input/DX0533_BW_cut.png output.jp
 
 ## 命令行参数
 
-```bash
-python -m white_t_mockup design.png output.jpg \
-  --template "D:\Semems\1胚衣\白\3.psd" \
-  --top-y 449 \
-  --center-x 735 \
-  --target-height 677 \
-  --blend-mode multiply \
-  --quality 95
-```
+### 新版方法参数
+
+| 参数 | 说明 |
+|------|------|
+| `--scale` | 贴图缩放比例（如 0.40 = 40%）。提供后启用新版方法 |
+| `--rotate` | 顺时针旋转角度 |
+| `--effective-top-y` | 有效像素最高点 Y 坐标 |
+| `--effective-center-x` | 有效像素水平中心 X 坐标 |
+
+### 旧版方法参数（兼容）
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--template` | `D:\Semems\1胚衣\白\3.psd` | PSD 模板路径 |
 | `--top-y` | 449 | 贴图最高点 Y 坐标 |
 | `--center-x` | 735 | 贴图水平中心 X 坐标 |
 | `--target-height` | 677 | 贴图缩放后高度（像素） |
+
+### 公共参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--template` | `D:\Semems\1胚衣\白\3.psd` | 模板路径（PSD 或 PNG） |
 | `--blend-mode` | `multiply` | 贴图混合模式 |
 | `--quality` | 95 | JPG 输出质量 |
 
 ## Python API
 
 ```python
-from white_t_mockup import apply_mockup
+from white_t_mockup import apply_mockup_transform
 
-apply_mockup(
+apply_mockup_transform(
     design_path="design.png",
     output_path="output.jpg",
-    template_path=r"D:\Semems\1胚衣\白\3.psd",
-    top_y=449,
-    center_x=735,
-    target_height=677,
+    template_path=r"D:\Semems\1胚衣\白\W4.png",
+    scale=0.40,
+    rotation_degrees=1.0,
+    effective_top_y=490,
+    effective_center_x=780,
     blend_mode="multiply",
     quality=95,
 )
@@ -85,7 +106,8 @@ apply_mockup(
 ├── scripts/
 │   └── apply_mockup.py    # 兼容旧用法的单文件入口
 ├── tests/
-│   └── test_core.py       # 单元测试
+│   ├── test_core.py       # 旧版方法单元测试
+│   └── test_transform.py  # 新版 transform 方法单元测试
 ├── examples/
 │   └── dx0533/            # DX0533 示例输入输出
 ├── docs/
@@ -109,7 +131,7 @@ pytest
 
 ## 版本
 
-当前版本：`1.0.0`
+当前版本：`1.1.0`
 
 ## 文档索引
 

@@ -2,76 +2,92 @@
 
 ## 用途
 
-自动把透明底 PNG 贴图合成到白 T 恤样机模板，输出 1340×1785 px 的 JPG 成品图。
+自动把透明底 PNG 贴图合成到白 T 恤样机模板，输出标准电商展示图。
 
 ## 使用场景
 
-- 给新款白 T 恤生成带贴图的电商展示图
-- 批量替换胸口/背面的设计图，保持位置、大小、光影一致
-- 需要 100% 复现 DX0533 同款效果时
+- 给新款白 T 恤生成带贴图的展示图
+- 批量替换胸口/背面设计图，保持位置、大小、光影一致
+- 需要 100% 复现已有效果时
 
 ## 输入
 
-- **design**：透明底 PNG 设计图（如 `DX0533_BW_cut.png`）
+- **design**：透明底 PNG 设计图（如 `DX0001_W_cut.png`）
 - **output**：输出 JPG 路径
-- 可选：模板路径、top-y、center-x、target-height、blend-mode、quality
+- 模板路径（PSD 或 PNG）
+- 贴图参数：缩放比例、旋转角度、有效像素最高点 Y、有效像素中心 X、混合模式
 
 ## 输出
 
-- 白 T 恤样机 JPG，尺寸 1340×1785
+- 白 T 恤样机 JPG
 
 ## 调用方式
 
-### 命令行
+### 命令行（新版方法，推荐）
 
 ```bash
-# 使用默认白 T 参数（Multiply 混合模式）
-python -m white_t_mockup design.png output.jpg
+python -m white_t_mockup design.png output.jpg \
+  --template "D:\Semems\1胚衣\白\W4.png" \
+  --scale 0.40 \
+  --rotate 1 \
+  --effective-top-y 490 \
+  --effective-center-x 780 \
+  --blend-mode multiply
+```
 
-# 使用普通混合模式
-python -m white_t_mockup design.png output.jpg --blend-mode normal
+### 命令行（旧版方法，兼容 DX0533）
+
+```bash
+python -m white_t_mockup design.png output.jpg \
+  --template "D:\Semems\1胚衣\白\3.psd" \
+  --top-y 449 --center-x 735 --target-height 677
 ```
 
 ### Python API
 
 ```python
-from white_t_mockup import apply_mockup
+from white_t_mockup import apply_mockup_transform
 
-apply_mockup(
+apply_mockup_transform(
     design_path="design.png",
     output_path="output.jpg",
-    template_path=r"D:\Semems\1胚衣\白\3.psd",
-    top_y=449,
-    center_x=735,
-    target_height=677,
+    template_path=r"D:\Semems\1胚衣\白\W4.png",
+    scale=0.40,
+    rotation_degrees=1.0,
+    effective_top_y=490,
+    effective_center_x=780,
     blend_mode="multiply",
     quality=95,
 )
 ```
 
-## 标准参数
+## 工作流程
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| template | `D:\Semems\1胚衣\白\3.psd` | 白 T 胚衣模板 |
-| top-y | 449 | 贴图最高点 Y 坐标 |
-| center-x | 735 | 贴图水平中心 X 坐标 |
-| target-height | 677 | 贴图缩放后高度 |
-| blend-mode | multiply | 正片叠底，使贴图融入衣褶 |
-| quality | 95 | JPG 质量 |
+1. 用户提供：胚衣模板路径、缩放比例、最高像素点 Y、中心点 X、旋转角度、混合模式。
+2. 脚本：缩放贴图 → 顺时针旋转 → 计算有效像素边界 → 按最高点和中心点定位 → 用指定混合模式合成 → 输出 JPG。
+3. 输出图应与用户预期位置、大小、角度、风格一致。
+
+## 参数说明
+
+| 参数 | 含义 |
+|------|------|
+| `--scale` | 贴图缩放比例（如 0.40 = 40%） |
+| `--rotate` | 顺时针旋转角度（如 1） |
+| `--effective-top-y` | 有效像素最高点 Y 坐标 |
+| `--effective-center-x` | 有效像素水平中心 X 坐标 |
+| `--blend-mode` | 混合模式，默认 `multiply` |
+| `--quality` | JPG 质量，默认 95 |
 
 ## 注意事项
 
-1. 输入 PNG 必须是透明底，否则会被黑色/白色背景覆盖。
-2. 模板 `3.psd` 必须包含两个图层：
-   - 占满画布的背景层（模特底图）
-   - 手部前景遮罩层（小 bbox）
-3. 合成顺序固定为：背景 → 贴图 → 手部遮罩。
-4. 所有白 T 款统一使用上述标准参数，不要随意改动。
+1. 输入 PNG 必须是透明底。
+2. PSD 模板需含背景层 + 手部遮罩层；PNG 模板是单图层图片。
+3. PSD 模板合成顺序：背景 → 贴图 → 手部遮罩。
+4. "有效像素"指贴图中非透明的部分，定位以有效像素的最高点和中心为准。
 
 ## 文件位置
 
 - 核心包：`white_t_mockup/`
 - 命令行入口：`python -m white_t_mockup` 或 `scripts/apply_mockup.py`
 - 文档：`docs/`
-- 示例：`examples/dx0533/`
+- 示例：`examples/`

@@ -1,8 +1,28 @@
 # -*- coding: utf-8 -*-
 """白 T 恤样机贴图自动化工具包。"""
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
-from .core import apply_mockup, load_template, paste_with_blend, resize_design
+from .core import (
+    apply_mockup,
+    apply_mockup_transform,
+    apply_transform,
+    find_effective_bbox,
+    load_any_template,
+    load_png_template,
+    load_template,
+    paste_with_blend,
+    resize_design,
+)
 
-__all__ = ["apply_mockup", "load_template", "paste_with_blend", "resize_design"]
+__all__ = [
+    "apply_mockup",
+    "apply_mockup_transform",
+    "apply_transform",
+    "find_effective_bbox",
+    "load_any_template",
+    "load_png_template",
+    "load_template",
+    "paste_with_blend",
+    "resize_design",
+]

@@ -139,6 +139,129 @@ def calculate_design_position(
     return left, top_y
 
 
+def load_png_template(png_path: str | Path) -> Tuple[Image.Image, None, None, Tuple[int, int]]:
+    """
+    加载 PNG 模板，返回背景层、前景层（None）、前景位置（None）和画布尺寸。
+
+    PNG 模板是单图层图片，没有手部遮罩。
+    """
+    background = Image.open(str(png_path)).convert("RGBA")
+    return background, None, None, background.size
+
+
+def load_any_template(
+    template_path: str | Path,
+) -> Tuple[Image.Image, Image.Image | None, Tuple[int, int] | None, Tuple[int, int]]:
+    """自动识别 PSD 或 PNG 模板并加载。"""
+    path = Path(template_path)
+    if path.suffix.lower() == ".psd":
+        return load_template(template_path)
+    return load_png_template(template_path)
+
+
+def apply_transform(
+    design: Image.Image,
+    scale: float,
+    rotation_degrees: float,
+) -> Image.Image:
+    """
+    对设计图做缩放和旋转。
+
+    scale: 缩放比例，例如 0.40 表示 40%
+    rotation_degrees: 顺时针旋转角度（正值为顺时针）
+    """
+    w, h = design.size
+    new_size = (int(round(w * scale)), int(round(h * scale)))
+    resized = design.resize(new_size, Image.Resampling.LANCZOS)
+    # PIL 正角度为逆时针，顺时针需取负
+    rotated = resized.rotate(-rotation_degrees, expand=True, resample=Image.Resampling.BICUBIC)
+    return rotated
+
+
+def find_effective_bbox(image: Image.Image, alpha_threshold: int = 10) -> Tuple[int, int, int, int]:
+    """
+    找出图像中有效（非透明）像素的边界框。
+
+    返回 (left, top, right, bottom)。
+    """
+    arr = np.array(image)
+    if arr.shape[2] < 4:
+        # 无 alpha 通道，整个图像都是有效像素
+        return (0, 0, image.width - 1, image.height - 1)
+    alpha = arr[:, :, 3]
+    ys, xs = np.where(alpha > alpha_threshold)
+    if len(xs) == 0:
+        return (0, 0, image.width - 1, image.height - 1)
+    return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+
+
+def calculate_effective_position(
+    transformed: Image.Image,
+    effective_top_y: int,
+    effective_center_x: int,
+    alpha_threshold: int = 10,
+) -> Tuple[int, int, Tuple[int, int, int, int]]:
+    """
+    根据有效像素的最高点和中心点计算粘贴左上角坐标。
+
+    返回 (paste_x, paste_y, effective_bbox)。
+    """
+    left, top, right, bottom = find_effective_bbox(transformed, alpha_threshold)
+
+    paste_y = effective_top_y - top
+    bbox_center_x = (left + right) / 2
+    paste_x = int(round(effective_center_x - bbox_center_x))
+
+    return paste_x, paste_y, (left, top, right, bottom)
+
+
+def apply_mockup_transform(
+    design_path: str | Path,
+    output_path: str | Path,
+    template_path: str | Path,
+    scale: float,
+    rotation_degrees: float,
+    effective_top_y: int,
+    effective_center_x: int,
+    blend_mode: str | None = DEFAULT_BLEND_MODE,
+    quality: int = 95,
+) -> dict:
+    """
+    新版贴图方法：缩放 → 旋转 → 按有效像素定位 → 混合。
+
+    支持 PSD 和 PNG 两种模板。
+    """
+    design = Image.open(str(design_path)).convert("RGBA")
+    background, foreground, fg_position, canvas_size = load_any_template(template_path)
+
+    transformed = apply_transform(design, scale, rotation_degrees)
+    paste_x, paste_y, effective_bbox = calculate_effective_position(
+        transformed, effective_top_y, effective_center_x
+    )
+
+    canvas = Image.new("RGBA", canvas_size, (255, 255, 255, 255))
+    canvas.paste(background, (0, 0), background)
+    paste_with_blend(canvas, transformed, (paste_x, paste_y), blend_mode)
+    if foreground is not None and fg_position is not None:
+        canvas.paste(foreground, fg_position, foreground)
+
+    canvas_rgb = canvas.convert("RGB")
+    canvas_rgb.save(str(output_path), "JPEG", quality=quality, optimize=True)
+
+    return {
+        "output_size": canvas_rgb.size,
+        "design_size": transformed.size,
+        "design_left": paste_x,
+        "design_top": paste_y,
+        "effective_bbox": effective_bbox,
+        "effective_top": effective_top_y,
+        "effective_center_x": effective_center_x,
+        "scale": scale,
+        "rotation_degrees": rotation_degrees,
+        "blend_mode": blend_mode or "normal",
+    }
+
+
 def apply_mockup(
     design_path: str | Path,
     output_path: str | Path,
