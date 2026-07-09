@@ -12,6 +12,7 @@ from .core import (
     load_png_template,
     load_template,
     paste_with_blend,
+    prepare_design_for_shirt,
     resize_design,
 )
 
@@ -24,5 +25,6 @@ __all__ = [
     "load_png_template",
     "load_template",
     "paste_with_blend",
+    "prepare_design_for_shirt",
     "resize_design",
 ]

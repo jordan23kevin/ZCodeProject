@@ -225,6 +225,8 @@ def apply_mockup_transform(
     effective_center_x: int,
     blend_mode: str | None = DEFAULT_BLEND_MODE,
     quality: int = 95,
+    shirt_color: Literal["black", "white"] | None = None,
+    prepare_method: Literal["value_invert", "silhouette", "none"] = "value_invert",
 ) -> dict:
     """
     新版贴图方法：缩放 → 旋转 → 按有效像素定位 → 混合。
@@ -232,6 +234,8 @@ def apply_mockup_transform(
     支持 PSD 和 PNG 两种模板。
     """
     design = Image.open(str(design_path)).convert("RGBA")
+    if shirt_color is not None:
+        design = prepare_design_for_shirt(design, shirt_color, prepare_method)
     background, foreground, fg_position, canvas_size = load_any_template(template_path)
 
     transformed = apply_transform(design, scale, rotation_degrees)
@@ -271,6 +275,8 @@ def apply_mockup(
     target_height: int,
     blend_mode: str | None = DEFAULT_BLEND_MODE,
     quality: int = 95,
+    shirt_color: Literal["black", "white"] | None = None,
+    prepare_method: Literal["value_invert", "silhouette", "none"] = "value_invert",
 ) -> dict:
     """
     将设计图贴到白 T 模板并导出 JPG。
@@ -278,6 +284,8 @@ def apply_mockup(
     返回包含贴图参数的字典，便于测试和日志记录。
     """
     design = Image.open(str(design_path)).convert("RGBA")
+    if shirt_color is not None:
+        design = prepare_design_for_shirt(design, shirt_color, prepare_method)
     background, foreground, fg_position, canvas_size = load_template(template_path)
 
     design_resized = resize_design(design, target_height)

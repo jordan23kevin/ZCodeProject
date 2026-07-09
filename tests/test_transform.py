@@ -133,3 +133,37 @@ def test_apply_mockup_transform_with_png_template():
     assert output_path.exists()
 
     output_path.unlink(missing_ok=True)
+
+
+def test_apply_mockup_transform_with_shirt_color_preparation(tmp_path):
+    design = Image.new("RGBA", (100, 100), (0, 0, 0, 255))
+    design_path = tmp_path / "design.png"
+    output_path = tmp_path / "out.jpg"
+    design.save(design_path)
+
+    # 用 PNG 模板，避免依赖外部 PSD
+    template = Image.new("RGBA", (200, 200), (255, 255, 255, 255))
+    template_path = tmp_path / "template.png"
+    template.save(template_path)
+
+    result = apply_mockup_transform(
+        design_path=design_path,
+        output_path=output_path,
+        template_path=template_path,
+        scale=1.0,
+        rotation_degrees=0.0,
+        effective_top_y=50,
+        effective_center_x=100,
+        blend_mode="normal",
+        shirt_color="black",
+        prepare_method="value_invert",
+    )
+
+    assert output_path.exists()
+    assert result["output_size"] == (200, 200)
+
+    # 黑设计经过 value_invert 后应变为亮色，混合到白底上应可见
+    output = Image.open(output_path).convert("RGB")
+    arr = np.array(output)
+    # 中心区域应接近白色（亮度反相后的黑色）
+    assert arr[50, 100, 0] > 200
