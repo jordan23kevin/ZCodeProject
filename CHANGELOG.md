@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.0] - 2026-07-09
+
+### Added
+- 模板预设系统：`white_t_mockup/presets.json` 单独记录每张胚衣的参数
+- CLI 新增 `--preset` 和 `--list-presets` 参数
+- 新增 `3.psd`、`W4.png`、`1B.png` 三张模板的预设
+- `config.py` 新增 `load_presets()`、`get_preset()`、`list_presets()`
+
+### Changed
+- 版本号升级为 1.2.0
+
 ## [1.1.0] - 2026-07-09
 
 ### Added

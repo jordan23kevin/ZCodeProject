@@ -19,7 +19,7 @@ from white_t_mockup.core import (
 
 
 def test_version_bumped():
-    assert __version__ == "1.1.0"
+    assert __version__ == "1.2.0"
 
 
 def test_apply_transform_scales_correctly():
@@ -80,8 +80,11 @@ def test_load_png_template():
     if not template_path.exists():
         pytest.skip("PNG 模板不存在，跳过此测试")
 
+    with Image.open(template_path) as template_image:
+        expected_canvas_size = template_image.size
+
     background, foreground, fg_position, canvas_size = load_png_template(template_path)
-    assert canvas_size == (1728, 2304)
+    assert canvas_size == expected_canvas_size
     assert foreground is None
     assert fg_position is None
 
@@ -91,8 +94,11 @@ def test_load_any_template_png():
     if not template_path.exists():
         pytest.skip("PNG 模板不存在，跳过此测试")
 
+    with Image.open(template_path) as template_image:
+        expected_canvas_size = template_image.size
+
     background, foreground, fg_position, canvas_size = load_any_template(template_path)
-    assert canvas_size == (1728, 2304)
+    assert canvas_size == expected_canvas_size
     assert foreground is None
 
 
@@ -103,6 +109,9 @@ def test_apply_mockup_transform_with_png_template():
 
     if not template_path.exists() or not design_path.exists():
         pytest.skip("模板或示例输入不存在，跳过此测试")
+
+    with Image.open(template_path) as template_image:
+        expected_output_size = template_image.size
 
     result = apply_mockup_transform(
         design_path=design_path,
@@ -116,7 +125,7 @@ def test_apply_mockup_transform_with_png_template():
         quality=95,
     )
 
-    assert result["output_size"] == (1728, 2304)
+    assert result["output_size"] == expected_output_size
     assert result["scale"] == 0.40
     assert result["rotation_degrees"] == 1.0
     assert result["effective_top"] == 490

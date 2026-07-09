@@ -23,7 +23,17 @@
 
 ## 调用方式
 
-### 命令行（新版方法，推荐）
+### 命令行（使用模板预设，推荐）
+
+```bash
+# 列出所有已配置模板
+python -m white_t_mockup --list-presets
+
+# 使用预设自动加载该模板的参数
+python -m white_t_mockup design.png output.jpg --preset 1B.png
+```
+
+### 命令行（手动指定参数）
 
 ```bash
 python -m white_t_mockup design.png output.jpg \
@@ -71,12 +81,24 @@ apply_mockup_transform(
 
 | 参数 | 含义 |
 |------|------|
+| `--preset` | 使用已配置的模板预设（自动加载参数） |
+| `--list-presets` | 列出所有已配置模板 |
 | `--scale` | 贴图缩放比例（如 0.40 = 40%） |
 | `--rotate` | 顺时针旋转角度（如 1） |
 | `--effective-top-y` | 有效像素最高点 Y 坐标 |
 | `--effective-center-x` | 有效像素水平中心 X 坐标 |
 | `--blend-mode` | 混合模式，默认 `multiply` |
 | `--quality` | JPG 质量，默认 95 |
+
+## 已配置模板预设
+
+| 模板 | 方法 | 缩放 | 旋转 | 最高点 y | 中心 x | 混合 |
+|------|------|------|------|----------|--------|------|
+| `3.psd` | legacy | 677px | 0 | 449 | 735 | multiply |
+| `W4.png` | transform | 40% | 1° | 490 | 780 | multiply |
+| `1B.png` | transform | 40% | 0 | 925 | 840 | multiply |
+
+新增模板时，在 `white_t_mockup/presets.json` 添加一条记录即可。
 
 ## 注意事项
 

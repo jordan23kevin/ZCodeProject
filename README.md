@@ -27,7 +27,17 @@ pip install -r requirements-dev.txt
 
 ## 快速开始
 
-### 新版方法（推荐）
+### 使用模板预设（推荐）
+
+```bash
+# 列出已配置模板
+python -m white_t_mockup --list-presets
+
+# 用预设自动加载参数
+python -m white_t_mockup design.png output.jpg --preset 1B.png
+```
+
+### 手动指定新版参数
 
 ```bash
 python -m white_t_mockup design.png output.jpg \
@@ -49,6 +59,13 @@ python scripts/apply_mockup.py examples/dx0533/input/DX0533_BW_cut.png output.jp
 ```
 
 ## 命令行参数
+
+### 预设参数
+
+| 参数 | 说明 |
+|------|------|
+| `--preset` | 使用已配置模板预设（自动加载参数） |
+| `--list-presets` | 列出所有已配置模板 |
 
 ### 新版方法参数
 
@@ -129,9 +146,21 @@ apply_mockup_transform(
 pytest
 ```
 
+## 模板预设
+
+每张胚衣模板的参数独立记录在 `white_t_mockup/presets.json`：
+
+| 模板 | 方法 | 缩放 | 旋转 | 最高点 y | 中心 x | 混合 |
+|------|------|------|------|----------|--------|------|
+| `3.psd` | legacy | 677px | 0 | 449 | 735 | multiply |
+| `W4.png` | transform | 40% | 1° | 490 | 780 | multiply |
+| `1B.png` | transform | 40% | 0 | 925 | 840 | multiply |
+
+新增模板时，在 `presets.json` 添加一条记录即可。
+
 ## 版本
 
-当前版本：`1.1.0`
+当前版本：`1.2.0`
 
 ## 文档索引
 
