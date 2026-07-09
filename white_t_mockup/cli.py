@@ -111,6 +111,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"贴图混合模式（默认: {DEFAULT_BLEND_MODE}）",
     )
     parser.add_argument(
+        "--shirt-color",
+        choices=["black", "white"],
+        default=None,
+        help="目标 T 恤颜色，启用预处理（反黑/反白）",
+    )
+    parser.add_argument(
+        "--prepare-method",
+        choices=["value_invert", "silhouette", "none"],
+        default="value_invert",
+        help="预处理方法（默认: value_invert）",
+    )
+    parser.add_argument(
+        "--for-black-shirt",
+        action="store_true",
+        help="快捷开关：等价于 --shirt-color black --prepare-method value_invert",
+    )
+    parser.add_argument(
+        "--for-white-shirt",
+        action="store_true",
+        help="快捷开关：等价于 --shirt-color white --prepare-method value_invert",
+    )
+    parser.add_argument(
         "--quality",
         type=int,
         default=None,
@@ -156,6 +178,16 @@ def main() -> None:
     quality = args.quality if args.quality is not None else DEFAULT_QUALITY
     blend_mode = None if blend_mode == "normal" else blend_mode
 
+    shirt_color = args.shirt_color
+    prepare_method = args.prepare_method
+
+    if args.for_black_shirt:
+        shirt_color = "black"
+        prepare_method = "value_invert"
+    elif args.for_white_shirt:
+        shirt_color = "white"
+        prepare_method = "value_invert"
+
     if method == "transform":
         scale = args.scale if args.scale is not None else params.get("scale")
         rotate = args.rotate if args.rotate is not None else params.get("rotation_degrees", 0.0)
@@ -180,6 +212,8 @@ def main() -> None:
             effective_center_x=center,
             blend_mode=blend_mode,
             quality=quality,
+            shirt_color=shirt_color,
+            prepare_method=prepare_method,
         )
         print(
             f"已保存: {args.output}  尺寸: {result['output_size']}  混合模式: {result['blend_mode']}"
@@ -202,6 +236,8 @@ def main() -> None:
             target_height=height,
             blend_mode=blend_mode,
             quality=quality,
+            shirt_color=shirt_color,
+            prepare_method=prepare_method,
         )
         print(
             f"已保存: {args.output}  尺寸: {result['output_size']}  混合模式: {result['blend_mode']}"

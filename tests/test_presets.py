@@ -167,3 +167,62 @@ def test_cli_list_presets(monkeypatch, capsys):
     assert "3B.png" in output
     assert "4B.png" in output
     assert "白正2.jpg" in output
+
+
+def test_cli_for_black_shirt_passes_params(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_apply_mockup_transform(**kwargs):
+        calls.append(kwargs)
+        return _fake_transform_result(kwargs)
+
+    monkeypatch.setattr(cli, "apply_mockup_transform", fake_apply_mockup_transform)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "white_t_mockup",
+            "design.png",
+            str(tmp_path / "out.jpg"),
+            "--preset",
+            "1B.png",
+            "--for-black-shirt",
+        ],
+    )
+
+    cli.main()
+
+    assert len(calls) == 1
+    assert calls[0]["shirt_color"] == "black"
+    assert calls[0]["prepare_method"] == "value_invert"
+
+
+def test_cli_shirt_color_and_prepare_method(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_apply_mockup_transform(**kwargs):
+        calls.append(kwargs)
+        return _fake_transform_result(kwargs)
+
+    monkeypatch.setattr(cli, "apply_mockup_transform", fake_apply_mockup_transform)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "white_t_mockup",
+            "design.png",
+            str(tmp_path / "out.jpg"),
+            "--preset",
+            "1B.png",
+            "--shirt-color",
+            "white",
+            "--prepare-method",
+            "silhouette",
+        ],
+    )
+
+    cli.main()
+
+    assert len(calls) == 1
+    assert calls[0]["shirt_color"] == "white"
+    assert calls[0]["prepare_method"] == "silhouette"
