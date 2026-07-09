@@ -99,7 +99,7 @@ apply_mockup_transform(
 | `1B.png` | transform | 40% | 0 | 925 | 840 | multiply |
 | `3B.png` | transform | 32% | 逆时针 3° | 700 | 777 | multiply |
 
-新增胚衣时，先让用户填写 `docs/胚衣参数表.md`，再读取该表并同步到 `white_t_mockup/presets.json`。
+新增胚衣时，先让用户用 Excel 填写 `docs/胚衣参数表_模板.csv` 并保存/导出为 CSV UTF-8；再读取该 CSV，转换成 `docs/胚衣参数表.md`，并同步到 `white_t_mockup/presets.json`。
 
 ## 注意事项
 

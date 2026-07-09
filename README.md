@@ -157,7 +157,7 @@ pytest
 | `1B.png` | transform | 40% | 0 | 925 | 840 | multiply |
 | `3B.png` | transform | 32% | 逆时针 3° | 700 | 777 | multiply |
 
-新增胚衣时，先填写 [胚衣参数表](docs/胚衣参数表.md)，我会读取该表后同步到 `presets.json`。
+新增胚衣时，先用 Excel 填写 [胚衣参数表模板](docs/胚衣参数表_模板.csv)，保存/导出为 **CSV UTF-8** 后发我；我会转换成 [胚衣参数表](docs/胚衣参数表.md) 并同步到 `presets.json`。
 
 ## 版本
 
@@ -165,7 +165,8 @@ pytest
 
 ## 文档索引
 
-- [胚衣参数表](docs/胚衣参数表.md)
+- [胚衣参数表模板（Excel/CSV）](docs/胚衣参数表_模板.csv)
+- [胚衣参数表（转换后记录）](docs/胚衣参数表.md)
 - [架构说明](docs/ARCHITECTURE.md)
 - [问题与解决方案](docs/TROUBLESHOOTING.md)
 - [更新日志](CHANGELOG.md)
