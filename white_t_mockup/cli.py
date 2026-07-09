@@ -49,7 +49,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--preset",
         default=None,
-        help="使用已配置的模板预设（如 W4.png / 1B.png / 3.psd）",
+        help="使用已配置的模板预设（如 W3.psd / W4.png / 1B.png / 3B.png / 4B.png）",
     )
     parser.add_argument(
         "--list-presets",

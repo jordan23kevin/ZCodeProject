@@ -1,8 +1,6 @@
-﻿胚衣文件名,胚衣完整路径,适用贴图后缀（B/W/BW）,方法（transform/legacy）,缩放百分比（transform）,旧版目标高度px（legacy）,旋转方向（顺时针/逆时针/无）,旋转角度（数字）,最高像素点y,中心点x,混合模式（Multiply）,输出命名规则（可空）,备注（可空）
-3.psd,D:\Semems\1胚衣\白\3.psd,BW,legacy,,677,无,0,449,735,Multiply,<编号>_BW_白T.jpg,DX0533旧版PSD，带手部遮罩
-W4.png,D:\Semems\1胚衣\白\W4.png,W,transform,40,,顺时针,1,490,780,Multiply,<编号>_W_白T.jpg,正面W贴图
-1B.png,D:\Semems\1胚衣\白\1B.png,B/BW,transform,40,,无,0,925,840,Multiply,<编号>_B_白T.jpg / <编号>_BW_白T.jpg,背面B/BW贴图
-3B.png,D:\Semems\1胚衣\白\3B.png,B/BW,transform,32,,逆时针,3,700,777,Multiply,<编号>_B_白T.jpg / <编号>_BW_白T.jpg,背面B/BW贴图
-,,,,,,,,,,,,
-,,,,,,,,,,,,
-,,,,,,,,,,,,
+﻿胚衣文件名;胚衣完整路径;适用贴图后缀（B/W/BW）;方法（transform/legacy）;缩放百分比（transform）;旧版目标高度px（legacy）;旋转方向（顺时针/逆时针/无）;旋转角度（数字）;最高像素点y;中心点x;混合模式（Multiply）;输出命名规则（可空）;备注（可空）
+W3.psd;D:\Semems\1胚衣\白\W3.psd;W;legacy;;677;无;0;449;735;Multiply;<编号>_W_白T.jpg;DX0533旧版PSD，带手部遮罩
+W4.png;D:\Semems\1胚衣\白\W4.png;W;transform;40;;顺时针;1;490;780;Multiply;<编号>_W_白T.jpg;正面W贴图
+1B.png;D:\Semems\1胚衣\白\1B.png;B;transform;40;;无;0;925;840;Multiply;<编号>_B_白T.jpg ;背面B贴图
+3B.png;D:\Semems\1胚衣\白\3B.png;B;transform;32;;逆时针;3;700;777;Multiply;<编号>_B_白T.jpg;背面B贴图
+4B.png;D:\Semems\1胚衣\白\4B.png;B;transform;28;;顺时针;2;1011;576;Multiply;<编号>_B_白T.jpg;背面B贴图

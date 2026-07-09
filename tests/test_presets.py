@@ -10,10 +10,11 @@ from white_t_mockup.config import get_preset, list_presets
 def test_list_presets_contains_configured_templates():
     presets = list_presets()
 
-    assert "3.psd" in presets
+    assert "W3.psd" in presets
     assert "W4.png" in presets
     assert "1B.png" in presets
     assert "3B.png" in presets
+    assert "4B.png" in presets
 
 
 def test_get_preset_accepts_name_and_full_path():
@@ -39,6 +40,18 @@ def test_get_preset_3b_png():
     assert preset["rotation_degrees"] == -3.0
     assert preset["effective_top_y"] == 700
     assert preset["effective_center_x"] == 777
+    assert preset["blend_mode"] == "multiply"
+
+
+def test_get_preset_4b_png():
+    preset = get_preset("4B.png")
+
+    assert preset is not None
+    assert preset["method"] == "transform"
+    assert preset["scale"] == 0.28
+    assert preset["rotation_degrees"] == 2.0
+    assert preset["effective_top_y"] == 1011
+    assert preset["effective_center_x"] == 576
     assert preset["blend_mode"] == "multiply"
 
 
@@ -129,13 +142,13 @@ def test_cli_preset_loads_legacy_params(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sys,
         "argv",
-        ["white_t_mockup", "design.png", str(tmp_path / "out.jpg"), "--preset", "3.psd"],
+        ["white_t_mockup", "design.png", str(tmp_path / "out.jpg"), "--preset", "W3.psd"],
     )
 
     cli.main()
 
     assert len(calls) == 1
-    assert calls[0]["template_path"] == r"D:\Semems\1胚衣\白\3.psd"
+    assert calls[0]["template_path"] == r"D:\Semems\1胚衣\白\W3.psd"
     assert calls[0]["target_height"] == 677
     assert calls[0]["top_y"] == 449
     assert calls[0]["center_x"] == 735
@@ -148,6 +161,8 @@ def test_cli_list_presets(monkeypatch, capsys):
     cli.main()
 
     output = capsys.readouterr().out
-    assert "3.psd" in output
+    assert "W3.psd" in output
     assert "W4.png" in output
     assert "1B.png" in output
+    assert "3B.png" in output
+    assert "4B.png" in output

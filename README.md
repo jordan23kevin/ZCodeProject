@@ -88,7 +88,7 @@ python scripts/apply_mockup.py examples/dx0533/input/DX0533_BW_cut.png output.jp
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--template` | `D:\Semems\1胚衣\白\3.psd` | 模板路径（PSD 或 PNG） |
+| `--template` | `D:\Semems\1胚衣\白\W3.psd` | 模板路径（PSD 或 PNG） |
 | `--blend-mode` | `multiply` | 贴图混合模式 |
 | `--quality` | 95 | JPG 输出质量 |
 
@@ -152,10 +152,11 @@ pytest
 
 | 模板 | 方法 | 缩放 | 旋转 | 最高点 y | 中心 x | 混合 |
 |------|------|------|------|----------|--------|------|
-| `3.psd` | legacy | 677px | 0 | 449 | 735 | multiply |
-| `W4.png` | transform | 40% | 1° | 490 | 780 | multiply |
+| `W3.psd` | legacy | 677px | 0 | 449 | 735 | multiply |
+| `W4.png` | transform | 40% | 顺时针 1° | 490 | 780 | multiply |
 | `1B.png` | transform | 40% | 0 | 925 | 840 | multiply |
 | `3B.png` | transform | 32% | 逆时针 3° | 700 | 777 | multiply |
+| `4B.png` | transform | 28% | 顺时针 2° | 1011 | 576 | multiply |
 
 新增胚衣时，先用 Excel 填写 [胚衣参数表模板](docs/胚衣参数表_模板.csv)，保存/导出为 **CSV UTF-8** 后发我；我会转换成 [胚衣参数表](docs/胚衣参数表.md) 并同步到 `presets.json`。
 

@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 
 # 默认模板路径
-DEFAULT_TEMPLATE = r"D:\Semems\1胚衣\白\3.psd"
+DEFAULT_TEMPLATE = r"D:\Semems\1胚衣\白\W3.psd"
 
 # 贴图定位参数
 DEFAULT_TOP_Y = 449          # 贴图最高像素点的 Y 坐标

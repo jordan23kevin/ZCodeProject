@@ -58,7 +58,7 @@ def test_paste_normal_with_full_alpha():
 
 
 def test_load_template_returns_correct_layers():
-    template_path = Path(r"D:\Semems\1胚衣\白\3.psd")
+    template_path = Path(r"D:\Semems\1胚衣\白\W3.psd")
     if not template_path.exists():
         pytest.skip("模板文件不存在，跳过此测试")
 
@@ -71,7 +71,7 @@ def test_load_template_returns_correct_layers():
 
 
 def test_apply_mockup_output_size():
-    template_path = Path(r"D:\Semems\1胚衣\白\3.psd")
+    template_path = Path(r"D:\Semems\1胚衣\白\W3.psd")
     design_path = Path("examples/dx0533/input/DX0533_BW_cut.png")
     output_path = Path("tests/_test_output.jpg")
 

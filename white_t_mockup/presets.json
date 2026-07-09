@@ -1,43 +1,53 @@
 {
   "templates": {
-    "3.psd": {
-      "path": "D:\\Semems\\1胚衣\\白\\3.psd",
+    "W3.psd": {
+      "path": "D:\\Semems\\1胚衣\\白\\W3.psd",
       "method": "legacy",
+      "blend_mode": "multiply",
+      "notes": "DX0533旧版PSD，带手部遮罩",
       "target_height": 677,
       "top_y": 449,
-      "center_x": 735,
-      "blend_mode": "multiply",
-      "notes": "DX0533 白 T（带手部遮罩 PSD 模板）"
+      "center_x": 735
     },
     "W4.png": {
       "path": "D:\\Semems\\1胚衣\\白\\W4.png",
       "method": "transform",
-      "scale": 0.40,
+      "blend_mode": "multiply",
+      "notes": "正面W贴图",
+      "scale": 0.4,
       "rotation_degrees": 1.0,
       "effective_top_y": 490,
-      "effective_center_x": 780,
-      "blend_mode": "multiply",
-      "notes": "白 T 模特模板，用于 W 贴图（正面）"
+      "effective_center_x": 780
     },
     "1B.png": {
       "path": "D:\\Semems\\1胚衣\\白\\1B.png",
       "method": "transform",
-      "scale": 0.40,
+      "blend_mode": "multiply",
+      "notes": "背面B贴图",
+      "scale": 0.4,
       "rotation_degrees": 0.0,
       "effective_top_y": 925,
-      "effective_center_x": 840,
-      "blend_mode": "multiply",
-      "notes": "白 T 模特模板，用于 BW/B 贴图（背面）"
+      "effective_center_x": 840
     },
     "3B.png": {
       "path": "D:\\Semems\\1胚衣\\白\\3B.png",
       "method": "transform",
+      "blend_mode": "multiply",
+      "notes": "背面B贴图",
       "scale": 0.32,
       "rotation_degrees": -3.0,
       "effective_top_y": 700,
-      "effective_center_x": 777,
+      "effective_center_x": 777
+    },
+    "4B.png": {
+      "path": "D:\\Semems\\1胚衣\\白\\4B.png",
+      "method": "transform",
       "blend_mode": "multiply",
-      "notes": "白 T 模特模板，用于 B/BW 贴图；逆时针旋转 3°（内部存储为 -3.0）"
+      "notes": "背面B贴图",
+      "scale": 0.28,
+      "rotation_degrees": 2.0,
+      "effective_top_y": 1011,
+      "effective_center_x": 576
     }
   }
 }

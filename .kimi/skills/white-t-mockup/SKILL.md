@@ -49,7 +49,7 @@ python -m white_t_mockup design.png output.jpg \
 
 ```bash
 python -m white_t_mockup design.png output.jpg \
-  --template "D:\Semems\1胚衣\白\3.psd" \
+  --template "D:\Semems\1胚衣\白\W3.psd" \
   --top-y 449 --center-x 735 --target-height 677
 ```
 
@@ -94,10 +94,11 @@ apply_mockup_transform(
 
 | 模板 | 方法 | 缩放 | 旋转 | 最高点 y | 中心 x | 混合 |
 |------|------|------|------|----------|--------|------|
-| `3.psd` | legacy | 677px | 0 | 449 | 735 | multiply |
-| `W4.png` | transform | 40% | 1° | 490 | 780 | multiply |
+| `W3.psd` | legacy | 677px | 0 | 449 | 735 | multiply |
+| `W4.png` | transform | 40% | 顺时针 1° | 490 | 780 | multiply |
 | `1B.png` | transform | 40% | 0 | 925 | 840 | multiply |
 | `3B.png` | transform | 32% | 逆时针 3° | 700 | 777 | multiply |
+| `4B.png` | transform | 28% | 顺时针 2° | 1011 | 576 | multiply |
 
 新增胚衣时，先让用户用 Excel 填写 `docs/胚衣参数表_模板.csv` 并保存/导出为 CSV UTF-8；再读取该 CSV，转换成 `docs/胚衣参数表.md`，并同步到 `white_t_mockup/presets.json`。
 
