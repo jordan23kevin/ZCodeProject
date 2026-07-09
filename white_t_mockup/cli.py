@@ -111,18 +111,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"贴图混合模式（默认: {DEFAULT_BLEND_MODE}）",
     )
     parser.add_argument(
-        "--shirt-color",
-        choices=["black", "white"],
-        default=None,
-        help="目标 T 恤颜色，启用预处理（反黑/反白）",
-    )
-    parser.add_argument(
         "--prepare-method",
         choices=["value_invert", "silhouette", "none"],
         default="value_invert",
         help="预处理方法（默认: value_invert）",
     )
     shirt_group = parser.add_mutually_exclusive_group()
+    shirt_group.add_argument(
+        "--shirt-color",
+        choices=["black", "white"],
+        default=None,
+        help="目标 T 恤颜色，启用预处理（反黑/反白）",
+    )
     shirt_group.add_argument(
         "--for-black-shirt",
         action="store_true",

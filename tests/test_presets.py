@@ -3,6 +3,7 @@
 
 import sys
 
+import pytest
 from white_t_mockup import cli
 from white_t_mockup.config import get_preset, list_presets
 
@@ -226,6 +227,26 @@ def test_cli_shirt_color_and_prepare_method(monkeypatch, tmp_path):
     assert len(calls) == 1
     assert calls[0]["shirt_color"] == "white"
     assert calls[0]["prepare_method"] == "silhouette"
+
+
+def test_cli_shirt_color_and_shortcut_are_mutually_exclusive(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "white_t_mockup",
+            "design.png",
+            str(tmp_path / "out.jpg"),
+            "--preset",
+            "1B.png",
+            "--shirt-color",
+            "black",
+            "--for-white-shirt",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        cli.main()
 
 
 def test_cli_no_shirt_color_defaults_to_none(monkeypatch, tmp_path):
