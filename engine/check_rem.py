@@ -1535,7 +1535,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 	    <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)" style="width:18px;height:18px;accent-color:#4CAF50;vertical-align:middle;"> 全选
 	  </label>
 	  <button onclick="batchRembg()" id="batchBtn" style="cursor:pointer;background:#ff9800;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>⚡ 批量去背 (0)</button>
-	  <button onclick="copyMissing()" title="复制当前日期缺图款号（缺AI图/缺去背/缺B/W配对）" style="background:#e91e63;">📋 复制缺图款号</button>
+	  <button onclick="copyMissing()" title="复制当前日期缺图款号（缺AI图/缺去背）" style="background:#e91e63;">📋 复制缺图款号</button>
 	  <button onclick="batchSticker()" id="batchStickerBtn" title="批量PS贴图（含B/W贴图与BW合成）" style="cursor:pointer;background:#7b1fa2;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>📎 批量贴图 (0)</button>
 	  <button onclick="batchInvertRem()" id="batchInvertBtn" title="批量反相：对选中款的所有B/W/BW去背图生成黑版专用图（不会自动贴图）" style="cursor:pointer;background:#673ab7;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>🌑 批量反相 (0)</button>
 	  <button onclick="copyNoSticker()" title="复制当前日期所有未生成成品的款号" style="background:#7b1fa2;">📋 复制缺贴图</button>
