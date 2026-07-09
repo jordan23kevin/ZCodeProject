@@ -9,7 +9,7 @@
 [可选] prepare_design_for_shirt() ──▶ 亮度反相 / 剪影 / 无处理
     │
     ▼
-resize_design() / apply_transform() ──▶ 缩放、旋转
+    resize_design() / apply_transform() ──▶ 缩放、旋转
     │
     ▼
 paste_with_blend() ──▶ 按 (center_x, top_y) 定位，使用 Multiply 等混合模式贴到背景上
