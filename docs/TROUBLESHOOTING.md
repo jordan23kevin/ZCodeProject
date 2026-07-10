@@ -95,3 +95,18 @@ PSD 模板有手部遮罩层，PNG 模板没有。如果对所有模板都尝试
 - 每张胚衣的参数单独记录在 `white_t_mockup/presets.json`，CLI 用 `--preset <模板文件名>` 或 `--template` 文件名自动匹配。
 - 新增胚衣时新增一条 preset，不要复用其他胚衣参数。
 - 测试不要断言固定画布尺寸（如 `1728 × 2304`），应读取当前模板实际尺寸后再断言。
+
+## 10. 缩放算法演进与参数来源单一化（v1.3.0）
+
+**踩过的坑**
+- 早期用「缩放百分比 + 逐款 kx/ky 校准」复现 PS（kx/ky = native/2048）。三款标定曾反复猜错（统一成黑正2→黑W5→白正2），根因是把 PS「置入后显示尺寸」当成了「Transform 100% 基准尺寸」；所谓 1.333 只是 2730/2048 的巧合，不是算法。
+- CSV 曾分「旋转方向 + 旋转角度」两列，易填错；参数同时写在 CSV、`胚衣参数表.md`、README/ARCHITECTURE/SKILL 四五处，每次改要各处同步，经常不同步。CSV 偶尔"乱码"实为终端用 GBK 显示 UTF-8，文件本身（带 BOM）没坏。
+
+**最终方案**
+- **final 像素模型**：CSV 直接填「缩放后宽px/缩放后高px」（PS 里贴图层最终像素），`apply_transform_ps()` 直接 `resize((final_w, final_h))` 再 `rotate(-deg, expand=True)`，原图固定 2048×2048，final 即目标像素，100% 复现 PS，无需 native/kx/ky。
+- **旋转角度单列带符号**：负=逆时针、正=顺时针（与 PS / `apply_transform` 一致），去掉「旋转方向」列。
+- **参数单一来源**：只维护 `docs/胚衣参数表_模板.csv`；贴图前 `sync_if_stale()`（或 `python scripts/sync_presets_from_csv.py --force`）自动同步到 `white_t_mockup/presets.json`，代码只读 presets.json。不再生成 md 镜像，不再在 README/ARCHITECTURE/SKILL 写参数快照。
+- 三款 final 标定值：白正2 546×546、黑正2 545×583、黑W5 544×602；其余款在 PS 量最终像素后填入 CSV 即可。
+
+**回滚**
+- 每个稳定版打 git tag（如 `v1.3.0`）。回滚：`git revert <commit>` 撤销某次改动，或 `git checkout v1.3.0 -- <文件>` 取回旧版文件。

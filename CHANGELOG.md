@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.0] - 2026-07-10
+
+### Changed
+- 贴图缩放改用 **final 像素模型**：CSV 直接填「缩放后宽px/缩放后高px」（PS 里贴图层最终像素），代码 `resize((final_w, final_h))` 再旋转，原图固定 2048×2048，100% 复现 PS。取代旧的「缩放百分比 + 水平校准kx/垂直校准ky（native 标定）」三列。
+- 胚衣参数统一收敛到 `docs/胚衣参数表_模板.csv` 一份；删除 `docs/胚衣参数表.md` 镜像及 README/ARCHITECTURE/SKILL 里的参数快照表，避免多处同步。`scripts/sync_presets_from_csv.py` 只同步 CSV → `white_t_mockup/presets.json`。
+- 旋转角度列沿用正负约定（负=逆时针 / 正=顺时针，同 PS），去掉「旋转方向」列。
+- CLI：`--scale` 改为 `--final-w/--final-h`，删除 `--target-height`（legacy 旧版缩放也用 final）。
+
+### Fixed
+- 修正「把 PS 置入后显示尺寸当成 Transform 100% 基准尺寸」的算法误判；所谓 kx/ky=1.333 只是 2730/2048 的巧合，不是算法。
+
 ## [Unreleased]
 
 ### Added
