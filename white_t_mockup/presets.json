@@ -21,7 +21,7 @@
       "effective_center_x": 649
     },
     "白B3.png": {
-      "path": "D:\\Semems\\1胚衣\\白\\B3.png",
+      "path": "D:\\Semems\\1胚衣\\白\\白B3.png",
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "背面B贴图",
@@ -91,7 +91,7 @@
       "effective_center_x": 632
     },
     "黑W1.png": {
-      "path": "D:\\Semems\\1胚衣\\黑\\W1.png",
+      "path": "D:\\Semems\\1胚衣\\黑\\黑W1.png",
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "",
