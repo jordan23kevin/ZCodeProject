@@ -19,7 +19,7 @@ from white_t_mockup.core import (
 
 
 def test_version():
-    assert __version__ == "1.2.1"
+    assert __version__ == "1.2.2"
 
 
 def test_resize_design_maintains_aspect_ratio():

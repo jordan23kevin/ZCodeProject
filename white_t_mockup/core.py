@@ -12,6 +12,17 @@ from psd_tools import PSDImage
 
 from .config import DEFAULT_BLEND_MODE, SUPPORTED_BLEND_MODES
 
+# ---- PS 水平缩放复现校准 ----
+# CSV/presets 里的 scale 含义 = Photoshop 自由变换「水平(W)」百分比（如 0.20 = 20%）。
+# PS 这个百分比是相对于「智能对象置入文档后的变换前显示宽」，不是 cut 原始像素宽。
+# 用 DX0611 黑正2 参考图标定：cut/智能对象原始 2048x2048，PS 填 20% 实际显示 545x583，
+# 故代码把 cut 整图按 (scale*PS_SCALE_KX, scale*PS_SCALE_KY) 非等比缩放来复现 PS 效果。
+#   PS_SCALE_KX = 545 / (2048*0.20) = 1.33056640625  （水平）
+#   PS_SCALE_KY = 583 / (2048*0.20) = 1.42333984375  （垂直；PS 里 W/H 未锁比例）
+# 新图若对不上，用「PS 实际显示宽 / (cut整图宽 * scale)」重新标定这两个常量。
+PS_SCALE_KX = 1.33056640625
+PS_SCALE_KY = 1.42333984375
+
 
 def load_template(psd_path: str | Path) -> Tuple[Image.Image, Image.Image, Tuple[int, int], Tuple[int, int]]:
     """
@@ -178,6 +189,28 @@ def apply_transform(
     return rotated
 
 
+def apply_transform_ps(
+    design: Image.Image,
+    scale: float,
+    rotation_degrees: float,
+) -> Image.Image:
+    """
+    复现 Photoshop 自由变换「水平(W)百分比」的贴图缩放（非等比）。
+
+    scale: PS 水平百分比（0.20 = 20%）。内部按 PS_SCALE_KX/KY 把 cut 整图非等比缩放，
+           使贴图有效大小与 PS 里填同一百分比的效果一致（黑正2 标定：2048->545x583）。
+    rotation_degrees: 顺时针旋转角度（正值为顺时针）。
+    """
+    w, h = design.size
+    new_size = (
+        int(round(w * scale * PS_SCALE_KX)),
+        int(round(h * scale * PS_SCALE_KY)),
+    )
+    resized = design.resize(new_size, Image.Resampling.LANCZOS)
+    # PIL 正角度为逆时针，顺时针需取负
+    return resized.rotate(-rotation_degrees, expand=True, resample=Image.Resampling.BICUBIC)
+
+
 def find_effective_bbox(image: Image.Image, alpha_threshold: int = 10) -> Tuple[int, int, int, int]:
     """
     找出图像中有效（非透明）像素的边界框。
@@ -238,7 +271,7 @@ def apply_mockup_transform(
         design = prepare_design_for_shirt(design, shirt_color, prepare_method)
     background, foreground, fg_position, canvas_size = load_any_template(template_path)
 
-    transformed = apply_transform(design, scale, rotation_degrees)
+    transformed = apply_transform_ps(design, scale, rotation_degrees)
     paste_x, paste_y, effective_bbox = calculate_effective_position(
         transformed, effective_top_y, effective_center_x
     )
