@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.4.1] - 2026-07-10
+
+### Fixed
+- 黑 T 默认混合模式由 multiply 改为 **normal**（按衫色自动：黑 T normal / 白 T multiply；显式 `--blend-mode` 仍优先）。黑 T 贴透明底印花用 Normal 保留图案原色、Opacity 100，衣服明暗交给模板管线的 shadow/highlight/布纹层透出（POD 推荐基础方式）。修正黑 T 反白印花被 multiply 压暗、糊成一团的问题（DX0654 实测：multiply 糊、screen 过曝泛光、normal 原色清晰且融入）。`white_t_mockup/cli.py` 混合模式解析重排到衫色确定之后。回滚锚点：`v1.4.0`。
+
 ## [1.4.0] - 2026-07-10
 
 ### Added

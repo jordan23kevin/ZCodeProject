@@ -223,9 +223,7 @@ def main() -> None:
 
     method = params.get("method", "transform" if args.final_w is not None else "legacy")
 
-    blend_mode = args.blend_mode or params.get("blend_mode", DEFAULT_BLEND_MODE)
     quality = args.quality if args.quality is not None else DEFAULT_QUALITY
-    blend_mode = None if blend_mode == "normal" else blend_mode
 
     shirt_color = args.shirt_color
     prepare_method = args.prepare_method
@@ -236,6 +234,17 @@ def main() -> None:
     elif args.for_white_shirt:
         shirt_color = "white"
         prepare_method = "value_invert"
+
+    # 混合模式：显式 --blend-mode > 按衫色默认（黑T screen / 白T multiply）> preset 默认
+    if args.blend_mode:
+        blend_mode = args.blend_mode
+    elif shirt_color == "black":
+        blend_mode = "normal"
+    elif shirt_color == "white":
+        blend_mode = "multiply"
+    else:
+        blend_mode = params.get("blend_mode", DEFAULT_BLEND_MODE)
+    blend_mode = None if blend_mode == "normal" else blend_mode
 
     if method == "transform":
         final_w = args.final_w if args.final_w is not None else params.get("final_w")

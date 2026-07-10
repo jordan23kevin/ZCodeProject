@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """白 T 恤样机贴图自动化工具包。"""
 
-__version__ = "1.4.0"
+__version__ = "1.4.1"
 
 from .core import (
     apply_mockup,
