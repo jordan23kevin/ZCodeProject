@@ -236,6 +236,157 @@ def calculate_effective_position(
     return paste_x, paste_y, (left, top, right, bottom)
 
 
+def apply_realism(design, *, saturation=0.90, brightness=0.95, blur_radius=0.5):
+    """印花真实感：降饱和、降亮度、边缘柔化（模拟丝印略降色 + 纤维扩散）。"""
+    from PIL import ImageEnhance, ImageFilter
+    d = design
+    if saturation != 1.0:
+        d = ImageEnhance.Color(d).enhance(saturation)
+    if brightness != 1.0:
+        d = ImageEnhance.Brightness(d).enhance(brightness)
+    if blur_radius and blur_radius > 0:
+        d = d.filter(ImageFilter.GaussianBlur(blur_radius))
+    return d
+
+
+def overlay_texture(canvas, background, design, paste_x, paste_y, *, mode="multiply", opacity=0.25):
+    """把 background 的明暗纹理限印花区域、以 mode 混合、opacity 透明叠到 canvas（布纹/褶皱透出）。"""
+    dw, dh = design.size
+    cw, ch = canvas.size
+    x0, y0 = paste_x, paste_y
+    bx0, by0 = max(x0, 0), max(y0, 0)
+    bx1, by1 = min(x0 + dw, cw), min(y0 + dh, ch)
+    if bx0 >= bx1 or by0 >= by1:
+        return
+    bg_gray = background.crop((bx0, by0, bx1, by1)).convert("L").convert("RGBA")
+    mask = design.crop((bx0 - x0, by0 - y0, bx1 - x0, by1 - y0)).split()[3]
+    bg_arr = np.array(bg_gray)
+    a = (np.array(mask).astype(np.float32) * opacity).astype(np.uint8)
+    bg_arr[:, :, 3] = a
+    tex = Image.fromarray(bg_arr, "RGBA")
+    paste_with_blend(canvas, tex, (bx0, by0), mode)
+
+
+def _remap_channels(arr: np.ndarray, map_x: np.ndarray, map_y: np.ndarray) -> np.ndarray:
+    """向量化双线性重采样。arr:(H,W,C) float；map_x/map_y:(H,W) 源采样坐标。"""
+    h, w = map_x.shape
+    x0 = np.floor(map_x).astype(np.int32)
+    y0 = np.floor(map_y).astype(np.int32)
+    x1, y1 = x0 + 1, y0 + 1
+    x0c = np.clip(x0, 0, w - 1)
+    x1c = np.clip(x1, 0, w - 1)
+    y0c = np.clip(y0, 0, h - 1)
+    y1c = np.clip(y1, 0, h - 1)
+    wx = (map_x - x0)[..., None]
+    wy = (map_y - y0)[..., None]
+    Ia = arr[y0c, x0c]
+    Ib = arr[y0c, x1c]
+    Ic = arr[y1c, x0c]
+    Id = arr[y1c, x1c]
+    return Ia * (1 - wx) * (1 - wy) + Ib * wx * (1 - wy) + Ic * (1 - wx) * wy + Id * wx * wy
+
+
+def apply_displacement(
+    design: Image.Image,
+    disp: Image.Image,
+    mask: Image.Image,
+    paste_x: int,
+    paste_y: int,
+    strength: float = 8.0,
+) -> Image.Image:
+    """
+    按置换图 disp（画布尺寸 L 模式）对 design 做形变，限 mask 区域。
+
+    disp 灰度 128=不偏移，>128 向 +，<128 向 -；strength 为最大像素偏移。
+    mask=0 处不偏移。各向同性（x/y 同灰度偏移）。paste_x/paste_y 为 design 在画布的左上角。
+    """
+    dw, dh = design.size
+    arr = np.array(design).astype(np.float32)
+    disp_arr = np.array(disp.convert("L")).astype(np.float32)
+    mask_arr = np.array(mask.convert("L")).astype(np.float32) / 255.0
+    H, W = disp_arr.shape
+
+    yy, xx = np.mgrid[0:dh, 0:dw].astype(np.float32)
+    cx = np.clip(paste_x + xx, 0, W - 1).astype(np.int32)
+    cy = np.clip(paste_y + yy, 0, H - 1).astype(np.int32)
+    g = disp_arr[cy, cx]
+    m = mask_arr[cy, cx]
+    off = (g - 128.0) / 128.0 * strength * m
+    map_x = xx - off
+    map_y = yy - off
+
+    out = _remap_channels(arr, map_x, map_y)
+    return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), "RGBA")
+
+
+def transfer_shadow_highlight(
+    canvas: Image.Image,
+    design: Image.Image,
+    paste_x: int,
+    paste_y: int,
+    mask: Image.Image,
+    shadow: Image.Image | None,
+    highlight: Image.Image | None,
+    *,
+    shadow_opacity: float = 0.35,
+    highlight_opacity: float = 0.25,
+) -> None:
+    """
+    把衣服暗部(shadow, Multiply)与亮边(highlight, Overlay)转移到 canvas 的印花区域。
+
+    强度 = 印花alpha × (mask/255) × opacity。shadow/highlight 为画布尺寸 L 模式，None 则跳过。
+    直接改 canvas（in-place）。
+    """
+    if shadow is None and highlight is None:
+        return
+    dw, dh = design.size
+    cw, ch = canvas.size
+    bx0, by0 = max(paste_x, 0), max(paste_y, 0)
+    bx1, by1 = min(paste_x + dw, cw), min(paste_y + dh, ch)
+    if bx0 >= bx1 or by0 >= by1:
+        return
+
+    region = canvas.crop((bx0, by0, bx1, by1)).convert("RGBA")
+    reg_np = np.array(region).astype(np.float32)
+    base_rgb = reg_np[:, :, :3]
+
+    dmask = design.crop((bx0 - paste_x, by0 - paste_y, bx1 - paste_x, by1 - paste_y)).split()[3]
+    alpha = np.array(dmask).astype(np.float32) / 255.0
+    mask_crop = mask.crop((bx0, by0, bx1, by1)).convert("L")
+    m = np.array(mask_crop).astype(np.float32) / 255.0
+    strength_base = alpha * m
+
+    if shadow is not None and shadow_opacity > 0:
+        s = np.array(shadow.crop((bx0, by0, bx1, by1)).convert("L")).astype(np.float32) / 255.0
+        s3 = s[..., None]
+        st = (strength_base * shadow_opacity)[..., None]
+        mul = base_rgb * s3  # multiply
+        base_rgb = base_rgb * (1 - st) + mul * st
+
+    if highlight is not None and highlight_opacity > 0:
+        h = np.array(highlight.crop((bx0, by0, bx1, by1)).convert("L")).astype(np.float32) / 255.0
+        h3 = h[..., None]
+        b = base_rgb / 255.0
+        ov = np.where(b < 0.5, 2 * b * h3, 1 - 2 * (1 - b) * (1 - h3)) * 255.0
+        st = (strength_base * highlight_opacity)[..., None]
+        base_rgb = base_rgb * (1 - st) + ov * st
+
+    reg_np[:, :, :3] = np.clip(base_rgb, 0, 255)
+    out = Image.fromarray(reg_np.astype(np.uint8), "RGBA")
+    canvas.paste(out, (bx0, by0), out)
+
+
+def _load_tpl_optional(tpl_dir: Path, name: str, canvas_size: Tuple[int, int]):
+    """加载模板衍生图（L 模式，对齐 canvas 尺寸），不存在返回 None。"""
+    p = tpl_dir / name
+    if not p.exists():
+        return None
+    im = Image.open(str(p)).convert("L")
+    if im.size != canvas_size:
+        im = im.resize(canvas_size, Image.Resampling.LANCZOS)
+    return im
+
+
 def apply_mockup_transform(
     design_path: str | Path,
     output_path: str | Path,
@@ -249,11 +400,22 @@ def apply_mockup_transform(
     quality: int = 95,
     shirt_color: Literal["black", "white"] | None = None,
     prepare_method: Literal["value_invert", "silhouette", "none"] = "value_invert",
+    realism: bool = True,
+    saturation: float = 0.90,
+    brightness: float = 0.95,
+    blur_radius: float = 0.5,
+    texture_mode: str = "multiply",
+    texture_opacity: float = 0.25,
+    tpl_dir: str | Path | None = None,
+    disp_strength: float = 8.0,
+    shadow_opacity: float = 0.35,
+    highlight_opacity: float = 0.25,
 ) -> dict:
     """
     新版贴图方法：resize 到最终像素 → 旋转 → 按有效像素定位 → 混合。
 
-    支持 PSD 和 PNG 两种模板。
+    支持 PSD/PNG 模板；tpl_dir 含 mask.png 时启用模板管线：
+    displacement(disp，限 mask) → shadow(Multiply) + highlight(Overlay) 转移，限印花∩衣服区。
     """
     design = Image.open(str(design_path)).convert("RGBA")
     if shirt_color is not None:
@@ -265,9 +427,41 @@ def apply_mockup_transform(
         transformed, effective_top_y, effective_center_x
     )
 
+    mask_im = disp_im = shadow_im = highlight_im = None
+    if tpl_dir:
+        td = Path(tpl_dir)
+        mask_im = _load_tpl_optional(td, "mask.png", canvas_size)
+        if mask_im is not None:
+            disp_im = _load_tpl_optional(td, "disp.png", canvas_size)
+            shadow_im = _load_tpl_optional(td, "shadow.png", canvas_size)
+            highlight_im = _load_tpl_optional(td, "highlight.png", canvas_size)
+    use_tpl = mask_im is not None
+
+    if use_tpl and disp_im is not None:
+        transformed = apply_displacement(
+            transformed, disp_im, mask_im, paste_x, paste_y, disp_strength
+        )
+
+    if realism:
+        transformed = apply_realism(
+            transformed, saturation=saturation, brightness=brightness, blur_radius=blur_radius
+        )
+
     canvas = Image.new("RGBA", canvas_size, (255, 255, 255, 255))
     canvas.paste(background, (0, 0), background)
     paste_with_blend(canvas, transformed, (paste_x, paste_y), blend_mode)
+
+    if use_tpl:
+        transfer_shadow_highlight(
+            canvas, transformed, paste_x, paste_y, mask_im, shadow_im, highlight_im,
+            shadow_opacity=shadow_opacity, highlight_opacity=highlight_opacity,
+        )
+    elif realism:
+        overlay_texture(
+            canvas, background, transformed, paste_x, paste_y,
+            mode=texture_mode, opacity=texture_opacity,
+        )
+
     if foreground is not None and fg_position is not None:
         canvas.paste(foreground, fg_position, foreground)
 
@@ -286,6 +480,7 @@ def apply_mockup_transform(
         "final_h": final_h,
         "rotation_degrees": rotation_degrees,
         "blend_mode": blend_mode or "normal",
+        "template_pipeline": use_tpl,
     }
 
 
@@ -301,10 +496,15 @@ def apply_mockup(
     quality: int = 95,
     shirt_color: Literal["black", "white"] | None = None,
     prepare_method: Literal["value_invert", "silhouette", "none"] = "value_invert",
+    tpl_dir: str | Path | None = None,
+    disp_strength: float = 8.0,
+    shadow_opacity: float = 0.35,
+    highlight_opacity: float = 0.25,
 ) -> dict:
     """
     旧版贴图方法：resize 到最终像素 → 按顶部/中心定位 → 混合 → 盖手部遮罩（仅 PSD）。
 
+    tpl_dir 含 mask.png 时启用模板管线：displacement(disp) + shadow/highlight 转移。
     返回包含贴图参数的字典，便于测试和日志记录。
     """
     design = Image.open(str(design_path)).convert("RGBA")
@@ -314,12 +514,33 @@ def apply_mockup(
 
     design_resized = design.resize((int(final_w), int(final_h)), Image.Resampling.LANCZOS)
     dw, dh = design_resized.size
-
     left, top = calculate_design_position(design_resized.size, center_x, top_y)
+
+    mask_im = disp_im = shadow_im = highlight_im = None
+    if tpl_dir:
+        td = Path(tpl_dir)
+        mask_im = _load_tpl_optional(td, "mask.png", canvas_size)
+        if mask_im is not None:
+            disp_im = _load_tpl_optional(td, "disp.png", canvas_size)
+            shadow_im = _load_tpl_optional(td, "shadow.png", canvas_size)
+            highlight_im = _load_tpl_optional(td, "highlight.png", canvas_size)
+    use_tpl = mask_im is not None
+
+    if use_tpl and disp_im is not None:
+        design_resized = apply_displacement(
+            design_resized, disp_im, mask_im, left, top, disp_strength
+        )
 
     canvas = Image.new("RGBA", canvas_size, (255, 255, 255, 255))
     canvas.paste(background, (0, 0), background)
     paste_with_blend(canvas, design_resized, (left, top), blend_mode)
+
+    if use_tpl:
+        transfer_shadow_highlight(
+            canvas, design_resized, left, top, mask_im, shadow_im, highlight_im,
+            shadow_opacity=shadow_opacity, highlight_opacity=highlight_opacity,
+        )
+
     canvas.paste(foreground, fg_position, foreground)
 
     canvas_rgb = canvas.convert("RGB")
@@ -332,6 +553,7 @@ def apply_mockup(
         "design_top": top,
         "design_center": (center_x, top_y + dh // 2),
         "blend_mode": blend_mode or "normal",
+        "template_pipeline": use_tpl,
     }
 
 

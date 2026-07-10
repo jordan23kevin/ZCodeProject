@@ -138,6 +138,48 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=f"JPG 质量（默认: {DEFAULT_QUALITY}）",
     )
+    # ---- 真实感（自然度）参数 ----
+    parser.add_argument(
+        "--no-realism",
+        action="store_true",
+        help="关闭真实感处理（降饱和/亮度/模糊 + 布纹透出），用于对比原效果",
+    )
+    parser.add_argument(
+        "--blur",
+        type=float,
+        default=0.5,
+        help="印花边缘高斯模糊半径 px（默认 0.5，0 关闭）",
+    )
+    parser.add_argument(
+        "--texture-opacity",
+        type=float,
+        default=0.25,
+        help="布纹透出叠加透明度（默认 0.25，0 关闭）",
+    )
+    # ---- 模板管线（自然褶皱：displacement + shadow/highlight 转移）----
+    parser.add_argument(
+        "--tpl-dir",
+        default=None,
+        help="模板衍生素材目录（含 mask/disp/shadow/highlight.png）；不传则自动探测 胚衣根/_tpl/<款名>/",
+    )
+    parser.add_argument(
+        "--disp-strength",
+        type=float,
+        default=12.0,
+        help="置换最大像素偏移（默认 12.0）",
+    )
+    parser.add_argument(
+        "--shadow-opacity",
+        type=float,
+        default=0.35,
+        help="阴影转移(Multiply)透明度（默认 0.35，黑T主力）",
+    )
+    parser.add_argument(
+        "--highlight-opacity",
+        type=float,
+        default=0.25,
+        help="高光转移(Overlay)透明度（默认 0.25）",
+    )
     return parser
 
 
@@ -171,6 +213,13 @@ def main() -> None:
 
     if template_path is None:
         template_path = params.get("path", DEFAULT_TEMPLATE)
+
+    # 模板衍生素材目录：命令行 > 预设 > 自动探测 胚衣根/_tpl/<款名>/
+    tpl_dir = args.tpl_dir or params.get("tpl_dir")
+    if tpl_dir is None and template_path:
+        _cand = Path(template_path).parent.parent / "_tpl" / Path(template_path).stem
+        if (_cand / "mask.png").exists():
+            tpl_dir = str(_cand)
 
     method = params.get("method", "transform" if args.final_w is not None else "legacy")
 
@@ -217,6 +266,13 @@ def main() -> None:
             quality=quality,
             shirt_color=shirt_color,
             prepare_method=prepare_method,
+            realism=not args.no_realism,
+            blur_radius=args.blur,
+            texture_opacity=args.texture_opacity,
+            tpl_dir=tpl_dir,
+            disp_strength=args.disp_strength,
+            shadow_opacity=args.shadow_opacity,
+            highlight_opacity=args.highlight_opacity,
         )
         print(
             f"已保存: {args.output}  尺寸: {result['output_size']}  混合模式: {result['blend_mode']}"
@@ -225,6 +281,8 @@ def main() -> None:
             f"模板: {Path(template_path).name}  最终像素={result['final_w']}x{result['final_h']}, 旋转={result['rotation_degrees']}°, "
             f"有效像素最高点 y={result['effective_top']}, 中心 x={result['effective_center_x']}"
         )
+        if result.get("template_pipeline"):
+            print(f"模板管线: displacement + shadow/highlight  (tpl_dir={tpl_dir})")
     else:
         top = args.top_y if args.top_y is not None else params.get("top_y", DEFAULT_TOP_Y)
         center = args.center_x if args.center_x is not None else params.get("center_x", DEFAULT_CENTER_X)
@@ -245,6 +303,10 @@ def main() -> None:
             quality=quality,
             shirt_color=shirt_color,
             prepare_method=prepare_method,
+            tpl_dir=tpl_dir,
+            disp_strength=args.disp_strength,
+            shadow_opacity=args.shadow_opacity,
+            highlight_opacity=args.highlight_opacity,
         )
         print(
             f"已保存: {args.output}  尺寸: {result['output_size']}  混合模式: {result['blend_mode']}"
@@ -254,6 +316,8 @@ def main() -> None:
             f"左上角=({result['design_left']}, {result['design_top']}), "
             f"中心={result['design_center']}"
         )
+        if result.get("template_pipeline"):
+            print(f"模板管线: displacement + shadow/highlight  (tpl_dir={tpl_dir})")
 
 
 if __name__ == "__main__":

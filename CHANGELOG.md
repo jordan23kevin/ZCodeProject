@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.4.0] - 2026-07-10
+
+### Added
+- 自然度模板管线（工业级 mockup）：`apply_displacement()`（numpy 双线性 remap，按置换图灰度偏移、mask 限区）+ `transfer_shadow_highlight()`（阴影 Multiply / 高光 Overlay 转移到印花，限印花∩衣服区）。`apply_mockup_transform()` / `apply_mockup()` 新增 `tpl_dir / disp_strength / shadow_opacity / highlight_opacity`；目录含 `mask.png` 即自动启用。黑 T 真实感权重：阴影 40 / 高光 20 / 置换 30 / 布纹 10。
+- 真实感三件套：`apply_realism()`（降饱和 / 降亮度 / 边缘柔化）+ `overlay_texture()`（布纹透出）。CLI `--no-realism / --blur / --texture-opacity`。
+- 模板素材自动生成：`scripts/make_template_assets.py`（OpenCV GrabCut + 暗度先验分割衣服，产出 `_tpl/<款>/{source,mask,disp,shadow,highlight}.png + metadata.json + _preview/`）。黑 T 与黑发 / 短裤同色易混，自动 mask 需按 `_preview` 人工复核（metadata `needs_manual_fix` 已标）。
+- CLI 模板管线参数：`--tpl-dir / --disp-strength / --shadow-opacity / --highlight-opacity`；未传 `--tpl-dir` 时自动探测 `胚衣根/_tpl/<款名>/`。
+
+### Changed
+- `--disp-strength` 默认 8 → 12（黑 W5 实测 12 比 8 更贴褶皱且无伪影）。
+- 模板库目录约定：`D:/Semems/1胚衣/_tpl/<款名>/`（一张模板供所有印花复用）。
+
+### Notes
+- 自动分割质量 < 人工 PS；黑 T 明暗信号弱，displacement 效果克制属正常。回滚锚点：`v1.3.1`（f83700a）。
+
 ## [1.3.0] - 2026-07-10
 
 ### Changed
