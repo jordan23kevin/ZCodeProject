@@ -205,11 +205,13 @@ def test_apply_mockup_transform_with_white_shirt_preparation(tmp_path):
 
 
 def test_apply_transform_ps_matches_photoshop_calibration():
-    # 统一算法标定：2048x2048 cut 置入 PS，水平 30% -> 显示 544x602（非等比）
+    # native 模型：final = native × (CSV%/100)；代码 cut × (% × kx/ky)，kx/ky=native/2048
     from white_t_mockup.core import PS_SCALE_KX, PS_SCALE_KY, apply_transform_ps
 
     design = Image.new("RGBA", (2048, 2048), (255, 0, 0, 255))
-    transformed = apply_transform_ps(design, scale=0.30, rotation_degrees=0)
-    assert transformed.size == (544, 602)
-    assert abs(PS_SCALE_KX - 544 / (2048 * 0.30)) < 1e-9
-    assert abs(PS_SCALE_KY - 602 / (2048 * 0.30)) < 1e-9
+    # 白正2：native 2730×2730，CSV 20% -> 546×546
+    transformed = apply_transform_ps(design, 0.20, 0, kx=2730 / 2048, ky=2730 / 2048)
+    assert transformed.size == (546, 546)
+    # 默认（未标定）用白正2 native
+    assert abs(PS_SCALE_KX - 2730 / 2048) < 1e-9
+    assert abs(PS_SCALE_KY - 2730 / 2048) < 1e-9

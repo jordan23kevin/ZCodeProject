@@ -33,6 +33,7 @@ MD_PATH = ROOT / "docs" / "胚衣参数表.md"
 ENTRY_KEYS = (
     "path", "method", "blend_mode", "notes",
     "scale", "rotation_degrees", "effective_top_y", "effective_center_x",
+    "kx", "ky",
 )
 
 # md 表格列（规范化短名），顺序与 CSV 表头一致
@@ -145,6 +146,8 @@ def _row_to_entry(row):
         "rotation_degrees": _parse_rotation(_col(row, "旋转方向"), _col(row, "旋转角度")),
         "effective_top_y": int(top_y) if top_y is not None else None,
         "effective_center_x": int(cx) if cx is not None else None,
+        "kx": _num(_col(row, "水平校准kx")),
+        "ky": _num(_col(row, "垂直校准ky")),
     }
     return name, entry
 

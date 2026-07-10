@@ -194,6 +194,8 @@ def main() -> None:
         rotate = args.rotate if args.rotate is not None else params.get("rotation_degrees", 0.0)
         top = args.effective_top_y if args.effective_top_y is not None else params.get("effective_top_y")
         center = args.effective_center_x if args.effective_center_x is not None else params.get("effective_center_x")
+        kx = params.get("kx")
+        ky = params.get("ky")
 
         missing = [k for k, v in {
             "--scale": scale,
@@ -211,6 +213,8 @@ def main() -> None:
             rotation_degrees=rotate,
             effective_top_y=top,
             effective_center_x=center,
+            kx=kx,
+            ky=ky,
             blend_mode=blend_mode,
             quality=quality,
             shirt_color=shirt_color,

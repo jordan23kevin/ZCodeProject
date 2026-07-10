@@ -12,15 +12,16 @@ from psd_tools import PSDImage
 
 from .config import DEFAULT_BLEND_MODE, SUPPORTED_BLEND_MODES
 
-# ---- PS 水平缩放复现校准（统一算法）----
-# CSV/presets 里的 scale 含义 = Photoshop 自由变换「水平(W)」百分比（如 30 = 30%）。
-# 标定来源（用户定义的统一算法）：2048x2048 cut 置入 PS，水平填 30% 实际显示 544x602。
-# 故所有款统一：显示 = cut整图 x (scale * PS_SCALE_KX, scale * PS_SCALE_KY)（非等比）。
-#   PS_SCALE_KX = 544 / (2048*0.30) = 0.8854166667  （水平）
-#   PS_SCALE_KY = 602 / (2048*0.30) = 0.9798177083  （垂直；PS 里 W/H 未锁比例）
-# 用户在 CSV「缩放百分比」列填每款的水平 W%，代码按此统一比例出图。
-PS_SCALE_KX = 0.8854166666666666
-PS_SCALE_KY = 0.9798177083333333
+# ---- PS 缩放复现（逐款 native 标定）----
+# PS Transform 的 % 是相对于智能对象「内部 100% transform 尺寸」(ps_native)，不是原图 2048、
+# 也不是置入后的显示 1340。复现公式：
+#   native = current_display / current_transform_percent
+#   final  = native × target_percent          （等比锁定；native 决定宽高比）
+# 代码等价：final = cut整图 × (CSV%/100 × kx, CSV%/100 × ky)，其中 kx=native_w/2048、ky=native_h/2048。
+# 每款 kx/ky 存 CSV「水平校准kx/垂直校准ky」列（由参考 psd 反推），经 presets 传入 cli。
+# 下面两个常量仅作「未标定款」的全局默认（白正2：native 2730×2730，kx=ky=2730/2048≈1.333）。
+PS_SCALE_KX = 2730 / 2048
+PS_SCALE_KY = 2730 / 2048
 
 
 def load_template(psd_path: str | Path) -> Tuple[Image.Image, Image.Image, Tuple[int, int], Tuple[int, int]]:
