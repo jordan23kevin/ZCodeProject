@@ -159,6 +159,16 @@
       "rotation_degrees": -2.0,
       "effective_top_y": 715,
       "effective_center_x": 707
+    },
+    "黑正2.jpg": {
+      "path": "D:\\Semems\\1胚衣\\黑正2.jpg",
+      "method": "transform",
+      "blend_mode": "multiply",
+      "notes": "正面W贴图白T",
+      "scale": 0.2,
+      "rotation_degrees": -2.5,
+      "effective_top_y": 645,
+      "effective_center_x": 660
     }
   }
 }
