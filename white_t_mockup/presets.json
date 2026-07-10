@@ -1,5 +1,15 @@
 {
   "templates": {
+    "白正2.jpg": {
+      "path": "D:\\Semems\\1胚衣\\白正2.jpg",
+      "method": "transform",
+      "blend_mode": "multiply",
+      "notes": "正面W贴图白T",
+      "scale": 0.25,
+      "rotation_degrees": -1.0,
+      "effective_top_y": 644,
+      "effective_center_x": 670
+    },
     "白W3.psd": {
       "path": "D:\\Semems\\1胚衣\\白\\白W3.psd",
       "method": "legacy",
@@ -39,16 +49,6 @@
       "rotation_degrees": 2.0,
       "effective_top_y": 1011,
       "effective_center_x": 576
-    },
-    "白正2.jpg": {
-      "path": "D:\\Semems\\1胚衣\\白正2.jpg",
-      "method": "transform",
-      "blend_mode": "multiply",
-      "notes": "正面W贴图白T",
-      "scale": 0.25,
-      "rotation_degrees": -1.0,
-      "effective_top_y": 644,
-      "effective_center_x": 670
     },
     "黑W9.png": {
       "path": "D:\\Semems\\1胚衣\\黑\\黑W9.png",
@@ -165,7 +165,7 @@
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "正面W贴图白T",
-      "scale": 0.32,
+      "scale": 0.2,
       "rotation_degrees": -2.5,
       "effective_top_y": 645,
       "effective_center_x": 660
