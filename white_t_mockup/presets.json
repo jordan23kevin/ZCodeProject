@@ -5,10 +5,12 @@
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "正面W贴图白T",
-      "scale": 0.25,
-      "rotation_degrees": -1.0,
+      "scale": 0.2,
+      "rotation_degrees": -2.0,
       "effective_top_y": 644,
-      "effective_center_x": 670
+      "effective_center_x": 670,
+      "kx": 1.333,
+      "ky": 1.333
     },
     "白W3.psd": {
       "path": "D:\\Semems\\1胚衣\\白\\白W3.psd",
@@ -17,8 +19,10 @@
       "notes": "DX0533旧版PSD，带手部遮罩",
       "scale": 0.4,
       "rotation_degrees": 0.0,
-      "effective_top_y": 440,
-      "effective_center_x": 730
+      "effective_top_y": 450,
+      "effective_center_x": 730,
+      "kx": null,
+      "ky": null
     },
     "白B1.png": {
       "path": "D:\\Semems\\1胚衣\\白\\白B1.png",
@@ -28,7 +32,9 @@
       "scale": 0.4,
       "rotation_degrees": 0.0,
       "effective_top_y": 725,
-      "effective_center_x": 649
+      "effective_center_x": 649,
+      "kx": null,
+      "ky": null
     },
     "白B3.png": {
       "path": "D:\\Semems\\1胚衣\\白\\白B3.png",
@@ -38,7 +44,9 @@
       "scale": 0.32,
       "rotation_degrees": -3.0,
       "effective_top_y": 700,
-      "effective_center_x": 777
+      "effective_center_x": 777,
+      "kx": null,
+      "ky": null
     },
     "白B4.png": {
       "path": "D:\\Semems\\1胚衣\\白\\白B4.png",
@@ -48,7 +56,9 @@
       "scale": 0.28,
       "rotation_degrees": 2.0,
       "effective_top_y": 1011,
-      "effective_center_x": 576
+      "effective_center_x": 576,
+      "kx": null,
+      "ky": null
     },
     "黑W9.png": {
       "path": "D:\\Semems\\1胚衣\\黑\\黑W9.png",
@@ -58,7 +68,9 @@
       "scale": 0.28,
       "rotation_degrees": 0.0,
       "effective_top_y": 380,
-      "effective_center_x": 660
+      "effective_center_x": 660,
+      "kx": null,
+      "ky": null
     },
     "黑W8.png": {
       "path": "D:\\Semems\\1胚衣\\黑\\黑W8.png",
@@ -68,17 +80,21 @@
       "scale": 0.3,
       "rotation_degrees": 1.0,
       "effective_top_y": 423,
-      "effective_center_x": 647
+      "effective_center_x": 647,
+      "kx": null,
+      "ky": null
     },
     "黑W5.png": {
       "path": "D:\\Semems\\1胚衣\\黑\\黑W5.png",
-      "method": "transform",
+      "method": "legacy",
       "blend_mode": "multiply",
       "notes": "",
-      "scale": 0.25,
-      "rotation_degrees": 1.0,
-      "effective_top_y": 450,
-      "effective_center_x": 705
+      "scale": 0.3,
+      "rotation_degrees": 4.0,
+      "effective_top_y": 470,
+      "effective_center_x": 716,
+      "kx": 0.8853,
+      "ky": 0.98
     },
     "黑W2.png": {
       "path": "D:\\Semems\\1胚衣\\黑\\黑W2.png",
@@ -88,7 +104,9 @@
       "scale": 0.28,
       "rotation_degrees": 0.0,
       "effective_top_y": 441,
-      "effective_center_x": 632
+      "effective_center_x": 632,
+      "kx": null,
+      "ky": null
     },
     "黑W1.png": {
       "path": "D:\\Semems\\1胚衣\\黑\\黑W1.png",
@@ -98,7 +116,9 @@
       "scale": 0.3,
       "rotation_degrees": 0.0,
       "effective_top_y": 393,
-      "effective_center_x": 634
+      "effective_center_x": 634,
+      "kx": null,
+      "ky": null
     },
     "黑B6.png": {
       "path": "D:\\Semems\\1胚衣\\黑\\黑B6.png",
@@ -108,7 +128,9 @@
       "scale": 0.3,
       "rotation_degrees": -1.0,
       "effective_top_y": 669,
-      "effective_center_x": 623
+      "effective_center_x": 623,
+      "kx": null,
+      "ky": null
     },
     "黑B5.png": {
       "path": "D:\\Semems\\1胚衣\\黑\\黑B5.png",
@@ -118,7 +140,9 @@
       "scale": 0.28,
       "rotation_degrees": 0.0,
       "effective_top_y": 397,
-      "effective_center_x": 535
+      "effective_center_x": 535,
+      "kx": null,
+      "ky": null
     },
     "黑B4.png": {
       "path": "D:\\Semems\\1胚衣\\黑\\黑B4.png",
@@ -128,7 +152,9 @@
       "scale": 0.25,
       "rotation_degrees": 0.0,
       "effective_top_y": 595,
-      "effective_center_x": 729
+      "effective_center_x": 729,
+      "kx": null,
+      "ky": null
     },
     "黑B3.png": {
       "path": "D:\\Semems\\1胚衣\\黑\\黑B3.png",
@@ -138,7 +164,9 @@
       "scale": 0.25,
       "rotation_degrees": 0.0,
       "effective_top_y": 813,
-      "effective_center_x": 696
+      "effective_center_x": 696,
+      "kx": null,
+      "ky": null
     },
     "黑B2.png": {
       "path": "D:\\Semems\\1胚衣\\黑\\黑B2.png",
@@ -148,7 +176,9 @@
       "scale": 0.3,
       "rotation_degrees": -3.0,
       "effective_top_y": 645,
-      "effective_center_x": 657
+      "effective_center_x": 657,
+      "kx": null,
+      "ky": null
     },
     "黑B1.png": {
       "path": "D:\\Semems\\1胚衣\\黑\\黑B1.png",
@@ -158,7 +188,9 @@
       "scale": 0.3,
       "rotation_degrees": -2.0,
       "effective_top_y": 715,
-      "effective_center_x": 707
+      "effective_center_x": 707,
+      "kx": null,
+      "ky": null
     },
     "黑正2.jpg": {
       "path": "D:\\Semems\\1胚衣\\黑正2.jpg",
@@ -166,9 +198,11 @@
       "blend_mode": "multiply",
       "notes": "正面W贴图白T",
       "scale": 0.2,
-      "rotation_degrees": -2.5,
-      "effective_top_y": 645,
-      "effective_center_x": 660
+      "rotation_degrees": -1.0,
+      "effective_top_y": 657,
+      "effective_center_x": 682,
+      "kx": 1.3306,
+      "ky": 1.4233
     }
   }
 }
