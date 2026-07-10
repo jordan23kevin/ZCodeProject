@@ -205,11 +205,11 @@ def test_apply_mockup_transform_with_white_shirt_preparation(tmp_path):
 
 
 def test_apply_transform_ps_matches_photoshop_calibration():
-    # 黑正2 标定：2048x2048 cut，PS 水平 20% -> 显示 545x583（非等比）
+    # 统一算法标定：2048x2048 cut 置入 PS，水平 30% -> 显示 544x602（非等比）
     from white_t_mockup.core import PS_SCALE_KX, PS_SCALE_KY, apply_transform_ps
 
     design = Image.new("RGBA", (2048, 2048), (255, 0, 0, 255))
-    transformed = apply_transform_ps(design, scale=0.20, rotation_degrees=0)
-    assert transformed.size == (545, 583)
-    assert abs(PS_SCALE_KX - 545 / (2048 * 0.20)) < 1e-9
-    assert abs(PS_SCALE_KY - 583 / (2048 * 0.20)) < 1e-9
+    transformed = apply_transform_ps(design, scale=0.30, rotation_degrees=0)
+    assert transformed.size == (544, 602)
+    assert abs(PS_SCALE_KX - 544 / (2048 * 0.30)) < 1e-9
+    assert abs(PS_SCALE_KY - 602 / (2048 * 0.30)) < 1e-9

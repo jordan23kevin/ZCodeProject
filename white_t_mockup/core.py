@@ -12,16 +12,15 @@ from psd_tools import PSDImage
 
 from .config import DEFAULT_BLEND_MODE, SUPPORTED_BLEND_MODES
 
-# ---- PS 水平缩放复现校准 ----
-# CSV/presets 里的 scale 含义 = Photoshop 自由变换「水平(W)」百分比（如 0.20 = 20%）。
-# PS 这个百分比是相对于「智能对象置入文档后的变换前显示宽」，不是 cut 原始像素宽。
-# 用 DX0611 黑正2 参考图标定：cut/智能对象原始 2048x2048，PS 填 20% 实际显示 545x583，
-# 故代码把 cut 整图按 (scale*PS_SCALE_KX, scale*PS_SCALE_KY) 非等比缩放来复现 PS 效果。
-#   PS_SCALE_KX = 545 / (2048*0.20) = 1.33056640625  （水平）
-#   PS_SCALE_KY = 583 / (2048*0.20) = 1.42333984375  （垂直；PS 里 W/H 未锁比例）
-# 新图若对不上，用「PS 实际显示宽 / (cut整图宽 * scale)」重新标定这两个常量。
-PS_SCALE_KX = 1.33056640625
-PS_SCALE_KY = 1.42333984375
+# ---- PS 水平缩放复现校准（统一算法）----
+# CSV/presets 里的 scale 含义 = Photoshop 自由变换「水平(W)」百分比（如 30 = 30%）。
+# 标定来源（用户定义的统一算法）：2048x2048 cut 置入 PS，水平填 30% 实际显示 544x602。
+# 故所有款统一：显示 = cut整图 x (scale * PS_SCALE_KX, scale * PS_SCALE_KY)（非等比）。
+#   PS_SCALE_KX = 544 / (2048*0.30) = 0.8854166667  （水平）
+#   PS_SCALE_KY = 602 / (2048*0.30) = 0.9798177083  （垂直；PS 里 W/H 未锁比例）
+# 用户在 CSV「缩放百分比」列填每款的水平 W%，代码按此统一比例出图。
+PS_SCALE_KX = 0.8854166666666666
+PS_SCALE_KY = 0.9798177083333333
 
 
 def load_template(psd_path: str | Path) -> Tuple[Image.Image, Image.Image, Tuple[int, int], Tuple[int, int]]:
@@ -193,18 +192,24 @@ def apply_transform_ps(
     design: Image.Image,
     scale: float,
     rotation_degrees: float,
+    kx: float | None = None,
+    ky: float | None = None,
 ) -> Image.Image:
     """
     复现 Photoshop 自由变换「水平(W)百分比」的贴图缩放（非等比）。
 
-    scale: PS 水平百分比（0.20 = 20%）。内部按 PS_SCALE_KX/KY 把 cut 整图非等比缩放，
-           使贴图有效大小与 PS 里填同一百分比的效果一致（黑正2 标定：2048->545x583）。
+    scale: PS 水平百分比（0.20 = 20%）。内部按 kx/ky 把 cut 整图非等比缩放，
+           使贴图有效大小与 PS 里填同一百分比的效果一致。
+    kx/ky: 每款的水平/垂直校准系数；None 时回退到全局默认 PS_SCALE_KX/PS_SCALE_KY。
+           标定方法：kx = PS显示宽 / (cut整图宽 * scale)，ky 同理。
     rotation_degrees: 顺时针旋转角度（正值为顺时针）。
     """
+    kx = PS_SCALE_KX if kx is None else kx
+    ky = PS_SCALE_KY if ky is None else ky
     w, h = design.size
     new_size = (
-        int(round(w * scale * PS_SCALE_KX)),
-        int(round(h * scale * PS_SCALE_KY)),
+        int(round(w * scale * kx)),
+        int(round(h * scale * ky)),
     )
     resized = design.resize(new_size, Image.Resampling.LANCZOS)
     # PIL 正角度为逆时针，顺时针需取负
@@ -256,6 +261,8 @@ def apply_mockup_transform(
     rotation_degrees: float,
     effective_top_y: int,
     effective_center_x: int,
+    kx: float | None = None,
+    ky: float | None = None,
     blend_mode: str | None = DEFAULT_BLEND_MODE,
     quality: int = 95,
     shirt_color: Literal["black", "white"] | None = None,
@@ -271,7 +278,7 @@ def apply_mockup_transform(
         design = prepare_design_for_shirt(design, shirt_color, prepare_method)
     background, foreground, fg_position, canvas_size = load_any_template(template_path)
 
-    transformed = apply_transform_ps(design, scale, rotation_degrees)
+    transformed = apply_transform_ps(design, scale, rotation_degrees, kx, ky)
     paste_x, paste_y, effective_bbox = calculate_effective_position(
         transformed, effective_top_y, effective_center_x
     )
