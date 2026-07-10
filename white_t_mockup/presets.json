@@ -1,7 +1,7 @@
 {
   "templates": {
     "白W3.psd": {
-      "path": "D:\\Semems\\1胚衣\\白\\W3.psd",
+      "path": "D:\\Semems\\1胚衣\\白\\白W3.psd",
       "method": "legacy",
       "blend_mode": "multiply",
       "notes": "DX0533旧版PSD，带手部遮罩",
@@ -11,7 +11,7 @@
       "effective_center_x": 730
     },
     "白B1.png": {
-      "path": "D:\\Semems\\1胚衣\\白\\B1.png",
+      "path": "D:\\Semems\\1胚衣\\白\\白B1.png",
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "背面B贴图",
@@ -20,7 +20,7 @@
       "effective_top_y": 725,
       "effective_center_x": 649
     },
-    "白B3png": {
+    "白B3.png": {
       "path": "D:\\Semems\\1胚衣\\白\\B3.png",
       "method": "transform",
       "blend_mode": "multiply",
@@ -31,7 +31,7 @@
       "effective_center_x": 777
     },
     "白B4.png": {
-      "path": "D:\\Semems\\1胚衣\\白\\B4.png",
+      "path": "D:\\Semems\\1胚衣\\白\\白B4.png",
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "背面B贴图",
@@ -51,7 +51,7 @@
       "effective_center_x": 670
     },
     "黑W9.png": {
-      "path": "D:\\Semems\\1胚衣\\黑\\W9.png",
+      "path": "D:\\Semems\\1胚衣\\黑\\黑W9.png",
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "正面W贴图黑T",
@@ -61,7 +61,7 @@
       "effective_center_x": 660
     },
     "黑W8.png": {
-      "path": "D:\\Semems\\1胚衣\\黑\\W8.png",
+      "path": "D:\\Semems\\1胚衣\\黑\\黑W8.png",
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "正面W贴图黑T",
@@ -71,7 +71,7 @@
       "effective_center_x": 647
     },
     "黑W5.png": {
-      "path": "D:\\Semems\\1胚衣\\黑\\W5.png",
+      "path": "D:\\Semems\\1胚衣\\黑\\黑W5.png",
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "",
@@ -81,7 +81,7 @@
       "effective_center_x": 705
     },
     "黑W2.png": {
-      "path": "D:\\Semems\\1胚衣\\黑\\W2.png",
+      "path": "D:\\Semems\\1胚衣\\黑\\黑W2.png",
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "",
@@ -101,7 +101,7 @@
       "effective_center_x": 634
     },
     "黑B6.png": {
-      "path": "D:\\Semems\\1胚衣\\黑\\B6.png",
+      "path": "D:\\Semems\\1胚衣\\黑\\黑B6.png",
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "",
@@ -111,7 +111,7 @@
       "effective_center_x": 623
     },
     "黑B5.png": {
-      "path": "D:\\Semems\\1胚衣\\黑\\B5.png",
+      "path": "D:\\Semems\\1胚衣\\黑\\黑B5.png",
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "",
@@ -121,7 +121,7 @@
       "effective_center_x": 535
     },
     "黑B4.png": {
-      "path": "D:\\Semems\\1胚衣\\黑\\B4.png",
+      "path": "D:\\Semems\\1胚衣\\黑\\黑B4.png",
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "",
@@ -131,7 +131,7 @@
       "effective_center_x": 729
     },
     "黑B3.png": {
-      "path": "D:\\Semems\\1胚衣\\黑\\B3.png",
+      "path": "D:\\Semems\\1胚衣\\黑\\黑B3.png",
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "",
@@ -141,7 +141,7 @@
       "effective_center_x": 696
     },
     "黑B2.png": {
-      "path": "D:\\Semems\\1胚衣\\黑\\B2.png",
+      "path": "D:\\Semems\\1胚衣\\黑\\黑B2.png",
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "",
@@ -151,7 +151,7 @@
       "effective_center_x": 657
     },
     "黑B1.png": {
-      "path": "D:\\Semems\\1胚衣\\黑\\B1.png",
+      "path": "D:\\Semems\\1胚衣\\黑\\黑B1.png",
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "",
