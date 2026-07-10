@@ -19,6 +19,7 @@ CSV 是胚衣参数的 single source of truth；本脚本全量重建 presets.js
 from __future__ import annotations
 
 import csv
+import io
 import json
 import re
 import sys
@@ -52,20 +53,48 @@ def _norm_key(k):
     return re.sub(r"[（(].*?[）)]", "", k).strip()
 
 
+def _decode_csv_bytes(raw):
+    """依次尝试 utf-8-sig / utf-8 / gbk 解码 CSV 字节，返回文本（去 BOM）。
+
+    兼容 Excel 另存为 ANSI(gbk) 或工具写成无 BOM UTF-8 的情况，避免中文乱码/解码失败。
+    """
+    for enc in ("utf-8-sig", "utf-8", "gbk"):
+        try:
+            return raw.decode(enc).lstrip("﻿")
+        except UnicodeDecodeError:
+            continue
+    raise UnicodeDecodeError("csv", b"", 0, 1, "无法用 utf-8/gbk 解码 CSV")
+
+
+def ensure_bom(path):
+    """若 CSV 无 BOM 且为合法 UTF-8，补 BOM（幂等）。Excel 据此按 UTF-8 显示中文。
+
+    返回 True 表示本次补了 BOM。gbk 文件不补（避免破坏），交由 _decode_csv_bytes 读取。
+    """
+    raw = path.read_bytes()
+    if raw[:3] == b"\xef\xbb\xbf":
+        return False
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    path.write_bytes(b"\xef\xbb\xbf" + raw)
+    return True
+
+
 def _read_csv_rows(path):
     if not path.exists():
         raise FileNotFoundError(f"CSV 不存在: {path}")
-    with path.open("r", encoding="utf-8-sig", newline="") as f:
-        sample = f.read(8192)
-        f.seek(0)
-        try:
-            dialect = csv.Sniffer().sniff(sample, delimiters=";,")
-        except Exception:
-            dialect = csv.excel
-            dialect.delimiter = ";"
-        reader = csv.DictReader(f, dialect=dialect)
-        for row in reader:
-            yield {_norm_key(k): (v or "") for k, v in row.items() if k is not None}
+    text = _decode_csv_bytes(path.read_bytes())
+    sample = text[:8192]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=";,")
+    except Exception:
+        dialect = csv.excel
+        dialect.delimiter = ";"
+    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    for row in reader:
+        yield {_norm_key(k): (v or "") for k, v in row.items() if k is not None}
 
 
 def _col(row, name):
@@ -210,6 +239,7 @@ def sync_if_stale(csv_path=CSV_PATH, presets_path=PRESETS_PATH, md_path=MD_PATH)
     """仅当 CSV 比 presets.json/md 新时同步（供贴图前调用）。返回 (synced, msg)。"""
     if not csv_path.exists():
         return False, f"CSV 不存在: {csv_path}"
+    ensure_bom(csv_path)  # 每次贴图前自动补 BOM（幂等），彻底避免 Excel 乱码
     csv_mtime = csv_path.stat().st_mtime
     newest = max(
         presets_path.stat().st_mtime if presets_path.exists() else 0,
