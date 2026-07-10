@@ -12,16 +12,9 @@ from psd_tools import PSDImage
 
 from .config import DEFAULT_BLEND_MODE, SUPPORTED_BLEND_MODES
 
-# ---- PS 缩放复现（逐款 native 标定）----
-# PS Transform 的 % 是相对于智能对象「内部 100% transform 尺寸」(ps_native)，不是原图 2048、
-# 也不是置入后的显示 1340。复现公式：
-#   native = current_display / current_transform_percent
-#   final  = native × target_percent          （等比锁定；native 决定宽高比）
-# 代码等价：final = cut整图 × (CSV%/100 × kx, CSV%/100 × ky)，其中 kx=native_w/2048、ky=native_h/2048。
-# 每款 kx/ky 存 CSV「水平校准kx/垂直校准ky」列（由参考 psd 反推），经 presets 传入 cli。
-# 下面两个常量仅作「未标定款」的全局默认（白正2：native 2730×2730，kx=ky=2730/2048≈1.333）。
-PS_SCALE_KX = 2730 / 2048
-PS_SCALE_KY = 2730 / 2048
+# ---- PS 缩放复现（final 像素模型）----
+# 每款在 CSV 直接填贴图最终像素「缩放后宽px/缩放后高px」（PS 里贴图层缩放后的 final_w/final_h），
+# 代码把贴图直接 resize 到 (final_w, final_h)；原图固定 2048×2048，final 即目标像素，100% 复现 PS。
 
 
 def load_template(psd_path: str | Path) -> Tuple[Image.Image, Image.Image, Tuple[int, int], Tuple[int, int]]:
@@ -191,28 +184,17 @@ def apply_transform(
 
 def apply_transform_ps(
     design: Image.Image,
-    scale: float,
+    final_w: int,
+    final_h: int,
     rotation_degrees: float,
-    kx: float | None = None,
-    ky: float | None = None,
 ) -> Image.Image:
     """
-    复现 Photoshop 自由变换「水平(W)百分比」的贴图缩放（非等比）。
+    复现 Photoshop 贴图最终大小：直接把贴图 resize 到 (final_w, final_h) 再旋转。
 
-    scale: PS 水平百分比（0.20 = 20%）。内部按 kx/ky 把 cut 整图非等比缩放，
-           使贴图有效大小与 PS 里填同一百分比的效果一致。
-    kx/ky: 每款的水平/垂直校准系数；None 时回退到全局默认 PS_SCALE_KX/PS_SCALE_KY。
-           标定方法：kx = PS显示宽 / (cut整图宽 * scale)，ky 同理。
-    rotation_degrees: 顺时针旋转角度（正值为顺时针）。
+    final_w/final_h: 贴图最终像素（PS 里贴图层缩放后的宽×高，原图固定 2048×2048）。
+    rotation_degrees: 顺时针旋转角度（正值为顺时针，负值为逆时针，同 PS）。
     """
-    kx = PS_SCALE_KX if kx is None else kx
-    ky = PS_SCALE_KY if ky is None else ky
-    w, h = design.size
-    new_size = (
-        int(round(w * scale * kx)),
-        int(round(h * scale * ky)),
-    )
-    resized = design.resize(new_size, Image.Resampling.LANCZOS)
+    resized = design.resize((int(final_w), int(final_h)), Image.Resampling.LANCZOS)
     # PIL 正角度为逆时针，顺时针需取负
     return resized.rotate(-rotation_degrees, expand=True, resample=Image.Resampling.BICUBIC)
 
@@ -258,19 +240,18 @@ def apply_mockup_transform(
     design_path: str | Path,
     output_path: str | Path,
     template_path: str | Path,
-    scale: float,
+    final_w: int,
+    final_h: int,
     rotation_degrees: float,
     effective_top_y: int,
     effective_center_x: int,
-    kx: float | None = None,
-    ky: float | None = None,
     blend_mode: str | None = DEFAULT_BLEND_MODE,
     quality: int = 95,
     shirt_color: Literal["black", "white"] | None = None,
     prepare_method: Literal["value_invert", "silhouette", "none"] = "value_invert",
 ) -> dict:
     """
-    新版贴图方法：缩放 → 旋转 → 按有效像素定位 → 混合。
+    新版贴图方法：resize 到最终像素 → 旋转 → 按有效像素定位 → 混合。
 
     支持 PSD 和 PNG 两种模板。
     """
@@ -279,7 +260,7 @@ def apply_mockup_transform(
         design = prepare_design_for_shirt(design, shirt_color, prepare_method)
     background, foreground, fg_position, canvas_size = load_any_template(template_path)
 
-    transformed = apply_transform_ps(design, scale, rotation_degrees, kx, ky)
+    transformed = apply_transform_ps(design, final_w, final_h, rotation_degrees)
     paste_x, paste_y, effective_bbox = calculate_effective_position(
         transformed, effective_top_y, effective_center_x
     )
@@ -301,7 +282,8 @@ def apply_mockup_transform(
         "effective_bbox": effective_bbox,
         "effective_top": effective_top_y,
         "effective_center_x": effective_center_x,
-        "scale": scale,
+        "final_w": final_w,
+        "final_h": final_h,
         "rotation_degrees": rotation_degrees,
         "blend_mode": blend_mode or "normal",
     }
@@ -313,14 +295,15 @@ def apply_mockup(
     template_path: str | Path,
     top_y: int,
     center_x: int,
-    target_height: int,
+    final_w: int,
+    final_h: int,
     blend_mode: str | None = DEFAULT_BLEND_MODE,
     quality: int = 95,
     shirt_color: Literal["black", "white"] | None = None,
     prepare_method: Literal["value_invert", "silhouette", "none"] = "value_invert",
 ) -> dict:
     """
-    将设计图贴到白 T 模板并导出 JPG。
+    旧版贴图方法：resize 到最终像素 → 按顶部/中心定位 → 混合 → 盖手部遮罩（仅 PSD）。
 
     返回包含贴图参数的字典，便于测试和日志记录。
     """
@@ -329,7 +312,7 @@ def apply_mockup(
         design = prepare_design_for_shirt(design, shirt_color, prepare_method)
     background, foreground, fg_position, canvas_size = load_template(template_path)
 
-    design_resized = resize_design(design, target_height)
+    design_resized = design.resize((int(final_w), int(final_h)), Image.Resampling.LANCZOS)
     dw, dh = design_resized.size
 
     left, top = calculate_design_position(design_resized.size, center_x, top_y)

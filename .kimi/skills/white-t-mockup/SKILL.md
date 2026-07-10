@@ -15,7 +15,7 @@
 - **design**：透明底 PNG 设计图（如 `DX0001_W_cut.png`）
 - **output**：输出 JPG 路径
 - 模板路径（PSD 或 PNG）
-- 贴图参数：缩放比例、旋转角度、有效像素最高点 Y、有效像素中心 X、混合模式
+- 贴图参数：最终像素（宽/高）、旋转角度、有效像素最高点 Y、有效像素中心 X、混合模式
 
 ## 输出
 
@@ -30,18 +30,19 @@
 python -m white_t_mockup --list-presets
 
 # 使用预设自动加载该模板的参数
-python -m white_t_mockup design.png output.jpg --preset 1B.png
+python -m white_t_mockup design.png output.jpg --preset 白正2.jpg
 ```
 
 ### 命令行（手动指定参数）
 
 ```bash
 python -m white_t_mockup design.png output.jpg \
-  --template "D:\Semems\1胚衣\白\W4.png" \
-  --scale 0.40 \
-  --rotate 1 \
-  --effective-top-y 490 \
-  --effective-center-x 780 \
+  --template "D:\Semems\1胚衣\白正2.jpg" \
+  --final-w 546 \
+  --final-h 546 \
+  --rotate -2 \
+  --effective-top-y 644 \
+  --effective-center-x 670 \
   --blend-mode multiply
 ```
 
@@ -49,8 +50,8 @@ python -m white_t_mockup design.png output.jpg \
 
 ```bash
 python -m white_t_mockup design.png output.jpg \
-  --template "D:\Semems\1胚衣\白\W3.psd" \
-  --top-y 449 --center-x 735 --target-height 677
+  --template "D:\Semems\1胚衣\白\白W3.psd" \
+  --top-y 449 --center-x 735 --final-w 546 --final-h 546
 ```
 
 ### Python API
@@ -61,11 +62,12 @@ from white_t_mockup import apply_mockup_transform
 apply_mockup_transform(
     design_path="design.png",
     output_path="output.jpg",
-    template_path=r"D:\Semems\1胚衣\白\W4.png",
-    scale=0.40,
-    rotation_degrees=1.0,
-    effective_top_y=490,
-    effective_center_x=780,
+    template_path=r"D:\Semems\1胚衣\白正2.jpg",
+    final_w=546,
+    final_h=546,
+    rotation_degrees=-2.0,
+    effective_top_y=644,
+    effective_center_x=670,
     blend_mode="multiply",
     quality=95,
 )
@@ -73,8 +75,8 @@ apply_mockup_transform(
 
 ## 工作流程
 
-1. 用户提供：胚衣模板路径、缩放比例、最高像素点 Y、中心点 X、旋转角度、混合模式。
-2. 脚本：缩放贴图 → 顺时针旋转 → 计算有效像素边界 → 按最高点和中心点定位 → 用指定混合模式合成 → 输出 JPG。
+1. 用户提供：胚衣模板路径、最终像素（宽/高）、最高像素点 Y、中心点 X、旋转角度、混合模式。
+2. 脚本：resize 到最终像素 → 旋转（正=顺时针/负=逆时针） → 计算有效像素边界 → 按最高点和中心点定位 → 用指定混合模式合成 → 输出 JPG。
 3. 输出图应与用户预期位置、大小、角度、风格一致。
 
 ## 参数说明
@@ -83,8 +85,8 @@ apply_mockup_transform(
 |------|------|
 | `--preset` | 使用已配置的模板预设（自动加载参数） |
 | `--list-presets` | 列出所有已配置模板 |
-| `--scale` | 贴图缩放比例（如 0.40 = 40%） |
-| `--rotate` | 顺时针旋转角度（如 1） |
+| `--final-w` / `--final-h` | 贴图最终宽/高像素（PS 缩放后尺寸） |
+| `--rotate` | 旋转角度（正=顺时针/负=逆时针，同 PS） |
 | `--effective-top-y` | 有效像素最高点 Y 坐标 |
 | `--effective-center-x` | 有效像素水平中心 X 坐标 |
 | `--blend-mode` | 混合模式，默认 `multiply` |
@@ -92,15 +94,7 @@ apply_mockup_transform(
 
 ## 已配置模板预设
 
-| 模板 | 方法 | 缩放 | 旋转 | 最高点 y | 中心 x | 混合 |
-|------|------|------|------|----------|--------|------|
-| `白W3.psd` | legacy | 40% | 0 | 450 | 730 | multiply |
-| `白B1.png` | transform | 40% | 0 | 725 | 649 | multiply |
-| `白B3.png` | transform | 32% | 逆时针 3° | 700 | 777 | multiply |
-| `白B4.png` | transform | 28% | 顺时针 2° | 1011 | 576 | multiply |
-| `白正2.jpg` | transform | 20% | 逆时针 2° | 644 | 670 | multiply |
-
-新增胚衣时，先让用户用 Excel 填写 `docs/胚衣参数表_模板.csv` 并保存/导出为 CSV UTF-8；再读取该 CSV，转换成 `docs/胚衣参数表.md`，并同步到 `white_t_mockup/presets.json`。
+所有胚衣参数统一记录在 `docs/胚衣参数表_模板.csv`（缩放后宽/高 px、旋转角度、最高像素点 y、中心 x、方法），贴图前由 `scripts/sync_presets_from_csv.py` 同步到 `white_t_mockup/presets.json`。新增或修改胚衣只让用户编辑该 CSV，不再维护镜像文档。
 
 ## 注意事项
 

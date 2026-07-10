@@ -49,7 +49,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--preset",
         default=None,
-        help="使用已配置的模板预设（如 W3.psd / W4.png / 1B.png / 3B.png / 4B.png）",
+        help="使用已配置的模板预设（如 白正2.jpg / 白B1.png / 黑W5.png）",
     )
     parser.add_argument(
         "--list-presets",
@@ -59,16 +59,22 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # ---- 新版方法参数 ----
     parser.add_argument(
-        "--scale",
-        type=float,
+        "--final-w",
+        type=int,
         default=None,
-        help="贴图缩放比例（如 0.40 = 40%%）。提供后启用新版方法",
+        help="贴图最终宽度像素（PS 缩放后宽；提供后启用新版方法）",
+    )
+    parser.add_argument(
+        "--final-h",
+        type=int,
+        default=None,
+        help="贴图最终高度像素（PS 缩放后高）",
     )
     parser.add_argument(
         "--rotate",
         type=float,
         default=None,
-        help="顺时针旋转角度",
+        help="旋转角度（正=顺时针/负=逆时针，同 PS）",
     )
     parser.add_argument(
         "--effective-top-y",
@@ -96,13 +102,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=f"[旧版] 贴图水平中心 X 坐标（默认: {DEFAULT_CENTER_X}）",
     )
-    parser.add_argument(
-        "--target-height",
-        type=int,
-        default=None,
-        help=f"[旧版] 贴图目标高度（默认: {DEFAULT_TARGET_HEIGHT}）",
-    )
-
     # ---- 公共参数 ----
     parser.add_argument(
         "--blend-mode",
@@ -173,7 +172,7 @@ def main() -> None:
     if template_path is None:
         template_path = params.get("path", DEFAULT_TEMPLATE)
 
-    method = params.get("method", "transform" if args.scale is not None else "legacy")
+    method = params.get("method", "transform" if args.final_w is not None else "legacy")
 
     blend_mode = args.blend_mode or params.get("blend_mode", DEFAULT_BLEND_MODE)
     quality = args.quality if args.quality is not None else DEFAULT_QUALITY
@@ -190,31 +189,30 @@ def main() -> None:
         prepare_method = "value_invert"
 
     if method == "transform":
-        scale = args.scale if args.scale is not None else params.get("scale")
+        final_w = args.final_w if args.final_w is not None else params.get("final_w")
+        final_h = args.final_h if args.final_h is not None else params.get("final_h")
         rotate = args.rotate if args.rotate is not None else params.get("rotation_degrees", 0.0)
         top = args.effective_top_y if args.effective_top_y is not None else params.get("effective_top_y")
         center = args.effective_center_x if args.effective_center_x is not None else params.get("effective_center_x")
-        kx = params.get("kx")
-        ky = params.get("ky")
 
         missing = [k for k, v in {
-            "--scale": scale,
+            "--final-w": final_w,
+            "--final-h": final_h,
             "--effective-top-y": top,
             "--effective-center-x": center,
         }.items() if v is None]
         if missing:
-            parser.error(f"新版方法缺少参数: {missing}")
+            parser.error(f"新版方法缺少参数（请在 CSV 补齐「缩放后宽px/缩放后高px」）: {missing}")
 
         result = apply_mockup_transform(
             design_path=args.design,
             output_path=args.output,
             template_path=template_path,
-            scale=scale,
+            final_w=final_w,
+            final_h=final_h,
             rotation_degrees=rotate,
             effective_top_y=top,
             effective_center_x=center,
-            kx=kx,
-            ky=ky,
             blend_mode=blend_mode,
             quality=quality,
             shirt_color=shirt_color,
@@ -224,13 +222,16 @@ def main() -> None:
             f"已保存: {args.output}  尺寸: {result['output_size']}  混合模式: {result['blend_mode']}"
         )
         print(
-            f"模板: {Path(template_path).name}  缩放={result['scale']}, 旋转={result['rotation_degrees']}°, "
+            f"模板: {Path(template_path).name}  最终像素={result['final_w']}x{result['final_h']}, 旋转={result['rotation_degrees']}°, "
             f"有效像素最高点 y={result['effective_top']}, 中心 x={result['effective_center_x']}"
         )
     else:
         top = args.top_y if args.top_y is not None else params.get("top_y", DEFAULT_TOP_Y)
         center = args.center_x if args.center_x is not None else params.get("center_x", DEFAULT_CENTER_X)
-        height = args.target_height if args.target_height is not None else params.get("target_height", DEFAULT_TARGET_HEIGHT)
+        final_w = args.final_w if args.final_w is not None else params.get("final_w")
+        final_h = args.final_h if args.final_h is not None else params.get("final_h")
+        if final_w is None or final_h is None:
+            parser.error("旧版方法缺少 final_w/final_h（请在 CSV 补齐「缩放后宽px/缩放后高px」）")
 
         result = apply_mockup(
             design_path=args.design,
@@ -238,7 +239,8 @@ def main() -> None:
             template_path=template_path,
             top_y=top,
             center_x=center,
-            target_height=height,
+            final_w=final_w,
+            final_h=final_h,
             blend_mode=blend_mode,
             quality=quality,
             shirt_color=shirt_color,

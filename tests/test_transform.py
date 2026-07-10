@@ -117,7 +117,8 @@ def test_apply_mockup_transform_with_png_template():
         design_path=design_path,
         output_path=output_path,
         template_path=template_path,
-        scale=0.40,
+        final_w=800,
+        final_h=800,
         rotation_degrees=0.0,
         effective_top_y=725,
         effective_center_x=649,
@@ -126,7 +127,8 @@ def test_apply_mockup_transform_with_png_template():
     )
 
     assert result["output_size"] == expected_output_size
-    assert result["scale"] == 0.40
+    assert result["final_w"] == 800
+    assert result["final_h"] == 800
     assert result["rotation_degrees"] == 0.0
     assert result["effective_top"] == 725
     assert result["effective_center_x"] == 649
@@ -150,7 +152,8 @@ def test_apply_mockup_transform_with_shirt_color_preparation(tmp_path):
         design_path=design_path,
         output_path=output_path,
         template_path=template_path,
-        scale=1.0,
+        final_w=100,
+        final_h=100,
         rotation_degrees=0.0,
         effective_top_y=50,
         effective_center_x=100,
@@ -184,7 +187,8 @@ def test_apply_mockup_transform_with_white_shirt_preparation(tmp_path):
         design_path=design_path,
         output_path=output_path,
         template_path=template_path,
-        scale=1.0,
+        final_w=100,
+        final_h=100,
         rotation_degrees=0.0,
         effective_top_y=50,
         effective_center_x=100,
@@ -205,13 +209,10 @@ def test_apply_mockup_transform_with_white_shirt_preparation(tmp_path):
 
 
 def test_apply_transform_ps_matches_photoshop_calibration():
-    # native 模型：final = native × (CSV%/100)；代码 cut × (% × kx/ky)，kx/ky=native/2048
-    from white_t_mockup.core import PS_SCALE_KX, PS_SCALE_KY, apply_transform_ps
+    # final 像素模型：代码直接把贴图 resize 到 (final_w, final_h)，原图固定 2048×2048
+    from white_t_mockup.core import apply_transform_ps
 
     design = Image.new("RGBA", (2048, 2048), (255, 0, 0, 255))
-    # 白正2：native 2730×2730，CSV 20% -> 546×546
-    transformed = apply_transform_ps(design, 0.20, 0, kx=2730 / 2048, ky=2730 / 2048)
-    assert transformed.size == (546, 546)
-    # 默认（未标定）用白正2 native
-    assert abs(PS_SCALE_KX - 2730 / 2048) < 1e-9
-    assert abs(PS_SCALE_KY - 2730 / 2048) < 1e-9
+    assert apply_transform_ps(design, 546, 546, 0).size == (546, 546)  # 白正2
+    assert apply_transform_ps(design, 545, 583, 0).size == (545, 583)  # 黑正2
+    assert apply_transform_ps(design, 544, 602, 0).size == (544, 602)  # 黑W5
