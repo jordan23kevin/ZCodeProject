@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
-"""把 docs/胚衣参数表_模板.csv 同步到 white_t_mockup/presets.json。
+"""把 docs/胚衣参数表_模板.csv 同步到 white_t_mockup/presets.json（并重建 docs/胚衣参数表.md）。
 
-CSV 是胚衣参数的 single source of truth；本脚本全量重建 presets.json 的 templates。
+CSV 是胚衣参数的 single source of truth；本脚本全量重建 presets.json 的 templates 与 md 表格。
 贴图参数（缩放/旋转/y/x/路径/混合）以 presets.json 为准，所以新增胚衣或改参数后跑一次本脚本即可。
-`w_mockup_extra.generate_single_side_mockup` 贴图前也会自动调用本同步（仅当 CSV 比 presets.json 新时）。
+`w_mockup_extra.generate_single_side_mockup` 贴图前也会自动调用本同步（仅当 CSV 比 presets.json/md 新时）。
 
 列名匹配做"去括号规范化"：如「缩放百分比（transform）」与「缩放百分比」视为同一列，
 这样改列名括号注释或微调也不影响同步。
+
+「胚衣文件名」是 presets 的唯一 key；黑白两套胚衣若同名（如 B1.png）必须改成唯一名
+（如 白B1.png/黑B1.png），否则本脚本会报错拒绝同步，防止后写覆盖前写导致贴图错位。
 
 用法：
   python scripts/sync_presets_from_csv.py            # 有变更才写
@@ -24,11 +27,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent  # E:/Kimi Code
 CSV_PATH = ROOT / "docs" / "胚衣参数表_模板.csv"
 PRESETS_PATH = ROOT / "white_t_mockup" / "presets.json"
+MD_PATH = ROOT / "docs" / "胚衣参数表.md"
 
 ENTRY_KEYS = (
     "path", "method", "blend_mode", "notes",
     "scale", "rotation_degrees", "effective_top_y", "effective_center_x",
 )
+
+# md 表格列（规范化短名），顺序与 CSV 表头一致
+MD_COLUMNS = (
+    "胚衣文件名", "胚衣完整路径", "适用贴图后缀", "方法", "缩放百分比",
+    "旋转方向", "旋转角度", "最高像素点y", "中心点x", "混合模式",
+    "输出命名规则", "备注",
+)
+MD_BACKTICK_COLS = {"胚衣文件名", "胚衣完整路径", "输出命名规则"}
+MD_SECTION_HEADER = "## 已转换记录"
 
 
 def _norm_key(k):
@@ -109,10 +122,19 @@ def _row_to_entry(row):
 
 def build_templates(csv_path=CSV_PATH):
     templates = {}
+    seen_path = {}
     for row in _read_csv_rows(csv_path):
         name, entry = _row_to_entry(row)
-        if name:
-            templates[name] = entry
+        if not name:
+            continue
+        if name in templates:
+            raise ValueError(
+                f"胚衣文件名重复: {name!r} "
+                f"(path1={seen_path[name]!r}, path2={entry['path']!r})。"
+                "请在 CSV 改成唯一名（如加 白/黑 前缀：白B1.png / 黑B1.png）。"
+            )
+        seen_path[name] = entry["path"]
+        templates[name] = entry
     return templates
 
 
@@ -145,16 +167,62 @@ def sync_presets_from_csv(csv_path=CSV_PATH, presets_path=PRESETS_PATH, write=Tr
     return changed, new_templates, old_templates
 
 
-def sync_if_stale(csv_path=CSV_PATH, presets_path=PRESETS_PATH):
-    """仅当 CSV 比 presets.json 新时同步（供贴图前调用）。返回 (synced, msg)。"""
+def _md_cell(col, val):
+    v = (val or "").strip()
+    if col in MD_BACKTICK_COLS and v:
+        return f"`{v}`"
+    return v
+
+
+def build_md_table(csv_path=CSV_PATH):
+    """从 CSV 生成 md 表格（表头+分隔+数据行）。返回带尾部换行的字符串。"""
+    header = "| " + " | ".join(MD_COLUMNS) + " |"
+    sep = "|" + "|".join("---" for _ in MD_COLUMNS) + "|"
+    lines = [header, sep]
+    for row in _read_csv_rows(csv_path):
+        if not _col(row, "胚衣文件名"):
+            continue
+        cells = [_md_cell(c, _col(row, c)) for c in MD_COLUMNS]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def sync_md_from_csv(csv_path=CSV_PATH, md_path=MD_PATH, write=True):
+    """重建 md 的「## 已转换记录」表格区，保留该标题之前的说明文字。返回 (changed, new_text)。"""
+    table = build_md_table(csv_path)
+    old_text = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
+    idx = old_text.find(MD_SECTION_HEADER)
+    if idx >= 0:
+        head = old_text[: idx + len(MD_SECTION_HEADER)]
+        new_text = head + "\n\n" + table
+    elif old_text:
+        new_text = old_text.rstrip() + "\n\n" + MD_SECTION_HEADER + "\n\n" + table
+    else:
+        new_text = "# 胚衣参数表\n\n" + MD_SECTION_HEADER + "\n\n" + table
+    changed = old_text != new_text
+    if changed and write:
+        md_path.parent.mkdir(parents=True, exist_ok=True)
+        md_path.write_text(new_text, encoding="utf-8")
+    return changed, new_text
+
+
+def sync_if_stale(csv_path=CSV_PATH, presets_path=PRESETS_PATH, md_path=MD_PATH):
+    """仅当 CSV 比 presets.json/md 新时同步（供贴图前调用）。返回 (synced, msg)。"""
     if not csv_path.exists():
         return False, f"CSV 不存在: {csv_path}"
-    if presets_path.exists() and presets_path.stat().st_mtime >= csv_path.stat().st_mtime:
-        return False, "presets.json 已是最新，跳过同步"
-    changed, new, old = sync_presets_from_csv(csv_path, presets_path, write=True, force=True)
-    if changed:
-        return True, f"已从 CSV 同步 presets.json（{len(new)} 个模板）"
-    return True, f"CSV 较新但内容一致，已刷新 presets.json（{len(new)} 个模板）"
+    csv_mtime = csv_path.stat().st_mtime
+    newest = max(
+        presets_path.stat().st_mtime if presets_path.exists() else 0,
+        md_path.stat().st_mtime if md_path.exists() else 0,
+    )
+    if newest >= csv_mtime:
+        return False, "presets.json/md 已是最新，跳过同步"
+    p_changed, new, old = sync_presets_from_csv(csv_path, presets_path, write=True, force=True)
+    m_changed, _ = sync_md_from_csv(csv_path, md_path, write=True)
+    return (
+        True,
+        f"已从 CSV 同步 presets.json（{len(new)} 模板，变更={p_changed}）与 md（变更={m_changed}）",
+    )
 
 
 def _report(new, old):
@@ -174,11 +242,19 @@ def _report(new, old):
 def main():
     dry = "--dry-run" in sys.argv
     force = "--force" in sys.argv
-    changed, new, old = sync_presets_from_csv(write=not dry, force=force)
+    try:
+        p_changed, new, old = sync_presets_from_csv(write=not dry, force=force)
+        m_changed, _ = sync_md_from_csv(write=not dry)
+    except ValueError as e:
+        print(f"同步中止：{e}")
+        sys.exit(2)
     _report(new, old)
     tag = "DRY-RUN " if dry else ""
-    print(f"{tag}{'有变更' if changed else '无变更'}，共 {len(new)} 个模板")
-    if dry and changed:
+    print(
+        f"{tag}presets {'有变更' if p_changed else '无变更'}（{len(new)} 个模板）；"
+        f"md {'有变更' if m_changed else '无变更'}"
+    )
+    if dry and (p_changed or m_changed):
         print("（dry-run 未写入；去掉 --dry-run 执行实际同步）")
 
 
