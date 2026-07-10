@@ -165,7 +165,7 @@
       "method": "transform",
       "blend_mode": "multiply",
       "notes": "正面W贴图白T",
-      "scale": 0.2,
+      "scale": 0.32,
       "rotation_degrees": -2.5,
       "effective_top_y": 645,
       "effective_center_x": 660
