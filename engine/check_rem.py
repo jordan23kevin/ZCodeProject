@@ -1,38 +1,58 @@
-"""01_CHECK_REM v2.2.6 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.2.3 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个 DX 款的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
 
+功能 v2.2.8（黑衫白墨打底显色）：
+  - 「反黑」（单张 _invert_rem / 批量 batch_invert_rem）改为 black_shirt_print_optimize：
+    自适应浓度白墨打底 add_white_underbase（越暗白墨越厚 max0.9/min0.05，阈值130，
+    edge_feather5，boost_sat0.35 保饱和色）+ 轻度暗部提亮。模拟真实 DTG 黑衫
+    『先喷白墨再喷彩色』，使极暗区域在黑布上可见，同时保留全部原色、不漂成白。
+  - 取代旧版『非透明像素涂纯白/纯黑剪影』，以及 v2.2.7 的纯提亮（救不了近黑设计：
+    PS place_design.jsx 从不铺白底，纯黑印黑布物理不可见）。白墨打底烘进 _黑W_cut.png
+    本身，无需改 PS 脚本即可显色。白版仍走 enhance_dark_print_for_black_shirt(shirt=white)
+    压暗亮部保色。
+  - 实测 DX0635：近黑像素 64万→4413、接近白(>245)=0、红字 (101,16,23)→(127,52,59) 保色。
+  - 注意：本进程常驻，改 check_rem.py 后须 kill 端口 8766 进程由 bridge 守护重拉才生效。
+
+功能 v2.2.7：
+  - 修复单面款（02_REM_BG 只有 W 或只有 B）被误判走平铺图贴图的问题：
+    _run_one_sticker 改为按「去掉 黑/白 前缀后的真实面集合」判定单面。
+    只有 W（即使含 _黑W/_白W 这类反黑/反白专用图）或只有 B → 模特图贴图（white_t_mockup 胚衣）；
+    含 BW/WB 或同时有 B+W → 平铺图贴图。has_black/has_white 仅保留给平铺流程内部使用。
+    现象样例：DX0611（W + _黑W + _白W）此前产出 _W_白T/_W_黑T 平铺图，修复后改出 _W1_白T 等模特图。
+  - PS 脚本（ps-compositing 仓库）增加单面款旧产物兜底清理：
+    wb_sticker_ps.py / process_black.py / process_white.py 贴图前按真实面数清理 03_UPLOAD
+    中已不存在的互补面胚衣图与旧 BW 平铺图；ps_batch.py 合成 BW 前对单面款跳过并删除残留平铺图。
+  - 记录运行注意事项：lovart_bridge.bat 重启不会带走已运行的 check_rem 子进程，
+    修改 check_rem.py 后需先 kill 旧进程，由 lovart_bridge 守护线程重拉才会加载新代码。
+
 功能 v2.2.6：
-  - 修复 DX0339_W 等单张去背无输出：美图保存路径未切换时，结果会落到 `_temp_rembg/save`。
-    check_rem.py 现在会从 `TEMP_REMBG/{DX}/02_REM_BG`、`WB_ROOT/_temp_rembg/save`、
-    `WB_ROOT/_temp_rembg/archive` 三个位置收集 `_cut.png` / `_副本.png`，并把 `_副本.png` 改名为 `_cut.png`。
-  - `rembg_one_file` / `batch_rembg` 暂存时额外复制 `source_map.json` 与原始配对文件（1B.png / 1W.png 等），
-    让美图 `precheck_pairs` 能正确识别 B/W 角色和配对完整性。
-  - 修复 `/batch-rembg` 的 BW 过滤 bug：原实现按全局 dx_files 判断是否含 BW，导致前一个有 BW 的款会污染后续所有款，
-    现在改为每个 DX 独立判断，只跳过该 DX 自己的 B/W。
+  - Photoshop 贴图速度优化（保证效果前提下）：
+    - wb_sticker_ps.py / process_black.py 单 DX 内复用 COM 会话，缓存胚衣文档
+    - 同一设计图按正/背缩放后只打开一次，复用设计图文档贴到白/黑胚衣
+    - ps_batch.py 一次打开 B/W 正背图，连续执行白/黑动作后统一关闭
+    - 用主动轮询替代硬编码 sleep，减少空等
 
 功能 v2.2.5：
-  - PS 贴图流程队列化：单张/批量贴图统一进入后台队列，串行执行，避免并发冲突
-  - 新增 `_sticker_worker_loop` + `/sticker-status`，前端入队后轮询进度
-  - 每步 PS 脚本（黑T贴图 / 通用贴图 / BW合成）增加 5 分钟超时，卡住自动终止并继续下一款
-  - 前端 `batchSticker()` 改为全部入队后统一轮询，不再因单个请求挂起而中断
-
-功能 v2.2.4：
-  - 修复单张「重新去背」失效：补全缺失的 `_rembg_worker.py`，`/rembg` 端点现在能正常后台驱动美图
-  - `rembg_one_file` 暂存时把同 DX 所有生成图都放入 `_temp_rembg/{DX}/01_AI`，避免美图 `precheck_pairs` 因缺少 B/W 配对而跳过
-  - 只 untrack 目标图 MD5，同 DX 其他已处理图不会被重复去背
+  - 修复黑版专用图反相后不重新贴图的问题：支持版本号后缀（黑B2 / 黑W1 / 黑BW3 等）
+  - process_black.py 与 wb_sticker_ps.py 统一使用 parse_side_suffix 解析 B/W/BW/WB 及其版本号
 
 功能 v2.2.3：
-  - 反相与贴图解耦：反相只生成黑版专用去背图，不再自动调用贴图流水线
-  - 贴图由用户单独点击「贴图」或「批量贴图」触发
+  - 批量贴图与批量反相彻底分离：批量贴图不再处理黑版文件/不再反相，仅做白T贴图+BW合成
+  - Photoshop 生命周期改为「按任务集一次性开启」：单款点贴图做完该款关闭；勾选多款批量贴图全部做完再关闭
+  - Photoshop 改为后台隐藏运行，不再弹出/最大化窗口干扰前台
+  - 页面顶部新增「PS 任务摘要」状态条，实时轮询显示当前贴图/BW合成/反相进度
+  - 贴图旋转角度从 +1°（顺时针）改为 -1°（逆时针）
+  - 已存在的贴图/BW文件会被直接覆盖，方便重新贴图
 
 功能 v2.2.2：
-  - 反相任务统一队列：单张「反相」与「批量反相」加入同一个后台队列，串行执行
-  - 新增 `_invert_worker_loop` 工作线程，避免多个反相同时驱动 Photoshop 导致冲突
-  - `/invert-rem` 与 `/batch-invert-rem` 改为立即返回「已加入队列」
-  - `/batch-invert-result` 同时兼容单张与批量反相的进度轮询
+  - 支持版本号后缀：B1/B2、W1/W2、BW1/WB1 等均视为同一 base_role 的不同版本
+  - 同 base_role 多版本横向排列展示，便于对比挑选最佳版本
+  - 移除 pipeline 状态标签（🎨AI / ✂️ / 📎）
+  - 改名支持任意目标后缀（如 B → BW / RED1 / W2 等）
+  - 贴图成品分组兼容带版本号的文件名
 
 功能 v2.2.1：
   - 启动后 1 秒后台自动预扫描，把结果 warming 到缓存，用户首次打开首页无需等待
@@ -57,7 +77,7 @@
   - Y2 控制台点击「去背预览」后直接进入最新日期的 AI 去背 贴图 OS 页面
 
 功能 v2.1.5：
-  - 修复反相后 BW 合成图不生成的问题：_run_sticker_pipeline 现在会先清理旧的自动生成贴图/BW文件，再重新贴图+合成BW
+  - 修复反相后 BW 合成图不生成的问题：贴图流水线会先清理旧的自动生成贴图/BW文件，再重新贴图+合成BW
   - 修复 _ps_batch 端点的 DX 正则表达式错误（\\d 应为 \d）
   - 反相单张图后自动全部重新贴图，包括 BW 合成图
 
@@ -85,14 +105,14 @@
 
 端口 8766（避开 01_CHECK 的 8765）。
 """
-__version__ = "2.2.6"
+__version__ = "2.2.8"
 VERSION = __version__
-import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue
-from datetime import datetime
+import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, numpy as np
 from pathlib import Path
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, quote
-from PIL import Image, ImageOps
+from PIL import Image
+import cv2
 from ctypes import wintypes
 
 # 强制 stdout/stderr 使用 UTF-8，避免 Windows GBK 控制台打印 emoji/生僻字时崩溃
@@ -102,31 +122,6 @@ if sys.stdout.encoding != 'utf-8':
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
     except Exception:
         pass
-
-# ── 文件日志：check_rem.py 启动后把 stdout/stderr 重定向到 _debug，便于排查去背失败 ──
-_LOG_FILE = None
-_ORIG_STDOUT = None
-_ORIG_STDERR = None
-
-def _setup_file_logging():
-    """把当前进程的 stdout/stderr 同时写入 _debug/check_rem_YYYYMMDD_HHMMSS.log。
-    保留原始 stdout/stderr 引用，供子进程/外部工具需要时恢复。"""
-    global _LOG_FILE, _ORIG_STDOUT, _ORIG_STDERR
-    log_dir = WB_ROOT / "_debug"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"check_rem_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    try:
-        f = open(log_path, "a", encoding="utf-8", buffering=1)
-        _LOG_FILE = f
-        _ORIG_STDOUT = sys.stdout
-        _ORIG_STDERR = sys.stderr
-        sys.stdout = f
-        sys.stderr = f
-        print(f"[check_rem] 日志重定向到: {log_path}", flush=True)
-        return log_path
-    except Exception as e:
-        print(f"[check_rem] 文件日志启用失败: {e}", flush=True)
-        return None
 
 # ── UID 元数据系统 ──────────────────────────────────
 try:
@@ -158,158 +153,39 @@ THUMB_DIR.mkdir(parents=True, exist_ok=True)
 _SCAN_PROJECTS_CACHE = {"projects": None, "timestamp": 0, "lock": threading.Lock()}
 _SCAN_PROJECTS_TTL = 30  # 秒
 
-# ── 反相任务队列（单张 + 批量统一串行执行，避免并发冲突）────────────────
-_INVERT_QUEUE = queue.Queue()
-_INVERT_WORKER_THREAD = None
-_INVERT_STATUS_LOCK = threading.Lock()
-_INVERT_STATUS = {
+# 磁盘缓存：服务重启后首次加载可秒开，避免重新扫描 300+ 款
+_SCAN_DISK_CACHE_FILE = CHECK / "_scan_cache.json"
+_SCAN_DISK_CACHE_TTL = 3600  # 1 小时
+
+# Photoshop 任务锁：同一时刻只跑一套贴图/BW 任务，防止多线程同时操作 PS
+_PS_TASK_LOCK = threading.Lock()
+
+# Photoshop / 后台任务状态摘要（供 Web 页面轮询）
+_PS_STATUS = {
     "running": False,
-    "current": None,
-    "pending": 0,
-    "completed_total": 0,
-    "last_result": None,
-    "last_error": None,
+    "task": "",
+    "current_dx": "",
+    "progress": "",
+    "detail": "",
+    "updated_at": 0,
 }
+_PS_STATUS_LOCK = threading.Lock()
 
 
-def _ensure_invert_worker():
-    """启动反相后台工作线程（幂等）。"""
-    global _INVERT_WORKER_THREAD
-    if _INVERT_WORKER_THREAD is None or not _INVERT_WORKER_THREAD.is_alive():
-        _INVERT_WORKER_THREAD = threading.Thread(target=_invert_worker_loop, daemon=True)
-        _INVERT_WORKER_THREAD.start()
+def _set_ps_status(running=False, task="", current_dx="", progress="", detail=""):
+    """更新 PS / 后台任务状态，detail 可包含更详细的说明。"""
+    with _PS_STATUS_LOCK:
+        _PS_STATUS["running"] = running
+        _PS_STATUS["task"] = task
+        _PS_STATUS["current_dx"] = current_dx
+        _PS_STATUS["progress"] = progress
+        _PS_STATUS["detail"] = detail
+        _PS_STATUS["updated_at"] = time.time()
 
 
-def _invert_worker_loop():
-    """反相队列消费者：按顺序执行单张/批量反相任务。"""
-    while True:
-        task = _INVERT_QUEUE.get()
-        if task is None:
-            break
-        with _INVERT_STATUS_LOCK:
-            _INVERT_STATUS["running"] = True
-            _INVERT_STATUS["current"] = task.get("dx") or (task.get("dx_list", [None])[0] if task.get("dx_list") else None)
-            _INVERT_STATUS["pending"] = _INVERT_QUEUE.qsize()
-        try:
-            if task["type"] == "single":
-                Handler._run_single_invert_sync(task["dx"], task["file"])
-                result = {
-                    "ok": True,
-                    "msg": f"{task['dx']} 反相完成（未自动贴图）",
-                    "results": [{"ok": True, "dx": task["dx"], "msg": "单张反相完成"}]
-                }
-            else:
-                results = batch_invert_rem(task["dx_list"])
-                ok_count = sum(1 for r in results if r["ok"])
-                fail_count = len(results) - ok_count
-                result = {
-                    "ok": fail_count == 0,
-                    "msg": f"批量反相完成 {ok_count}/{len(results)}" + (f"，{fail_count} 个失败" if fail_count else "") + "（未自动贴图）",
-                    "results": results
-                }
-            with _INVERT_STATUS_LOCK:
-                _INVERT_STATUS["last_result"] = result
-                _INVERT_STATUS["completed_total"] += 1
-        except Exception as e:
-            with _INVERT_STATUS_LOCK:
-                _INVERT_STATUS["last_error"] = str(e)
-        finally:
-            with _INVERT_STATUS_LOCK:
-                _INVERT_STATUS["running"] = False
-                _INVERT_STATUS["current"] = None
-                _INVERT_STATUS["pending"] = _INVERT_QUEUE.qsize()
-
-
-# ── PS 贴图任务队列（单张 + 批量统一串行执行，避免 PS 并发冲突 + 超时兜底）────────
-_STICKER_QUEUE = queue.Queue()
-_STICKER_WORKER_THREAD = None
-_STICKER_STATUS_LOCK = threading.Lock()
-_STICKER_STATUS = {
-    "running": False,
-    "current": None,
-    "pending": 0,
-    "completed_total": 0,
-    "last_result": None,
-    "last_error": None,
-}
-STICKER_STEP_TIMEOUT = 300  # 每步 PS 脚本最多 5 分钟
-
-
-def _ensure_sticker_worker():
-    """启动 PS 贴图后台工作线程（幂等）。"""
-    global _STICKER_WORKER_THREAD
-    if _STICKER_WORKER_THREAD is None or not _STICKER_WORKER_THREAD.is_alive():
-        _STICKER_WORKER_THREAD = threading.Thread(target=_sticker_worker_loop, daemon=True)
-        _STICKER_WORKER_THREAD.start()
-
-
-def _run_ps_script_with_timeout(cmd, cwd=None, timeout=STICKER_STEP_TIMEOUT, label="PS脚本"):
-    """运行 PS 脚本，超时则 kill 子进程并返回失败。"""
-    import subprocess as _sub
-    try:
-        print(f"  [贴图队列] 启动 {label}: {' '.join(cmd)}", flush=True)
-        proc = run_minimized(cmd, cwd=cwd, wait=False)
-        try:
-            proc.wait(timeout=timeout)
-        except _sub.TimeoutExpired:
-            print(f"  [贴图队列] {label} 超时 {timeout}s，强制终止", flush=True)
-            try:
-                proc.kill()
-                proc.wait(timeout=5)
-            except Exception:
-                pass
-            return False, f"{label} 超时（{timeout}s）"
-        if proc.returncode != 0:
-            return False, f"{label} 返回码非零: {proc.returncode}"
-        return True, f"{label} 完成"
-    except Exception as e:
-        return False, f"{label} 启动/执行异常: {e}"
-
-
-def _run_ps_script_sync(cmd, cwd=None, label="PS脚本"):
-    """同步运行 PS 脚本（无超时，保留旧行为供直接调用）。"""
-    try:
-        proc = run_minimized(cmd, cwd=cwd)
-        if proc.returncode != 0:
-            return False, f"{label} 返回码非零: {proc.returncode}"
-        return True, f"{label} 完成"
-    except Exception as e:
-        return False, f"{label} 启动/执行异常: {e}"
-
-
-def _sticker_worker_loop():
-    """贴图队列消费者：按顺序执行每款完整贴图流水线。"""
-    while True:
-        task = _STICKER_QUEUE.get()
-        if task is None:
-            break
-        dx = task.get("dx")
-        with _STICKER_STATUS_LOCK:
-            _STICKER_STATUS["running"] = True
-            _STICKER_STATUS["current"] = dx
-            _STICKER_STATUS["pending"] = _STICKER_QUEUE.qsize()
-        try:
-            ok, msg = Handler._run_sticker_pipeline(dx, use_timeout=True)
-            result = {
-                "ok": ok,
-                "msg": msg,
-                "results": [{"ok": ok, "dx": dx, "msg": msg}]
-            }
-            with _STICKER_STATUS_LOCK:
-                _STICKER_STATUS["last_result"] = result
-                _STICKER_STATUS["completed_total"] += 1
-            print(f"[贴图队列] {dx} 完成: ok={ok}, msg={msg}", flush=True)
-        except Exception as e:
-            with _STICKER_STATUS_LOCK:
-                _STICKER_STATUS["last_error"] = str(e)
-            print(f"[贴图队列] {dx} 异常: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
-        finally:
-            with _STICKER_STATUS_LOCK:
-                _STICKER_STATUS["running"] = False
-                _STICKER_STATUS["current"] = None
-                _STICKER_STATUS["pending"] = _STICKER_QUEUE.qsize()
+def _clear_ps_status():
+    """清空 PS / 后台任务状态。"""
+    _set_ps_status(False, "", "", "", "")
 
 
 # ── 回收站删除（与 check_sync.py 一致，可撤销）─────
@@ -363,25 +239,11 @@ def _uid_map_exists(dx_dir):
 
 
 def _need_migrate_dx(dx_dir):
-    """旧项目迁移条件：无 uid_map 或任意 AI/rembg 文件缺少 sidecar（sidecar 在 05_META）"""
+    """旧项目迁移条件：无 uid_map 或 uid_map 为空。
+    有 uid_map 即视为已迁移，不再逐文件检查 sidecar（加速扫描）。"""
     if wb_meta is None:
         return False
-    if not _uid_map_exists(dx_dir):
-        return True
-    for sub in ("01_AI", "02_REM_BG"):
-        d = dx_dir / sub
-        if not d.is_dir():
-            continue
-        for f in d.iterdir():
-            if not f.is_file():
-                continue
-            if f.name.endswith(".meta.json"):
-                continue
-            if f.suffix.lower() not in IMG_EXT:
-                continue
-            if not wb_meta.read_meta(f):
-                return True
-    return False
+    return not _uid_map_exists(dx_dir)
 
 
 def _meta_for(file_path):
@@ -395,15 +257,28 @@ def _meta_for(file_path):
         return {}
 
 
+def _parse_stem(stem, dx):
+    """把 DXxxxx_XN 解析为 (base_stem, version, base_role)；N 为数字版本号。
+    支持 _cut 后缀、黑版前缀（黑B/黑W/黑BW）。"""
+    if not stem.startswith(dx + "_"):
+        return stem, "", ""
+    suffix = stem[len(dx)+1:]
+    if suffix.endswith("_cut"):
+        suffix = suffix[:-4]
+    m = re.match(r'^(.*?)(\d+)$', suffix)
+    if m:
+        base_suffix, version = m.group(1), m.group(2)
+    else:
+        base_suffix, version = suffix, ""
+    base_stem = f"{dx}_{base_suffix}"
+    return base_stem, version, base_suffix
+
+
 def _role_from_name(fname, dx):
-    """从文件名推断 role（元数据不可用时回退）"""
+    """从文件名推断基础 role（元数据不可用时回退）；DXxxxx_XN → X"""
     stem, _ = os.path.splitext(fname)
-    if stem.startswith(dx + "_"):
-        suffix = stem[len(dx)+1:]
-        if suffix.endswith("_cut"):
-            suffix = suffix[:-4]
-        return suffix
-    return "?"
+    _, _, base_role = _parse_stem(stem, dx)
+    return base_role or "?"
 
 
 def _new_uid(path):
@@ -417,15 +292,44 @@ def _new_uid(path):
 
 
 def scan_projects(force=False):
-    """返回 [{dx, pairs:[{stem, ai_file, rem_file, group_id, ai_uid, rem_uid,
-                          ai_stage, rem_stage, role}],
-              black_variants:[{stem, rem_file, group_id, rem_uid, rem_stage}]}]"""
+    """返回 [{dx, pairs:[...], black_variants:[...]}]。
+    优先读内存缓存，再读磁盘缓存，最后才全量扫描。"""
     global _SCAN_PROJECTS_CACHE
     with _SCAN_PROJECTS_CACHE["lock"]:
         if not force and _SCAN_PROJECTS_CACHE["projects"] is not None:
             if time.time() - _SCAN_PROJECTS_CACHE["timestamp"] < _SCAN_PROJECTS_TTL:
                 return _SCAN_PROJECTS_CACHE["projects"]
 
+    # 尝试磁盘缓存（服务重启后首次加载可秒开）
+    if not force:
+        try:
+            if _SCAN_DISK_CACHE_FILE.exists():
+                data = json.loads(_SCAN_DISK_CACHE_FILE.read_text(encoding="utf-8"))
+                if time.time() - data.get("timestamp", 0) < _SCAN_DISK_CACHE_TTL:
+                    projects = data["projects"]
+                    with _SCAN_PROJECTS_CACHE["lock"]:
+                        _SCAN_PROJECTS_CACHE["projects"] = projects
+                        _SCAN_PROJECTS_CACHE["timestamp"] = time.time()
+                    return projects
+        except Exception:
+            pass
+
+    projects = _scan_projects_impl()
+    with _SCAN_PROJECTS_CACHE["lock"]:
+        _SCAN_PROJECTS_CACHE["projects"] = projects
+        _SCAN_PROJECTS_CACHE["timestamp"] = time.time()
+    # 写入磁盘缓存
+    try:
+        _SCAN_DISK_CACHE_FILE.write_text(
+            json.dumps({"timestamp": time.time(), "projects": projects}, ensure_ascii=False),
+            encoding="utf-8")
+    except Exception:
+        pass
+    return projects
+
+
+def _scan_projects_impl():
+    """实际全量扫描：返回项目列表。"""
     projects = []
     for d in sorted(BASE.iterdir()):
         if not d.is_dir() or not re.match(r"^DX\d+$", d.name):
@@ -434,21 +338,7 @@ def scan_projects(force=False):
         ai_dir = d / "01_AI"
         rem_dir = d / "02_REM_BG"
 
-        # 迁移旧项目：uid_map 不存在/为空或任意 AI/rembg 文件缺少 sidecar
-        if _need_migrate_dx(d):
-            try:
-                wb_meta.migrate_dx(d)
-            except Exception as e:
-                print(f"  [wb_meta] 迁移 {dx} 失败: {e}", flush=True)
-
-        # MD5 主键对账：图片改名/移动后，用 MD5 修正 uid_map 里的 file 路径
-        if wb_meta is not None:
-            try:
-                wb_meta.reconcile_dx(d)
-            except Exception as e:
-                print(f"  [wb_meta] 对账 {dx} 失败: {e}", flush=True)
-
-        # 收集所有出现过的 stem（AI生成图 stem 与 REM_BG stem 去掉 _cut 后）
+        # 先收集文件列表，用于和 uid_map 做快速对比
         ai_files = []
         if ai_dir.is_dir():
             for f in sorted(ai_dir.iterdir()):
@@ -464,14 +354,45 @@ def scan_projects(force=False):
         if not ai_files and not rem_files:
             continue  # 该款既无AI图也无去背图，跳过
 
-        # 元数据查找表（wb_meta 可用时）
+        # 迁移旧项目：uid_map 不存在/为空或任意 AI/rembg 文件缺少 sidecar
+        if _need_migrate_dx(d):
+            try:
+                wb_meta.migrate_dx(d)
+            except Exception as e:
+                print(f"  [wb_meta] 迁移 {dx} 失败: {e}", flush=True)
+
+        # 读取 uid_map 并建立路径索引：每个 DX 只读一次，避免扫描时逐文件算 MD5
+        path_to_meta = {}
+        if wb_meta is not None:
+            try:
+                uid_map = wb_meta.read_uid_map(d)
+                for entry in uid_map.get("images", {}).values():
+                    rel = entry.get("file")
+                    if rel:
+                        path_to_meta[rel] = entry
+            except Exception as e:
+                print(f"  [scan] 读取 uid_map 失败 {dx}: {e}", flush=True)
+
+        def _meta_for_path(path):
+            """用相对路径从本款 uid_map 索引中查元数据；找不到再回退。"""
+            if wb_meta is None:
+                return {}
+            try:
+                rel = str(path.relative_to(d))
+                entry = path_to_meta.get(rel)
+                if entry:
+                    return dict(entry)
+            except Exception:
+                pass
+            return _meta_for(path)
+
         ai_meta_by_file = {}
         rem_meta_by_file = {}
         if wb_meta is not None:
             for af in ai_files:
-                ai_meta_by_file[af] = _meta_for(ai_dir / af)
+                ai_meta_by_file[af] = _meta_for_path(ai_dir / af)
             for rf in rem_files:
-                rem_meta_by_file[rf] = _meta_for(rem_dir / rf)
+                rem_meta_by_file[rf] = _meta_for_path(rem_dir / rf)
 
         # 以 AI 图为主键配对；剩余的 _cut.png（无对应AI图）也单列
         rem_by_stem = {}
@@ -483,10 +404,11 @@ def scan_projects(force=False):
         covered_rem = set()
         for af in ai_files:
             stem = os.path.splitext(af)[0]
+            base_stem, version, base_role = _parse_stem(stem, dx)
             ai_meta = ai_meta_by_file.get(af, {})
             ai_uid = ai_meta.get("uid")
             group_id = ai_meta.get("group_id") or ""
-            role = ai_meta.get("role") or _role_from_name(af, dx)
+            role = ai_meta.get("role") or base_role
 
             # 优先按 UID 元数据匹配（parent_uid == ai_uid 或 rem uid == ai_uid），再按 stem 回退
             matched = []
@@ -505,6 +427,9 @@ def scan_projects(force=False):
             rem_meta = rem_meta_by_file.get(matched[0], {}) if matched else {}
             pairs.append({
                 "stem": stem,
+                "base_stem": base_stem,
+                "version": version,
+                "base_role": base_role,
                 "ai_file": af,
                 "rem_file": matched[0] if matched else None,
                 "group_id": group_id or rem_meta.get("group_id", ""),
@@ -515,12 +440,13 @@ def scan_projects(force=False):
                 "role": role,
             })
 
-        # 黑版变体：_黑B/_黑W/_黑BW 等，group_id 强制归属到对应 pair 以支持前端分组
+        # 黑版变体：_黑B/_黑W/_黑BW 等（含版本号 _黑B1），group_id 强制归属到对应 pair 以支持前端分组
         black_variants = []
         for rf in sorted(rem_files):
             if rf in covered_rem or "_黑" not in rf:
                 continue
             stem = rf[:-len("_cut.png")]
+            base_stem, version, base_role = _parse_stem(stem, dx)
             m = rem_meta_by_file.get(rf, {})
             group_id = ""
             parent_uid = m.get("parent_uid")
@@ -530,11 +456,18 @@ def scan_projects(force=False):
                     if pr.get("ai_uid") == parent_uid or pr.get("rem_uid") == parent_uid:
                         group_id = pr.get("group_id", "")
                         break
-            # 再按文件名前缀（DXxxxx_黑B → DXxxxx_B）回退
+            # 再按基础文件名（DXxxxx_黑B1 → DXxxxx_B1）回退
             if not group_id:
                 plain_stem = stem.replace("黑", "", 1)
                 for pr in pairs:
                     if pr["stem"] == plain_stem:
+                        group_id = pr.get("group_id", "")
+                        break
+            # 再按 base_stem（DXxxxx_黑B → DXxxxx_B）回退
+            if not group_id:
+                plain_base = base_stem.replace("黑", "", 1)
+                for pr in pairs:
+                    if pr.get("base_stem") == plain_base:
                         group_id = pr.get("group_id", "")
                         break
             # 都匹配不到才使用自身元数据
@@ -542,6 +475,9 @@ def scan_projects(force=False):
                 group_id = m.get("group_id", "")
             black_variants.append({
                 "stem": stem,
+                "base_stem": base_stem,
+                "version": version,
+                "base_role": base_role,
                 "rem_file": rf,
                 "group_id": group_id,
                 "rem_uid": m.get("uid"),
@@ -554,9 +490,13 @@ def scan_projects(force=False):
             if rf in covered_rem:
                 continue
             stem = rf[:-len("_cut.png")]
+            base_stem, version, base_role = _parse_stem(stem, dx)
             m = rem_meta_by_file.get(rf, {})
             pairs.append({
                 "stem": stem,
+                "base_stem": base_stem,
+                "version": version,
+                "base_role": base_role,
                 "ai_file": None,
                 "rem_file": rf,
                 "group_id": m.get("group_id", ""),
@@ -564,7 +504,7 @@ def scan_projects(force=False):
                 "rem_uid": m.get("uid"),
                 "ai_stage": None,
                 "rem_stage": m.get("stage", "rembg"),
-                "role": m.get("role") or _role_from_name(rf, dx),
+                "role": m.get("role") or base_role,
             })
 
         # 该款的日期统一按 DX 文件夹建立日期（YYMMDD）分类，不按文件 mtime
@@ -575,9 +515,6 @@ def scan_projects(force=False):
 
         projects.append({"dx": dx, "date": dx_date, "pairs": pairs, "black_variants": black_variants})
 
-    with _SCAN_PROJECTS_CACHE["lock"]:
-        _SCAN_PROJECTS_CACHE["projects"] = projects
-        _SCAN_PROJECTS_CACHE["timestamp"] = time.time()
     return projects
 
 
@@ -587,6 +524,11 @@ def _invalidate_scan_cache():
     with _SCAN_PROJECTS_CACHE["lock"]:
         _SCAN_PROJECTS_CACHE["projects"] = None
         _SCAN_PROJECTS_CACHE["timestamp"] = 0
+    try:
+        if _SCAN_DISK_CACHE_FILE.exists():
+            _SCAN_DISK_CACHE_FILE.unlink()
+    except Exception:
+        pass
 
 
 def list_dates(projects):
@@ -620,51 +562,6 @@ def get_thumb(dx, kind, file):
             print(f"  [缩略图失败] {dx}/{file}: {e}", flush=True)
             return None
     return thumb
-
-
-# ── 去背结果收集：兼容美图保存路径未切换的兜底 ─────────────
-def _collect_rembg_results(dx, stems, rem_dir):
-    """从多个可能位置收集去背产物，返回 {stem: dest_path}。
-
-    美图保存对话框若路径未生效，_副本.png 可能落到 DST_SAVE / archive；
-    本函数会扫描：
-      1. TEMP_REMBG/{dx}/02_REM_BG
-      2. WB_ROOT/_temp_rembg/save
-      3. WB_ROOT/_temp_rembg/archive
-    并把 *_副本.png 改名为 *_cut.png 后移动到真实 rem_dir。
-    """
-    stems = set(stems)
-    found = {}
-    search_roots = [
-        TEMP_REMBG / dx / "02_REM_BG",
-        WB_ROOT / "_temp_rembg" / "save",
-        WB_ROOT / "_temp_rembg" / "archive",
-    ]
-    patterns = ["*_cut.png", "*_副本.png"]
-    for root in search_roots:
-        if not root.is_dir():
-            continue
-        for pat in patterns:
-            for f in root.glob(pat):
-                if f.stat().st_size < 100_000:
-                    continue
-                stem = f.stem.replace("_副本", "").replace("_cut", "")
-                if stem not in stems:
-                    continue
-                if stem in found:
-                    continue  # 已收集，跳过重复
-                cut_name = f"{stem}_cut.png"
-                dest = rem_dir / cut_name
-                rem_dir.mkdir(parents=True, exist_ok=True)
-                if dest.exists():
-                    send_to_recycle_bin(str(dest))
-                try:
-                    shutil.move(str(f), str(dest))
-                    print(f"  [重去背] 收集新结果 → {dest} (来源: {root}/{f.name})", flush=True)
-                    found[stem] = dest
-                except Exception as e:
-                    print(f"  [重去背] 移动结果失败 {f} → {dest}: {e}", flush=True)
-    return found
 
 
 # ── 重新去背：单张 AI 图安全重跑美图秀秀 ─────────────
@@ -712,34 +609,13 @@ def rembg_one_file(dx, ai_file):
     if had_old:
         send_to_recycle_bin(str(old_cut_path))
 
-    # 4. 暂存目标图及其配对图到 _temp_rembg/{DX}/01_AI/
-    #    美图脚本的 precheck_pairs 会检查 B/W 配对完整性；如果只暂存单张 W，
-    #    当 source_map / orig_files 中缺少 B 时会导致整批跳过。因此把同 DX 的
-    #    所有生成图都暂存进来，让配对预检看到完整画面（已在 track 的图不会被重跑）。
+    # 4. 暂存该单张 AI 图到 _temp_rembg/{DX}/01_AI/
     staging_root = TEMP_REMBG / dx / "01_AI"
     if staging_root.exists():
         shutil.rmtree(str(staging_root), ignore_errors=True)
     staging_root.mkdir(parents=True, exist_ok=True)
-    staged_md5 = []
-    for f in sorted(ai_dir.iterdir()):
-        if is_generated_ai(f.name, dx):
-            shutil.copy2(str(f), str(staging_root / f.name))
-            staged_md5.append(file_md5(str(f)))
-    # 4b. 复制 source_map.json 与原始配对文件到暂存目录，
-    #     让美图 precheck_pairs 能正确识别 B/W 角色与配对完整性。
-    src_smap = BASE / dx / "source_map.json"
-    if src_smap.exists():
-        shutil.copy2(str(src_smap), str(TEMP_REMBG / dx / "source_map.json"))
-    for f in sorted(ai_dir.iterdir()):
-        if not is_generated_ai(f.name, dx) and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
-            # 原始配对文件（如 1B.png / 1W.png）
-            shutil.copy2(str(f), str(staging_root / f.name))
-
-    if not staged_md5:
-        _restore_config()
-        _restore_one_backup(cut_name, backup_dir, rem_dir)
-        shutil.rmtree(str(TEMP_REMBG / dx), ignore_errors=True)
-        return False, f"{dx} 没有可暂存的生成图"
+    shutil.copy2(str(ai_path), str(staging_root / ai_file))
+    staged_md5 = [file_md5(str(ai_path))]
 
     # 5. 备份并改写 config.json：SRC 指向 _temp_rembg（脚本扫描 DX*/01_AI）
     shutil.copy2(str(MEITU_CONFIG), str(CONFIG_BACKUP))
@@ -753,8 +629,8 @@ def rembg_one_file(dx, ai_file):
     (WB_ROOT / "_temp_rembg" / "archive").mkdir(parents=True, exist_ok=True)
     MEITU_CONFIG.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    # 6. 从 track 移除目标图 md5（仅让美图重跑此图，不影响血缘 registry 中的 AI 图 MD5）
-    removed = _untrack_md5([file_md5(str(ai_path))], dx=dx)
+    # 6. 从 track 移除该图 md5（仅让美图重跑此图，不影响血缘 registry 中的 AI 图 MD5）
+    removed = _untrack_md5(staged_md5, dx=dx)
 
     # 7. 真实驱动美图（新控制台窗口，接管屏幕）
     if not MEITU_SCRIPT.exists():
@@ -763,21 +639,14 @@ def rembg_one_file(dx, ai_file):
         shutil.rmtree(str(TEMP_REMBG / dx), ignore_errors=True)
         return False, f"美图脚本不存在: {MEITU_SCRIPT}"
 
-    print(f"  [重去背] {dx}/{ai_file}: 暂存 {len(staged_md5)} 张（目标 + 同DX生成图）, 启动美图...", flush=True)
+    print(f"  [重去背] {dx}/{ai_file}: 暂存1张, 启动美图...", flush=True)
     print(f"  ⚠ 美图将接管屏幕，请勿动键鼠，等待脚本结束。", flush=True)
     try:
         proc = run_minimized(
             [sys.executable, str(MEITU_SCRIPT)],
             cwd=str(MEITU_SCRIPT.parent),
-            capture_output=True, timeout=600,
         )
         ok = proc.returncode == 0
-        # 把美图脚本的完整输出写入日志，便于排查「未产出结果」原因
-        if proc.stdout:
-            print("  [重去背] 美图 stdout:\n" + proc.stdout.decode('utf-8', errors='replace'), flush=True)
-        if proc.stderr:
-            print("  [重去背] 美图 stderr:\n" + proc.stderr.decode('utf-8', errors='replace'), flush=True)
-        print(f"  [重去背] 美图 returncode={proc.returncode}", flush=True)
     except Exception as e:
         ok = False
         print(f"  [重去背] {dx}/{ai_file} 美图运行异常: {e}", flush=True)
@@ -785,28 +654,35 @@ def rembg_one_file(dx, ai_file):
     # 8. 收尾：恢复 config（无论成功失败）
     _restore_config()
 
-    # 8b. 收集美图产物。美图保存对话框若路径未生效，_副本.png 可能落到 DST_SAVE / archive；
-    #     因此从多个位置扫描并归位到真实 02_REM_BG。
-    found = _collect_rembg_results(dx, [stem], rem_dir)
-    dest = found.get(stem)
-    if dest and dest.exists():
-        # 注册去背输出元数据
-        if wb_meta is not None and ai_uid:
-            try:
-                wb_meta.register_rembg(dest, uid=ai_uid, group_id=group_id,
-                                       role=role, parent_uid=ai_uid, ai_file=ai_file)
-            except Exception as e:
-                print(f"  [重去背] 元数据注册失败: {e}", flush=True)
-        # 同步执行 ESRGAN 放大到 2024×2048（美图脚本是异步Popen，可能来不及跑完）
-        upscaler = MEITU_SCRIPT.parent / "upscale_worker.py"
-        if upscaler.exists():
-            try:
-                subprocess.run([sys.executable, str(upscaler), str(dest)],
-                               capture_output=True, timeout=120)
-                sz = os.path.getsize(dest) // 1024
-                print(f"  [重去背] ESRGAN 放大完成 → {sz}KB", flush=True)
-            except Exception as e:
-                print(f"  [重去背] ESRGAN 放大跳过: {e}", flush=True)
+    # 8b. 美图脚本的输出路径是 dirname(subdir)/02_REM_BG = _temp_rembg/{DX}/02_REM_BG
+    #     （不是真实目录！因为 subdir 在暂存目录里）。所以要把暂存目录里的新 _cut.png
+    #     收集、移动到真实的 02_REM_BG，否则会被当成"没产出"而还原旧图覆盖新图。
+    temp_out_dir = TEMP_REMBG / dx / "02_REM_BG"
+    if temp_out_dir.is_dir():
+        for f in temp_out_dir.glob("*_cut.png"):
+            dest = rem_dir / f.name
+            rem_dir.mkdir(parents=True, exist_ok=True)
+            if dest.exists():
+                send_to_recycle_bin(str(dest))  # 先清理同名占位
+            shutil.move(str(f), str(dest))
+            print(f"  [重去背] 收集新结果 → {dest}", flush=True)
+            # 注册去背输出元数据
+            if wb_meta is not None and ai_uid:
+                try:
+                    wb_meta.register_rembg(dest, uid=ai_uid, group_id=group_id,
+                                           role=role, parent_uid=ai_uid, ai_file=ai_file)
+                except Exception as e:
+                    print(f"  [重去背] 元数据注册失败: {e}", flush=True)
+            # 同步执行 ESRGAN 放大到 2024×2048（美图脚本是异步Popen，可能来不及跑完）
+            upscaler = MEITU_SCRIPT.parent / "upscale_worker.py"
+            if upscaler.exists():
+                try:
+                    subprocess.run([sys.executable, str(upscaler), str(dest)],
+                                   capture_output=True, timeout=120)
+                    sz = os.path.getsize(dest) // 1024
+                    print(f"  [重去背] ESRGAN 放大完成 → {sz}KB", flush=True)
+                except Exception as e:
+                    print(f"  [重去背] ESRGAN 放大跳过: {e}", flush=True)
 
     # 9. 检查美图是否产出该 stem 的新结果（在真实目录里判断）
     new_exists = rem_dir.is_dir() and (rem_dir / cut_name).exists() \
@@ -874,15 +750,6 @@ def batch_rembg(dx_files):
         staging_root.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(ai_path), str(staging_root / ai_file))
 
-        # 暂存 source_map.json 与原始配对文件，帮助美图 precheck_pairs 识别角色
-        dx_ai_dir = BASE / dx / "01_AI"
-        src_smap = BASE / dx / "source_map.json"
-        if src_smap.exists():
-            shutil.copy2(str(src_smap), str(TEMP_REMBG / dx / "source_map.json"))
-        for f in sorted(dx_ai_dir.iterdir()):
-            if not is_generated_ai(f.name, dx) and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
-                shutil.copy2(str(f), str(staging_root / f.name))
-
         staged.append((dx, ai_file, stem, cut_name, ai_path, rem_dir, backup_dir, had_old, ai_uid, group_id, role))
 
     if not staged:
@@ -915,12 +782,6 @@ def batch_rembg(dx_files):
             capture_output=True, timeout=600,
         )
         ok = proc.returncode == 0
-        # 把美图脚本的完整输出写入日志，便于排查「未产出结果」原因
-        if proc.stdout:
-            print("  [批量去背] 美图 stdout:\n" + proc.stdout.decode('utf-8', errors='replace'), flush=True)
-        if proc.stderr:
-            print("  [批量去背] 美图 stderr:\n" + proc.stderr.decode('utf-8', errors='replace'), flush=True)
-        print(f"  [批量去背] 美图 returncode={proc.returncode}", flush=True)
     except subprocess.TimeoutExpired:
         ok = False
         print("  [批量去背] 美图超时", flush=True)
@@ -930,17 +791,17 @@ def batch_rembg(dx_files):
     finally:
         _restore_config()
 
-    # 5. 从多个可能位置收集结果到真实 DX 文件夹
-    dx_stems = {}
+    # 5. 从临时目录收集结果到真实 DX 文件夹
     for dx, ai_file, stem, cut_name, ai_path, rem_dir, backup_dir, had_old, ai_uid, group_id, role in staged:
-        dx_stems.setdefault(dx, {"rem_dir": rem_dir, "items": []})
-        dx_stems[dx]["items"].append((ai_file, stem, cut_name, ai_path, ai_uid, group_id, role))
-    for dx, info in dx_stems.items():
-        stems = [item[1] for item in info["items"]]
-        found = _collect_rembg_results(dx, stems, info["rem_dir"])
-        for ai_file, stem, cut_name, ai_path, ai_uid, group_id, role in info["items"]:
-            dest = found.get(stem)
-            if dest and dest.exists():
+        # 从 _temp_rembg/{DX}/02_REM_BG 收集新生成的 _cut.png
+        temp_out_dir = TEMP_REMBG / dx / "02_REM_BG"
+        if temp_out_dir.is_dir():
+            for f in temp_out_dir.glob("*_cut.png"):
+                dest = rem_dir / f.name
+                rem_dir.mkdir(parents=True, exist_ok=True)
+                if dest.exists():
+                    send_to_recycle_bin(str(dest))
+                shutil.move(str(f), str(dest))
                 # 注册去背输出元数据
                 if wb_meta is not None and ai_uid:
                     try:
@@ -986,57 +847,158 @@ def batch_rembg(dx_files):
     return results
 
 
-# ── 批量反相：对多个 DX 的非黑版 _cut.png 反相生成黑版专用图 ────────────────────────
-def batch_invert_rem(dx_list):
-    """批量反相：对选中 DX 的所有非黑版 _cut.png 反相生成黑版专用图。
-    不再自动跑贴图流水线；贴图由用户单独点击「贴图」或「批量贴图」触发。
+# ── 暗部/亮部智能显色（替代旧版纯白/纯黑剪影）────────────────────────
+def enhance_dark_print_for_black_shirt(design, shirt="black",
+        dark_boost=0.55, protect_threshold=140, min_brightness=20,
+        sat_compensation=0.3, smooth_radius=9):
+    """黑衫/白衫智能显色：仅处理暗部(黑衫)或亮部(白衫)，完整保留颜色。
+    替代旧版『非透明像素变纯白/纯黑』剪影。shirt='black' 提亮暗部；shirt='white' 压暗亮部。
+    design: PIL RGBA 图。返回 PIL RGBA 图。
+    """
+    if getattr(design, "mode", None) != "RGBA":
+        design = design.convert("RGBA")
+    arr = np.array(design)
+    rgb = arr[..., :3].astype(np.float32)
+    alpha = arr[..., 3].astype(np.float32) / 255.0
+    valid = alpha > 0.01
+    if not valid.any():
+        return design
+    lab = cv2.cvtColor(rgb.astype(np.uint8), cv2.COLOR_RGB2LAB).astype(np.float32)
+    L, A, B = lab[..., 0], lab[..., 1], lab[..., 2]
+    L_norm = L / 255.0
+    thresh_norm = protect_threshold / 255.0
+    if shirt == "black":
+        weight = np.clip((thresh_norm - L_norm) / thresh_norm, 0.0, 1.0)
+        target_gamma = max(0.15, 1.0 - dark_boost * 0.7)
+        L_target = 255.0 * np.power(L_norm, target_gamma)
+        min_mask = (L < min_brightness) & valid
+        L_target[min_mask] = np.maximum(L_target[min_mask], min_brightness)
+    else:
+        weight = np.clip((L_norm - thresh_norm) / (1.0 - thresh_norm), 0.0, 1.0)
+        target_gamma = max(0.15, 1.0 + dark_boost * 0.7)
+        L_target = 255.0 * np.power(L_norm, target_gamma)
+        max_mask = (L > (255 - min_brightness)) & valid
+        L_target[max_mask] = np.minimum(L_target[max_mask], 255 - min_brightness)
+    weight = weight * alpha
+    if smooth_radius > 0:
+        sr = int(smooth_radius) | 1
+        weight = cv2.GaussianBlur(weight, (sr, sr), 0)
+    weight = np.clip(weight, 0.0, 1.0)
+    L_final = L * (1 - weight) + L_target * weight
+    sat_gain = 1.0 + sat_compensation * weight
+    A_final = np.clip((A - 128.0) * sat_gain + 128.0, 0.0, 255.0)
+    B_final = np.clip((B - 128.0) * sat_gain + 128.0, 0.0, 255.0)
+    lab_final = np.stack([L_final, A_final, B_final], axis=-1).astype(np.uint8)
+    bgr = cv2.cvtColor(lab_final, cv2.COLOR_LAB2BGR)
+    rgb_final = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    out = np.dstack([rgb_final, arr[..., 3]])
+    return Image.fromarray(out.astype(np.uint8), "RGBA")
+
+
+def add_white_underbase(design, max_white_opacity=0.9, min_white_opacity=0.05,
+                        transition_threshold=130, edge_feather=5, boost_sat=0.35):
+    """自适应浓度白墨打底（黑衫显色）：越暗白墨越厚，亮/饱和色保留原色。
+    模拟真实 DTG 黑衫印花『先喷白墨、再喷彩色』，使极暗区域在黑布上可见，
+    同时避免全铺白底导致颜色漂白。design: PIL RGBA 图。返回 PIL RGBA 图。
+    """
+    if getattr(design, "mode", None) != "RGBA":
+        design = design.convert("RGBA")
+    arr = np.array(design)
+    rgb = arr[..., :3].astype(np.float32)
+    alpha = arr[..., 3].astype(np.float32) / 255.0
+    valid = alpha > 0.01
+    if not valid.any():
+        return design
+    rgb_u = rgb.astype(np.uint8)
+    gray = cv2.cvtColor(rgb_u, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+    hsv = cv2.cvtColor(rgb_u, cv2.COLOR_RGB2HSV).astype(np.float32)
+    sat = hsv[..., 1] / 255.0
+    th = transition_threshold / 255.0
+    white_mask = np.clip((th - gray) / th, 0.0, 1.0)            # 越暗越 1
+    white_alpha = min_white_opacity + white_mask * (max_white_opacity - min_white_opacity)
+    white_alpha = white_alpha * alpha
+    if edge_feather > 0:
+        k = int(edge_feather) * 2 + 1
+        white_alpha = cv2.GaussianBlur(white_alpha, (k, k), 0)
+    white_alpha = np.clip(white_alpha, 0.0, 1.0)
+    white = np.ones_like(rgb) * 255.0
+    keep = np.clip(gray + boost_sat * sat, 0.0, 1.0)            # 暗但饱和的颜色多保留原色
+    color_on_white = white * (1 - keep)[..., None] + rgb * keep[..., None]
+    final = rgb * (1 - white_alpha)[..., None] + color_on_white * white_alpha[..., None]
+    final = np.clip(final, 0, 255).astype(np.uint8)
+    out = np.dstack([final, arr[..., 3]])
+    return Image.fromarray(out.astype(np.uint8), "RGBA")
+
+
+def black_shirt_print_optimize(design):
+    """黑衫终极显色流水线：自适应白墨打底 + 轻度暗部提亮 + 饱和补偿。"""
+    step1 = add_white_underbase(design)
+    step2 = enhance_dark_print_for_black_shirt(
+        step1, shirt="black", dark_boost=0.25, protect_threshold=160,
+        min_brightness=20, sat_compensation=0.2
+    )
+    return step2
+
+
+# ── 批量反相：对多个 DX 的非黑版 _cut.png 反相并跑贴图流水线 ────────────────────────
+def batch_invert_rem(dx_list, mode="black"):
+    """批量反相：对选中 DX 的所有非黑版/非白版 _cut.png 反相生成黑版或白版专用图，
+    然后自动跑完整平铺图贴图流水线（黑T/白T专用 → 通用贴图 → BW 合成）。
+    mode: 'black' 生成 _黑* 白色剪影；'white' 生成 _白* 黑色剪影。
+    所有需要贴图的款会一次性交给 _run_sticker_task，PS 全程只开一次。
     dx_list: [dx, ...]
-    返回: [{dx, files:[{src,dest}], ok, msg}, ...]
+    返回: [{dx, files:[{src,dest}], sticker_ok, sticker_msg, ok, msg}, ...]
     """
     results = []
+    sticker_queue = []
+    sticker_index = {}
     for dx in dx_list:
         rem_dir = BASE / dx / "02_REM_BG"
         if not rem_dir.is_dir():
-            results.append({"dx": dx, "files": [], "ok": False,
+            results.append({"dx": dx, "files": [], "sticker_ok": False,
+                            "sticker_msg": "02_REM_BG 不存在", "ok": False,
                             "msg": f"{dx}: 02_REM_BG 不存在"})
             continue
 
         files = []
         errors = []
+        prefix = "黑" if mode == "black" else "白"
+        skip_markers = ("_黑", "_白")
         for f in sorted(rem_dir.iterdir()):
             name = f.name
             if not name.lower().endswith("_cut.png"):
                 continue
-            if "_黑" in name:
+            if any(m in name for m in skip_markers):
                 continue
             # 解析后缀：DXxxxx_B / DXxxxx_W / DXxxxx_BW
             stem = name[:-len("_cut.png")]
             suffix = stem[len(dx)+1:] if stem.startswith(dx + "_") else ""
             if not suffix:
                 continue
-            dest_name = f"{dx}_黑{suffix}_cut.png"
+            dest_name = f"{dx}_{prefix}{suffix}_cut.png"
             dest = rem_dir / dest_name
             try:
                 img = Image.open(f).convert("RGBA")
-                r, g, b, a = img.split()
-                rgb = Image.merge("RGB", (r, g, b))
-                inv_rgb = ImageOps.invert(rgb)
-                inv = Image.merge("RGBA", (*inv_rgb.split(), a))
+                # 智能显色：黑版走白墨打底流水线(极暗也显色)+保色；白版压暗亮部+保色
+                if mode == "black":
+                    inv = black_shirt_print_optimize(img)
+                else:
+                    inv = enhance_dark_print_for_black_shirt(img, shirt="white")
+                role = f"黑{suffix}" if mode == "black" else f"白{suffix}"
                 inv.save(dest)
                 files.append({"src": name, "dest": dest_name})
-                # 注册黑版变体元数据
+                # 注册变体元数据
                 if wb_meta is not None:
                     try:
                         src_meta = _meta_for(f)
                         parent_uid = src_meta.get("uid")
                         gid = src_meta.get("group_id") or ""
-                        black_role = f"黑{suffix}"
                         if parent_uid:
                             wb_meta.register_rembg(dest, uid=_new_uid(dest), group_id=gid,
-                                                   role=black_role, parent_uid=parent_uid,
+                                                   role=role, parent_uid=parent_uid,
                                                    ai_file=name)
                         else:
-                            wb_meta.ensure_meta(dest, group_id=gid, stage="rembg", role=black_role)
+                            wb_meta.ensure_meta(dest, group_id=gid, stage="rembg", role=role)
                     except Exception as e:
                         print(f"  [批量反相] 元数据注册失败 {dest}: {e}", flush=True)
                 # 清缩略图缓存
@@ -1047,17 +1009,36 @@ def batch_invert_rem(dx_list):
                 errors.append(f"{name}: {e}")
 
         if not files and errors:
-            results.append({"dx": dx, "files": files, "ok": False,
+            results.append({"dx": dx, "files": files, "sticker_ok": False,
+                            "sticker_msg": "", "ok": False,
                             "msg": f"{dx}: 反相失败 - " + "; ".join(errors)})
             continue
         if not files:
-            results.append({"dx": dx, "files": files, "ok": True,
+            results.append({"dx": dx, "files": files, "sticker_ok": False,
+                            "sticker_msg": "", "ok": True,
                             "msg": f"{dx}: 无需要反相的图"})
             continue
 
-        # 仅生成黑版反相图，不自动跑贴图流水线
-        results.append({"dx": dx, "files": files, "ok": not errors,
-                        "msg": f"{dx}: 反相 {len(files)} 张完成" + ("; 错误: " + "; ".join(errors) if errors else "")})
+        # 先占位，贴图流水线统一跑完后再回填
+        sticker_index[dx] = len(results)
+        results.append({"dx": dx, "files": files, "errors": errors})
+        sticker_queue.append(dx)
+
+    if sticker_queue:
+        sticker_results = Handler._run_sticker_task(sticker_queue)
+        sticker_map = {dx: (ok, msg) for dx, ok, msg in sticker_results}
+        for dx in sticker_queue:
+            idx = sticker_index.get(dx)
+            if idx is None:
+                continue
+            r = results[idx]
+            errors = r.pop("errors", [])
+            ok, msg = sticker_map.get(dx, (False, "未执行平铺图/模特图贴图"))
+            r["sticker_ok"] = ok
+            r["sticker_msg"] = msg
+            r["ok"] = ok and not errors
+            err_part = ("; 错误: " + "; ".join(errors)) if errors else ""
+            r["msg"] = f"{dx}: 反相 {len(r['files'])} 张, " + ("平铺图/模特图贴图完成" if ok else f"贴图流程异常: {msg}") + err_part
     return results
 
 
@@ -1135,25 +1116,6 @@ def run_minimized(cmd, cwd=None, wait=True, **extra):
     return subprocess.Popen(cmd, **kwargs)
 
 
-def _is_rembg_lock_stale(lock):
-    """去背锁是否过期：>15分钟 或 锁文件格式损坏(旧版纯文本)。
-    防止美图脚本卡死/崩溃后锁永久残留导致"已有去背任务在运行"死锁。"""
-    try:
-        info = json.loads(lock.read_text(encoding="utf-8"))
-        age = time.time() - info.get("ts", 0)
-        return age > 900  # 15 分钟
-    except Exception:
-        return True  # 旧格式(纯文本)或损坏 → 视为过期
-
-
-def _has_missing(proj):
-    """判断一个 project 是否真正缺图（只检查 AI/REM 文件缺失，不检查 B/W 配对）。"""
-    for pr in proj["pairs"]:
-        if pr["ai_file"] is None or pr["rem_file"] is None:
-            return True
-    return False
-
-
 # ── HTTP 服务 ───────────────────────────────────────
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -1191,8 +1153,6 @@ class Handler(BaseHTTPRequestHandler):
             self._batch_rembg()
         elif path == "/api/check-rembg-lock":
             self._check_rembg_lock()
-        elif path == "/rembg_stop":
-            self._rembg_stop()
         elif path == "/batch-result":
             self._batch_result()
         elif path == "/api/projects":
@@ -1208,12 +1168,12 @@ class Handler(BaseHTTPRequestHandler):
             self._repair_names()
         elif path == "/refresh":
             self._refresh()
+        elif path == "/ps-status":
+            self._ps_status()
         elif path == "/ps-sticker":
             self._ps_sticker(dx)
         elif path == "/ps-batch":
             self._ps_batch(dx)
-        elif path == "/sticker-status":
-            self._sticker_status()
         elif path == "/upscale-rem":
             self._upscale_rem(dx, file)
         elif path == "/invert-rem":
@@ -1251,8 +1211,18 @@ class Handler(BaseHTTPRequestHandler):
                 f'<option value="{dt}"{sel}>20{dt[:2]}-{dt[2:4]}-{dt[4:6]}</option>'
             )
         date_opts_html = "\n".join(date_opts)
+
+        def _role_prefix(base_stem):
+            """DXxxxx_B → DXxxxx"""
+            return base_stem.rsplit("_", 1)[0] if "_" in base_stem else base_stem
+
         # 卡片HTML（缺图的款排前面，其余按DX号）
-        # "缺图"包括：缺AI图、缺去背
+        # "缺图"仅包括：缺AI图、缺去背（单面 B/W 不再视为缺图）
+        def _has_missing(proj):
+            for pr in proj["pairs"]:
+                if pr["ai_file"] is None or pr["rem_file"] is None:
+                    return True
+            return False
         projects = sorted(projects, key=lambda p: (
             0 if _has_missing(p) else 1, p["dx"]
         ))
@@ -1260,12 +1230,29 @@ class Handler(BaseHTTPRequestHandler):
         for p in projects:
             dx = p["dx"]
             rows = []
-            # 对同类款的分组：BW、B、W 分开
-            bw_pairs = [pr for pr in p["pairs"] if pr["stem"].endswith("_BW")]
-            b_pairs  = [pr for pr in p["pairs"] if pr["stem"].endswith("_B")]
-            w_pairs  = [pr for pr in p["pairs"] if pr["stem"].endswith("_W")]
-            other_pairs = [pr for pr in p["pairs"]
-                           if pr not in bw_pairs and pr not in b_pairs and pr not in w_pairs]
+            # 对同类款的分组：按 base_role 聚合，支持 B1/B2、W1/W2、BW1/WB1 等多版本
+            from collections import defaultdict
+            pairs_by_role = defaultdict(list)
+            for pr in p["pairs"]:
+                pairs_by_role[pr.get("base_role", "?")].append(pr)
+            bw_pairs = pairs_by_role.get("BW", []) + pairs_by_role.get("WB", [])
+            b_pairs  = pairs_by_role.get("B", [])
+            w_pairs  = pairs_by_role.get("W", [])
+            other_roles = [r for r in pairs_by_role if r not in ("BW", "WB", "B", "W")]
+            other_pairs = []
+            for r in sorted(other_roles):
+                other_pairs.extend(pairs_by_role[r])
+
+            def _sort_versions(prs):
+                def key(pr):
+                    v = pr.get("version", "")
+                    if v == "":
+                        return (0, 0)
+                    try:
+                        return (1, int(v))
+                    except Exception:
+                        return (1, v)
+                return sorted(prs, key=key)
 
             # — 辅助：渲染单个 AI+REM 格 —
             def _render_cells(dx, pr, kind_tag=""):
@@ -1281,7 +1268,7 @@ class Handler(BaseHTTPRequestHandler):
                 rem_ts = _ts("02_REM_BG", rem_file)
                 if ai_file:
                     ai_c = f'''<div class="cell-wrap"><div class="cell" id="{dx}-{stem}-ai">
-                        <img src="/thumb?dx={dx}&kind=ai&file={quote(ai_file)}&t={ai_ts}" onclick="openFolder('{dx}','ai')">
+                        <img src="/thumb?dx={dx}&kind=ai&file={quote(ai_file)}&t={ai_ts}" onclick="openFolder('{dx}','ai')" loading="lazy" decoding="async">
                         <span class="tag">AI</span></div>
                         <div class="btn-bar">
                         <button class="del" onclick="delImg('{dx}','ai','{ai_file}','{dx}-{stem}-ai')" title="删除AI图">×</button>
@@ -1289,7 +1276,12 @@ class Handler(BaseHTTPRequestHandler):
                         <span class="btn-stem">{stem}</span>
                         </div></div>'''
                 else:
-                    ai_c = '<div class="cell missing"><span>⚠ 缺AI图</span></div>'
+                    ai_c = f'''<div class="cell-wrap"><div class="cell missing" id="{dx}-{stem}-ai">
+                        <span>⚠ 缺AI图</span>
+                        <span class="tag">AI</span></div>
+                        <div class="btn-bar">
+                        <span class="btn-stem">{stem}</span>
+                        </div></div>'''
                 if rem_file:
                     # 检查分辨率：任意一边低于 2000 才显示放大镜，并在按钮旁显示当前尺寸
                     rem_path = BASE / dx / "02_REM_BG" / rem_file
@@ -1303,13 +1295,19 @@ class Handler(BaseHTTPRequestHandler):
                     dim_text = f"{_w}x{_h}" if (_w and _h) else ""
                     up_btn = f'<button class="upscale" onclick="upscaleRem(\'{dx}\',\'{rem_file}\',\'{dx}-{stem}-rem\')" title="放大到2046x2046">🔍</button>' if show_up else ''
                     dim_hint = f'<span class="dim-hint" title="当前分辨率">{dim_text}</span>' if show_up else ''
-                    inv_btn = f'<button class="invert" onclick="invertRem(\'{dx}\',\'{rem_file}\',\'{stem}\',\'{dx}-{stem}-rem\')" title="生成黑版反相贴图">反相</button>' if '_黑' not in rem_file else ''
+                    is_special = '_黑' in rem_file or '_白' in rem_file
+                    inv_btn = ''
+                    if not is_special:
+                        inv_btn = (
+                            f'<button class="invert black" onclick="invertRem(\'{dx}\',\'{rem_file}\',\'{stem}\',\'{dx}-{stem}-rem\',\'black\')" title="生成黑版白色剪影贴图">反黑</button>'
+                            f'<button class="invert white" onclick="invertRem(\'{dx}\',\'{rem_file}\',\'{stem}\',\'{dx}-{stem}-rem\',\'white\')" title="生成白版黑色剪影贴图">反白</button>'
+                        )
                     rem_c = f'''<div class="cell-wrap"><div class="cell" id="{dx}-{stem}-rem">
-                        <img id="img-{dx}-{stem}-rem" src="/thumb?dx={dx}&kind=rem&file={quote(rem_file)}&t={rem_ts}" onclick="openFolder('{dx}','rem')">
+                        <img id="img-{dx}-{stem}-rem" src="/thumb?dx={dx}&kind=rem&file={quote(rem_file)}&t={rem_ts}" onclick="openFolder('{dx}','rem')" loading="lazy" decoding="async">
                         <span class="tag">REM</span></div>
                         <div class="btn-bar">
                         <button class="del" onclick="delImg('{dx}','rem','{rem_file}','{dx}-{stem}-rem')" title="删除去背图">×</button>
-                        <button class="refr" onclick="refreshRem('{dx}','{stem}','{dx}-{stem}-rem')" title="刷新预览图">🔄</button>
+                        <button class="refr" onclick="refreshRem('{dx}','{stem}','{dx}-{stem}-rem')" title="刷新预览图">↻</button>
                         {inv_btn}
                         {up_btn}{dim_hint}
                         <span class="btn-stem">{stem}</span>
@@ -1319,73 +1317,75 @@ class Handler(BaseHTTPRequestHandler):
                         <span id="img-{dx}-{stem}-rem">⚠ 缺去背</span>
                         <span class="tag">REM</span></div>
                         <div class="btn-bar">
-                        <button class="refr" onclick="refreshRem('{dx}','{stem}','{dx}-{stem}-rem')" title="重新扫描去背图">🔄</button>
+                        <button class="refr" onclick="refreshRem('{dx}','{stem}','{dx}-{stem}-rem')" title="重新扫描去背图">↻</button>
                         <span class="btn-stem">{stem}</span>
                         </div></div>'''
                 return f'<div class="pair-imgs">{ai_c}{rem_c}</div>'
 
-            # — BW 行（独立，紫色badge）—
+            def _render_version_blocks(dx, prs):
+                """把同一 base_role 的多个版本横向排列"""
+                blocks = []
+                for pr in _sort_versions(prs):
+                    v = pr.get("version", "")
+                    v_label = "原" if v == "" else f"v{v}"
+                    rename_btn = f'<button class="ren-btn" onclick="event.stopPropagation();renameStemOptions(\'{dx}\',\'{pr["stem"]}\',this)" title="改名">改名</button>'
+                    blocks.append(
+                        f'<div class="version-block" data-stem="{pr["stem"]}">'
+                        f'<div class="version-label">{v_label} {rename_btn}</div>'
+                        f'{_render_cells(dx, pr)}</div>'
+                    )
+                return f'<div class="versions-row">{ "".join(blocks) }</div>'
+
+            # — BW 行（独立，紫色badge，支持 BW/WB 多版本）—
+            bw_by_prefix = defaultdict(list)
             for pr in bw_pairs:
-                stem = pr["stem"]
-                gid = pr.get("group_id", "")
+                bw_by_prefix[_role_prefix(pr.get("base_stem", pr["stem"]))].append(pr)
+            for prefix in sorted(bw_by_prefix):
+                prs = bw_by_prefix[prefix]
+                gid = prs[0].get("group_id", "")
                 rows.append(
-                    f'<div class="pair" data-group-id="{gid}" data-ai-uid="{pr.get("ai_uid") or ""}" '
-                    f'data-rem-uid="{pr.get("rem_uid") or ""}" data-stem="{stem}"><div class="stem">'
-                    f'<span class="badge badge-bw">BW</span> {stem}</div>'
-                    f'{_render_cells(dx, pr)}</div>')
+                    f'<div class="pair version-group" data-group-id="{gid}" data-base-role="BW" data-prefix="{prefix}">'
+                    f'<div class="stem"><span class="badge badge-bw">BW</span> {prefix}</div>'
+                    f'{_render_version_blocks(dx, prs)}</div>')
 
-            # — B+W 配对行（左右并排）—
-            # 建索引 prefix → pair
-            b_by_prefix = {}
+            # — B+W 配对行（左右并排，每侧支持多版本）—
+            b_by_prefix = defaultdict(list)
             for pr in b_pairs:
-                prefix = pr["stem"][:-2]  # 去掉末尾 _B
-                b_by_prefix[prefix] = pr
-            w_by_prefix = {}
+                b_by_prefix[_role_prefix(pr.get("base_stem", pr["stem"]))].append(pr)
+            w_by_prefix = defaultdict(list)
             for pr in w_pairs:
-                prefix = pr["stem"][:-2]  # 去掉末尾 _W
-                w_by_prefix[prefix] = pr
-            grouped_prefixes = set(b_by_prefix) | set(w_by_prefix)
-            for prefix in sorted(grouped_prefixes):
-                b_pr = b_by_prefix.get(prefix)
-                w_pr = w_by_prefix.get(prefix)
+                w_by_prefix[_role_prefix(pr.get("base_stem", pr["stem"]))].append(pr)
+            grouped_prefixes = sorted(set(b_by_prefix) | set(w_by_prefix))
+            for prefix in grouped_prefixes:
+                b_prs = b_by_prefix.get(prefix, [])
+                w_prs = w_by_prefix.get(prefix, [])
 
-                def _half(dx, pr, badge_class, badge_text):
-                    if not pr:
+                def _half(dx, prs, badge_class, badge_text):
+                    if not prs:
                         return ""
-                    gid = pr.get("group_id", "")
-                    stem = pr["stem"]
-                    if stem.endswith("_B"):
-                        opts = [("W", "→ W"), ("BW", "→ BW")]
-                    elif stem.endswith("_W"):
-                        opts = [("B", "→ B"), ("BW", "→ BW")]
-                    elif stem.endswith("_BW"):
-                        opts = [("B", "→ B"), ("W", "→ W")]
-                    else:
-                        opts = []
-                    opt_html = "".join(f'<option value="{k}">{v}</option>' for k, v in opts)
-                    rename_sel = f'''<select class="ren-sel" onchange="event.stopPropagation(); if(this.value){{renameStem('{dx}','{stem}',this.value);}} this.selectedIndex=0;" title="改名为...">
-                        <option value="" selected>改名...</option>{opt_html}</select>''' if opts else ""
-                    return f'''<div class="bw-half" data-group-id="{gid}" data-ai-uid="{pr.get("ai_uid") or ""}" data-rem-uid="{pr.get("rem_uid") or ""}" data-stem="{stem}">
-                        <div class="stem"><span class="badge {badge_class}">{badge_text}</span>{rename_sel}</div>
-                        {_render_cells(dx, pr)}
-                    </div>'''
+                    return f'''<div class="bw-half" data-base-role="{badge_text}" data-prefix="{prefix}">
+                            <div class="stem"><span class="badge {badge_class}">{badge_text}</span> {prefix}</div>
+                            {_render_version_blocks(dx, prs)}
+                        </div>'''
 
-                left  = _half(dx, b_pr, "badge-b", "B")
-                right = _half(dx, w_pr, "badge-w", "W")
-                left_gid = b_pr.get("group_id", "") if b_pr else ""
-                right_gid = w_pr.get("group_id", "") if w_pr else ""
-                rows.append(f'<div class="bw-group" data-group-left="{left_gid}" data-group-right="{right_gid}">{left}{right}</div>')
+                left  = _half(dx, b_prs, "badge-b", "B")
+                right = _half(dx, w_prs, "badge-w", "W")
+                rows.append(f'<div class="bw-group">{left}{right}</div>')
 
-            # — 其他（_BB 等）普通行 —
+            # — 其他（任意 role）按 base_stem 分组展示多版本 —
+            other_by_base = defaultdict(list)
             for pr in other_pairs:
-                gid = pr.get("group_id", "")
+                other_by_base[pr.get("base_stem", pr["stem"])].append(pr)
+            for base_stem in sorted(other_by_base):
+                prs = other_by_base[base_stem]
+                role = prs[0].get("base_role", base_stem)
+                gid = prs[0].get("group_id", "")
                 rows.append(
-                    f'<div class="pair" data-group-id="{gid}" data-ai-uid="{pr.get("ai_uid") or ""}" '
-                    f'data-rem-uid="{pr.get("rem_uid") or ""}" data-stem="{pr["stem"]}">'
-                    f'<div class="stem">{pr["stem"]}</div>'
-                    f'{_render_cells(dx, pr)}</div>')
+                    f'<div class="pair version-group" data-group-id="{gid}" data-base-role="{role}" data-base-stem="{base_stem}">'
+                    f'<div class="stem"><span class="badge badge-other">{role}</span> {base_stem}</div>'
+                    f'{_render_version_blocks(dx, prs)}</div>')
 
-            # — 黑版变体行（无独立AI，按 group_id 分组后前端会移到对应 pair 旁）—
+            # — 黑版变体行（按 base_stem 分组，支持 _黑B1 等多版本）—
             def _render_black_cell(dx, bv):
                 stem = bv["stem"]
                 rem_file = bv["rem_file"]
@@ -1395,20 +1395,35 @@ class Handler(BaseHTTPRequestHandler):
                 rem_ts = int(rem_path.stat().st_mtime) if rem_path.exists() else 0
                 tag = stem[len(dx)+1:] if stem.startswith(dx + "_") else "REM"
                 return f'''<div class="cell-wrap black-variant" data-group-id="{gid}" data-rem-uid="{rem_uid}" data-stem="{stem}"><div class="cell" id="{dx}-{stem}-rem">
-                    <img id="img-{dx}-{stem}-rem" src="/thumb?dx={dx}&kind=rem&file={quote(rem_file)}&t={rem_ts}" onclick="openFolder('{dx}','rem')">
+                    <img id="img-{dx}-{stem}-rem" src="/thumb?dx={dx}&kind=rem&file={quote(rem_file)}&t={rem_ts}" onclick="openFolder('{dx}','rem')" loading="lazy" decoding="async">
                     <span class="tag">{tag}</span></div>
                     <div class="btn-bar">
                     <button class="del" onclick="delImg('{dx}','rem','{rem_file}','{dx}-{stem}-rem')" title="删除去背图">×</button>
-                    <button class="refr" onclick="refreshRem('{dx}','{stem}','{dx}-{stem}-rem')" title="刷新预览图">🔄</button>
+                    <button class="refr" onclick="refreshRem('{dx}','{stem}','{dx}-{stem}-rem')" title="刷新预览图">↻</button>
                     <span class="btn-stem">{stem}</span>
                     </div></div>'''
 
             black_variants = p.get("black_variants", [])
-            for bv in sorted(black_variants, key=lambda x: x["stem"]):
+            black_by_base = defaultdict(list)
+            for bv in black_variants:
+                black_by_base[bv.get("base_stem", bv["stem"])].append(bv)
+            for base_stem in sorted(black_by_base):
+                bvs = black_by_base[base_stem]
+                role = bvs[0].get("base_role", "黑版")
+                gid = bvs[0].get("group_id", "")
+                blocks = []
+                for bv in _sort_versions(bvs):
+                    v = bv.get("version", "")
+                    v_label = "原" if v == "" else f"v{v}"
+                    blocks.append(
+                        f'<div class="version-block black-variant-block" data-stem="{bv["stem"]}">'
+                        f'<div class="version-label">{v_label}</div>'
+                        f'{_render_black_cell(dx, bv)}</div>'
+                    )
                 rows.append(
-                    f'<div class="pair black-variant-row" data-kind="black-variant" data-group-id="{bv.get("group_id", "")}">'
-                    f'<div class="stem"><span class="badge badge-other">黑版</span></div>'
-                    f'<div class="pair-imgs">{_render_black_cell(dx, bv)}</div></div>')
+                    f'<div class="pair black-variant-row" data-kind="black-variant" data-group-id="{gid}">'
+                    f'<div class="stem"><span class="badge badge-other">{role}</span></div>'
+                    f'<div class="versions-row">{ "".join(blocks) }</div></div>')
 
             rows_html = "\n".join(rows)
             up_dir = BASE / dx / "03_UPLOAD"
@@ -1418,9 +1433,9 @@ class Handler(BaseHTTPRequestHandler):
                 <div class="card-head">
                     <input type="checkbox" class="dx-check" data-dx="{dx}" onchange="updateBatchBtn()" style="width:16px;height:16px;accent-color:#4CAF50;cursor:pointer;">
                     <span class="dxname" onclick="copyDx('{dx}')" title="点击复制款号">{dx}</span>
-                    <span class="pipeline"><span class="pipe pipe-ok" title="AI生图完成">🎨AI</span><span class="pipe {'pipe-ok' if any(pr['rem_file'] for pr in p['pairs']) or p.get('black_variants') else 'pipe-pend'}" title="去背完成">✂️</span><span class="pipe {'pipe-ok' if has_up else 'pipe-pend'}" title="贴图（黑T优先用黑版文件）+BW合成完成">📎</span></span>
+
                     <span class="card-act">
-                        <button class="btn-ps" onclick="psSticker('{dx}')" title="PS贴图（白T用通用文件，黑T优先用黑版文件，再合成BW）">📎 贴图</button>
+                        <button class="btn-ps" onclick="psSticker('{dx}')" title="贴图：单面款走模特图贴图，其它走平铺图贴图+BW合成">📎 贴图</button>
                         <button class="btn-bw" onclick="psBatch('{dx}')" {'disabled' if not has_up else ''} title="仅用已贴好的B/W合成BW">🔄 BW</button>
                         <button class="btn-open" onclick="openFolder('{dx}','up')" title="打开 03_UPLOAD">📂</button>
                     </span>
@@ -1455,8 +1470,14 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .pair:first-child {{ border-top:none; padding-top:0; }}
 .stem {{ color:#888; font-size:13px; margin-bottom:5px; padding:0 2px; }}
 .pair-imgs {{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }}
-.cell-wrap {{ display:flex; flex-direction:column; }}
-.cell {{ height:220px; max-height:220px; background:#fff; border-radius:6px; overflow:hidden; display:flex; align-items:center; justify-content:center; position:relative; }}
+.versions-row {{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start; }}
+.version-block {{ display:flex; flex-direction:column; gap:3px; min-width:220px; flex:0 0 auto; max-width:100%; }}
+.version-label {{ color:#888; font-size:11px; text-align:center; display:flex; align-items:center; justify-content:center; gap:4px; }}
+.bw-group {{ display:flex; flex-wrap:wrap; gap:10px; }}
+.bw-half {{ flex:1 1 0; min-width:220px; max-width:100%; }}
+.black-variant-block {{ min-width:160px; }}
+.cell-wrap {{ display:flex; flex-direction:column; min-width:0; }}
+.cell {{ width:100%; height:220px; max-height:220px; background:#fff; border-radius:6px; overflow:hidden; display:flex; align-items:center; justify-content:center; position:relative; box-sizing:border-box; }}
 .cell.missing {{ background:#2a1a1a; color:#e57373; font-size:14px; }}
 .cell img {{ width:100%; height:100%; object-fit:contain; cursor:pointer; transition:transform .15s; }}
 .cell:hover img {{ transform:scale(1.06); }}
@@ -1471,6 +1492,10 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .btn-bar .refr:hover {{ background:#1565C0; }}
 .btn-bar .invert {{ background:#673ab7; color:#fff; }}
 .btn-bar .invert:hover {{ background:#512da8; }}
+.btn-bar .invert.black {{ background:#311b92; }}
+.btn-bar .invert.black:hover {{ background:#1a237e; }}
+.btn-bar .invert.white {{ background:#9575cd; color:#000; }}
+.btn-bar .invert.white:hover {{ background:#7e57c2; color:#fff; }}
 .btn-bar .upscale {{ background:#4caf50; color:#fff; font-size:14px; padding:3px 9px; }}
 .btn-bar .upscale:hover {{ background:#2e7d32; }}
 .btn-bar .dim-hint {{ color:#888; font-size:11px; margin-left:3px; white-space:nowrap; }}
@@ -1479,8 +1504,6 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .badge-bw {{ background:#9c27b0; color:#fff; }}
 .badge-b {{ background:#555; color:#fff; }}
 .badge-w {{ background:#e0e0e0; color:#333; }}
-.bw-group {{ display:flex; gap:10px; }}
-.bw-half {{ flex:1; min-width:0; }}
 .ps-btn {{ display:inline-flex; align-items:center; gap:2px; font-size:12px; padding:2px 10px; border-radius:4px; cursor:pointer; background:#7b1fa2; color:#fff; border:none; line-height:24px; white-space:nowrap; margin-left:auto; }}
 .ps-btn:hover {{ background:#9c27b0; }}
 .ps-btn.ps-done {{ background:#2e7d32; }}
@@ -1488,9 +1511,6 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .ren-btn {{ display:inline; font-size:12px; padding:1px 5px; margin-left:3px; border-radius:2px;
            background:#4caf50; color:#fff; border:none; cursor:pointer; vertical-align:middle; }}
 .ren-btn:hover {{ background:#388e3c; }}
-.ren-sel {{ display:inline; font-size:12px; padding:1px 3px; margin-left:3px; border-radius:2px;
-            background:#4caf50; color:#fff; border:none; cursor:pointer; vertical-align:middle; }}
-.ren-sel option {{ background:#fff; color:#333; }}
 .cell.deleted {{ opacity:.3; }}
 .empty {{ text-align:center; color:#888; margin-top:40px; font-size:16px; }}
 .toast {{ position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#333; color:#fff;
@@ -1501,12 +1521,6 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             border-radius:6px; box-shadow:0 4px 25px rgba(0,0,0,.85);
             background:#00b300; }}
 .preview img {{ display:block; max-width:900px; max-height:90vh; object-fit:contain; }}
-/* pipeline status */
-.pipeline {{ display:none; align-items:center; gap:5px; font-size:12px; margin-left:6px; }}
-.pipe {{ display:inline-flex; align-items:center; gap:2px; padding:2px 6px; border-radius:3px; font-weight:600; }}
-.pipe-ok {{ background:#0d4420; color:#7ee787; }}
-.pipe-miss {{ background:#4d1a1a; color:#f87171; }}
-.pipe-pend {{ background:#442d0a; color:#f7c843; }}
 /* per-card PS/BW buttons */
 .card-act {{ display:flex; gap:4px; margin-left:auto; }}
 .card-act button {{ font-size:13px; padding:3px 10px; border-radius:4px; border:none; cursor:pointer; font-weight:600; line-height:24px; transition:.1s; white-space:nowrap; }}
@@ -1536,6 +1550,13 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .up-thumb:hover img {{ transform:scale(1.06); }}
 .up-label {{ color:#aaa; font-size:13px; margin-top:6px; text-align:center; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 .badge-other {{ background:#424242; color:#fff; }}
+#backToTop {{ position:fixed; right:22px; bottom:28px; z-index:998; width:46px; height:46px; border-radius:50%; border:none; background:#2196F3; color:#fff; font-size:22px; cursor:pointer; box-shadow:0 2px 10px rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; transition:opacity .2s, transform .1s; }}
+#backToTop:hover {{ background:#1976D2; transform:scale(1.08); }}
+#backToTop.show {{ display:flex; }}
+#psStatus {{ display:none; align-items:center; gap:8px; margin-left:10px; padding:6px 12px; border-radius:4px; background:#1a237e; color:#fff; font-size:13px; font-weight:600; animation:psPulse 1.5s infinite; }}
+#psStatus.show {{ display:flex; }}
+#psStatus .dot {{ width:8px; height:8px; border-radius:50%; background:#00e676; }}
+@keyframes psPulse {{ 0% {{ opacity:.85; }} 50% {{ opacity:1; }} 100% {{ opacity:.85; }} }}
 
 </style></head><body>
 <h1>AI 去背 贴图 OS <span class="v">v{__version__}</span></h1>
@@ -1545,21 +1566,24 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
   </select>
 	  <input id="search" placeholder="搜索 DX号…" oninput="filterCards()">
 	  <button onclick="filterCards()" style="cursor:pointer;background:#4CAF50;color:#fff;border:none;border-radius:4px;margin-left:4px;">🔍 搜索</button>
-  <button onclick="fetch('/refresh').then(function(r){{return r.json();}}).then(function(d){{showToast(d.msg);setTimeout(function(){{location.reload();}},500);}}).catch(function(){{location.reload();}});" title="清空缩略图缓存并重新扫描全部">🔄 刷新全部</button>
+  <button onclick="fetch('/refresh').then(function(r){{return r.json();}}).then(function(d){{showToast(d.msg);setTimeout(function(){{location.reload();}},500);}}).catch(function(){{location.reload();}});" title="重新扫描全部（自动跳过未变更的缩略图）">🔄 刷新全部</button>
 	  <label style="color:#eee;cursor:pointer;user-select:none;margin-left:8px;">
 	    <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)" style="width:18px;height:18px;accent-color:#4CAF50;vertical-align:middle;"> 全选
 	  </label>
 	  <button onclick="batchRembg()" id="batchBtn" style="cursor:pointer;background:#ff9800;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>⚡ 批量去背 (0)</button>
 	  <button onclick="copyMissing()" title="复制当前日期缺图款号（缺AI图/缺去背）" style="background:#e91e63;">📋 复制缺图款号</button>
-	  <button onclick="batchSticker()" id="batchStickerBtn" title="批量PS贴图（含B/W贴图与BW合成）" style="cursor:pointer;background:#7b1fa2;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>📎 批量贴图 (0)</button>
-	  <button onclick="batchInvertRem()" id="batchInvertBtn" title="批量反相：对选中款的所有B/W/BW去背图生成黑版专用图（不会自动贴图）" style="cursor:pointer;background:#673ab7;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>🌑 批量反相 (0)</button>
+	  <button onclick="batchSticker()" id="batchStickerBtn" title="批量贴图：单面款走模特图贴图，其它走平铺图贴图+BW合成，不处理黑版文件，不反相" style="cursor:pointer;background:#7b1fa2;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>📎 批量贴图 (0)</button>
+	  <button onclick="batchInvertRem('black')" id="batchInvertBtn" title="批量反黑：对选中款的所有B/W/BW去背图生成黑版专用图，并自动平铺图贴图+BW合成" style="cursor:pointer;background:#311b92;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>🌑 批量反黑 (0)</button>
+	  <button onclick="batchInvertRem('white')" id="batchInvertWhiteBtn" title="批量反白：对选中款的所有B/W/BW去背图生成白版专用图，并自动平铺图贴图+BW合成" style="cursor:pointer;background:#9575cd;color:#000;border:none;border-radius:4px;font-weight:bold;" disabled>☀ 批量反白 (0)</button>
 	  <button onclick="copyNoSticker()" title="复制当前日期所有未生成成品的款号" style="background:#7b1fa2;">📋 复制缺贴图</button>
+	  <span id="psStatus"><span class="dot"></span><span id="psStatusText">PS 空闲</span></span>
 	  <span class="cnt" id="cnt">{len(projects)} 款</span>
 	</div>
 	<div class="grid" id="grid">{cards_html}</div>
 <div id="toast" class="toast"></div>
 <div id="preview" class="preview"><img id="previewImg" src=""></div>
-  <script src="/check_rem.js"></script></body></html>"""
+<button id="backToTop" onclick="window.scrollTo({{top:0,behavior:'smooth'}});" title="回到顶部">⬆</button>
+  <script src="/check_rem.js?v={__version__}"></script></body></html>"""
 
     # JS 文件
     def _serve_js(self):
@@ -1688,6 +1712,8 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         for tf in THUMB_DIR.glob(f"{dx}__{which}__{file}.*"):
             try: tf.unlink()
             except Exception: pass
+        if ok:
+            _invalidate_scan_cache()
         msg = f"已送回收站: {file}" if ok else "删除失败"
         self._send_json({"ok": ok, "msg": msg})
 
@@ -1699,15 +1725,11 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         if not file or "/" in file or "\\" in file:
             self._send_json({"ok": False, "msg": "图片文件参数非法"}); return
         # 检查是否已有任务在跑
+        TEMP_REMBG.mkdir(parents=True, exist_ok=True)
         lock = TEMP_REMBG / ".rembg_lock"
         if lock.exists():
-            if _is_rembg_lock_stale(lock):
-                try: lock.unlink()
-                except Exception: pass
-                print("  [rembg] 检测到过期锁，已自动清除", flush=True)
-            else:
-                self._send_json({"ok": False, "msg": "已有去背任务在运行，请等其完成。如卡死可点「强制停止」", "can_stop": True}); return
-        lock.write_text(json.dumps({"pid": os.getpid(), "ts": time.time(), "type": "single", "dx": dx, "file": file}), encoding="utf-8")
+            self._send_json({"ok": False, "msg": "已有去背任务在运行，请等其完成"}); return
+        lock.write_text(f"{dx}\t{file}", encoding="utf-8")
         # 启动后台 worker（最小化控制台窗口），HTTP 立即返回
         worker = Path(__file__).parent / "_rembg_worker.py"
         run_minimized([sys.executable, str(worker), dx, file], wait=False)
@@ -1717,27 +1739,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
     def _check_rembg_lock(self):
         lock = TEMP_REMBG / ".rembg_lock"
         locked = lock.exists()
-        if locked and _is_rembg_lock_stale(lock):
-            try: lock.unlink(); locked = False
-            except Exception: pass
         self._send_json({"locked": locked})
-
-    # 强制停止去背任务：杀美图+脚本进程，清锁
-    def _rembg_stop(self):
-        """强制停止卡死的去背任务：杀 XiuXiu.exe + wb_meitu_batch/_rembg_worker python，清锁。"""
-        try:
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
-                 "Get-Process XiuXiu -ErrorAction SilentlyContinue | Stop-Process -Force; "
-                 "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*wb_meitu_batch*' -or $_.CommandLine -like '*_rembg_worker*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
-                capture_output=True, timeout=10)
-        except Exception as e:
-            print(f"  [rembg_stop] 杀进程异常: {e}", flush=True)
-        lock = TEMP_REMBG / ".rembg_lock"
-        try:
-            if lock.exists(): lock.unlink()
-        except Exception: pass
-        self._send_json({"ok": True, "msg": "已强制停止去背任务并清除锁，可重新点击去背"})
 
     # 批量去背（一次美图处理全部）
     def _batch_rembg(self):
@@ -1756,13 +1758,10 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             ai_dir = BASE / dx / "01_AI"
             if not ai_dir.is_dir():
                 continue
-            files = []
-            for f in sorted(ai_dir.iterdir()):
-                if f.is_file() and is_generated_ai(f.name, dx):
-                    files.append(f.name)
-            # 如果该 DX 已有 BW 合并图，就只处理 BW，跳过 B/W
-            has_bw = any("_BW" in name for name in files)
-            if has_bw:
+            files = [f.name for f in sorted(ai_dir.iterdir())
+                     if f.is_file() and is_generated_ai(f.name, dx)]
+            # 如果该 DX 已有 BW 合并图，就只处理 BW，不单独处理 B/W
+            if any("_BW" in name for name in files):
                 files = [name for name in files if "_BW" in name]
             dx_files.extend((dx, name) for name in files)
 
@@ -1771,10 +1770,11 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
         # 异步执行（batch_rembg 会开美图 GUI）
         import threading
+        TEMP_REMBG.mkdir(parents=True, exist_ok=True)
         def _run():
             lock = TEMP_REMBG / ".rembg_lock"
             try:
-                lock.write_text(json.dumps({"pid": os.getpid(), "ts": time.time(), "type": "batch"}), encoding="utf-8")
+                lock.write_text("batch", encoding="utf-8")
                 results = batch_rembg(dx_files)
                 ok_count = sum(1 for r in results if r[2])
                 fail_count = len(results) - ok_count
@@ -1809,17 +1809,16 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             self._send_json({"done": True, "ok": True, "msg": "无结果", "results": []})
 
     # 刷新全部（重新扫描）
-    # 刷新全部：清空缩略图缓存与 scan_projects 缓存 → 重新扫描 → 前端刷新页面
+    # 刷新全部：清空 scan_projects 缓存 → 前端刷新页面（缩略图由 get_thumb 按 mtime 懒加载/更新）
     def _refresh(self):
-        import shutil
-        global _SCAN_PROJECTS_CACHE
-        if THUMB_DIR.exists():
-            shutil.rmtree(str(THUMB_DIR))
-        THUMB_DIR.mkdir(parents=True, exist_ok=True)
-        with _SCAN_PROJECTS_CACHE["lock"]:
-            _SCAN_PROJECTS_CACHE["projects"] = None
-            _SCAN_PROJECTS_CACHE["timestamp"] = 0
-        self._send_json({"ok": True, "msg": "已清空缩略图并重新扫描，刷新页面查看"})
+        # 不再清空缩略图：get_thumb 会根据源文件 mtime 自动重新生成有变更的缩略图。
+        # 清空缓存后立即重新扫描并预热缓存，让前端刷新时直接命中内存缓存。
+        _invalidate_scan_cache()  # 同时清空内存与磁盘缓存
+        try:
+            scan_projects(force=True)
+        except Exception as e:
+            print(f"  [refresh] 预热扫描失败: {e}", flush=True)
+        self._send_json({"ok": True, "msg": "已重新扫描，刷新页面查看"})
 
     @staticmethod
     def _register_uploads(dx):
@@ -1888,137 +1887,273 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 print(f"  [贴图流水线] 兜底元数据失败 {f}: {e}", flush=True)
 
     @staticmethod
-    def _run_sticker_pipeline(dx, use_timeout=False):
-        """运行完整贴图流水线：黑T专用 → 通用贴图 → BW 合成。返回 (ok, msg)。
-        每次调用前先清理旧版自动生成的贴图/BW文件，确保反相或重跑后一定重新合成BW。
-        use_timeout=True 时，每步 PS 脚本最多运行 STICKER_STEP_TIMEOUT 秒，超时会强制终止并返回失败。
-        """
+    def _run_one_sticker(dx, skip_black=False):
+        """运行单个 DX 的贴图流水线。
+        - 单面款（02_REM_BG 里只有 W 或只有 B）：走模特图贴图（white_t_mockup 胚衣）。
+        - 其它（BW / 同时有 B+W / 含黑版）：走平铺图贴图（PS 贴图 + BW 合成）。
+        返回 (ok, msg)。不退出 Photoshop，由外层任务统一控制 PS 生命周期。
+        skip_black=True 时平铺图流程会跳过黑T贴图（用于批量贴图）。"""
+        rem_dir = BASE / dx / "02_REM_BG"
+        up_dir = BASE / dx / "03_UPLOAD"
+
+        # 判断是否为单面新流程：按「去掉 黑/白 前缀后的真实面集合」判定。
+        # 只有 W 或只有 B（即使含 _黑W/_白W 这类反黑/反白专用图，本质仍是同一面）→ 模特图贴图；
+        # 含 BW/WB 或同时有 B+W → 平铺图贴图。
+        # has_black / has_white 仍保留，供平铺流程决定是否跑黑T/白T专用贴图。
+        side_re = re.compile(r'^(BW|WB|B|W)(\d*)$', re.IGNORECASE)
+        real_sides = set()
+        has_black = False
+        has_white = False
+        if rem_dir.is_dir():
+            for f in rem_dir.iterdir():
+                if not f.is_file() or not f.name.lower().endswith("_cut.png"):
+                    continue
+                stem = f.stem[:-4]  # 去掉 _cut
+                if not stem.startswith(dx + "_"):
+                    continue
+                if "_黑" in f.name:
+                    has_black = True
+                if "_白" in f.name:
+                    has_white = True
+                suffix = stem[len(dx) + 1:]
+                plain = suffix[1:] if (suffix.startswith("黑") or suffix.startswith("白")) else suffix
+                m = side_re.match(plain)
+                side = m.group(1).upper() if m else None
+                if side in ("BW", "WB"):
+                    real_sides.update(("B", "W"))
+                elif side in ("B", "W"):
+                    real_sides.add(side)
+        if skip_black:
+            has_black = False
+
+        single_role = None
+        if real_sides == {"W"}:
+            single_role = "W"
+        elif real_sides == {"B"}:
+            single_role = "B"
+
+        # 清理旧的自动生成平铺图/模特图贴图/BW文件，确保再次贴图时一定重新生成并覆盖
+        if up_dir.is_dir():
+            for fp in up_dir.iterdir():
+                if not fp.is_file():
+                    continue
+                name = fp.name
+                low = name.lower()
+                if low.endswith((".png", ".jpg", ".jpeg")):
+                    stem = Path(name).stem
+                    if (re.match(rf"{re.escape(dx)}_.*_(白T|黑T)$", stem) or
+                            re.match(rf"{re.escape(dx)}_(白BW|黑BW)", stem)):
+                        try:
+                            fp.unlink()
+                            print(f"  [贴图流水线] 清理旧文件: {dx}/{name}", flush=True)
+                        except Exception:
+                            pass
+
+        # 单面新流程：直接调用 white_t_mockup 做模特图贴图
+        if single_role:
+            # 枚举 02_REM_BG 里该面的 _cut，按文件名颜色路由到对应颜色胚衣：
+            #   黑*_cut → 只贴黑T；白*_cut → 只贴白T；无颜色 _cut → 两色都贴。
+            # 专用优先：黑/白专用 cut 各自贴对应色；无颜色 cut 只贴未被专用覆盖的色。
+            cuts = []  # (color, path)；color in {"黑", "白", None}
+            for f in rem_dir.iterdir():
+                if not f.is_file() or not f.name.lower().endswith("_cut.png"):
+                    continue
+                stem = f.stem[:-4]
+                if not stem.startswith(dx + "_"):
+                    continue
+                suffix = stem[len(dx) + 1:]
+                color = "黑" if suffix.startswith("黑") else ("白" if suffix.startswith("白") else None)
+                plain = suffix[1:] if color else suffix
+                m = side_re.match(plain)
+                side = m.group(1).upper() if m else None
+                if side == single_role:
+                    cuts.append((color, f))
+            if not cuts:
+                return False, f"02_REM_BG 无 {single_role} 面去背图"
+            covered = {c for c, _ in cuts if c}
+            try:
+                from w_mockup_extra import generate_single_side_mockup
+                results = []
+                for color, path in cuts:
+                    if color:
+                        oc = color
+                    else:
+                        rest = [x for x in ("白", "黑") if x not in covered]
+                        if not rest:
+                            continue  # 黑白都已有专用 cut，无颜色 cut 跳过
+                        oc = None if len(rest) == 2 else rest[0]
+                    ok, msg = generate_single_side_mockup(
+                        dx, BASE, single_role, run_minimized,
+                        cut_path=path, only_color=oc,
+                    )
+                    results.append((ok, msg))
+                ok = any(ok for ok, _ in results)
+                msg = "; ".join(m for _, m in results)
+            except Exception as e:
+                ok, msg = False, f"模特图贴图({single_role})异常: {e}"
+            print(f"  [模特图贴图] {msg}", flush=True)
+            if ok:
+                Handler._register_uploads(dx)
+                msg = f"模特图贴图({single_role})完成: {dx}"
+            return ok, msg
+
+        # 平铺图流程：黑T专用 → 白T专用 → 通用贴图 → BW 合成
         sticker_script = Path(r"E:\Claude code\ps\ps_sticker_one.py")
         batch_script = Path(r"E:\Claude code\ps\ps_batch_one.py")
         black_script = Path(r"E:\Claude code\ps\process_black.py")
+        white_script = Path(r"E:\Claude code\ps\process_white.py")
         if not sticker_script.exists():
-            return False, "PS贴图脚本不存在"
+            return False, "平铺图贴图脚本不存在"
         if not batch_script.exists():
             return False, "BW合成脚本不存在"
 
-        rem_dir = BASE / dx / "02_REM_BG"
-        up_dir = BASE / dx / "03_UPLOAD"
-        has_black = rem_dir.is_dir() and any(
-            "_黑" in f.name and f.name.lower().endswith("_cut.png")
-            for f in rem_dir.iterdir()
-        )
-
-        # 清理旧的自动生成贴图/BW文件，避免 ps_batch.py 因文件已存在而跳过BW合成
-        auto_patterns = [
-            f"{dx}_白BW.jpg", f"{dx}_黑BW.jpg",
-            f"{dx}_B_白T.jpg", f"{dx}_W_白T.jpg",
-            f"{dx}_B_黑T.jpg", f"{dx}_W_黑T.jpg",
-        ]
-        if up_dir.is_dir():
-            for name in auto_patterns:
-                fp = up_dir / name
-                if fp.exists():
-                    try:
-                        fp.unlink()
-                        print(f"  [贴图流水线] 清理旧文件: {dx}/{name}", flush=True)
-                    except Exception:
-                        pass
-
-        runner = _run_ps_script_with_timeout if use_timeout else lambda cmd, cwd=None, label="PS脚本": _run_ps_script_sync(cmd, cwd=cwd, label=label)
-
-        # 1) 黑T专用贴图（如果存在黑B/黑W/黑BW）
+        ok = True
+        msg = ""
+        # 1) 黑T专用平铺图贴图（如果存在黑B/黑W/黑BW且未禁用）
         if has_black:
             if not black_script.exists():
-                return False, "黑T贴图脚本(process_black.py)不存在"
-            ok, msg = runner([sys.executable, str(black_script), dx], label="黑T贴图")
-            if not ok:
-                return False, f"黑T贴图失败: {dx} ({msg})"
+                ok, msg = False, "平铺图黑T贴图脚本(process_black.py)不存在"
+            else:
+                try:
+                    proc0 = run_minimized([sys.executable, str(black_script), dx])
+                    if proc0.returncode != 0:
+                        ok, msg = False, f"平铺图黑T贴图执行失败: {dx}"
+                except Exception as e:
+                    ok, msg = False, f"平铺图黑T贴图启动失败: {e}"
 
-        # 2) 通用 B/W/BW 贴图（有黑版对应文件时自动跳过黑T输出，只做白T）
-        ok, msg = runner([sys.executable, str(sticker_script), dx], label="PS贴图")
-        if not ok:
-            return False, f"PS贴图失败: {dx} ({msg})"
+        # 2) 白T专用平铺图贴图（如果存在白B/白W/白BW）
+        if ok and has_white:
+            if not white_script.exists():
+                ok, msg = False, "平铺图白T贴图脚本(process_white.py)不存在"
+            else:
+                try:
+                    proc0 = run_minimized([sys.executable, str(white_script), dx])
+                    if proc0.returncode != 0:
+                        ok, msg = False, f"平铺图白T贴图执行失败: {dx}"
+                except Exception as e:
+                    ok, msg = False, f"平铺图白T贴图启动失败: {e}"
 
-        # 2.5) 额外随机 W 胚衣贴图（当前如 W3.psd），不影响原有贴图结果
+        # 3) 通用 B/W/BW 平铺图贴图（有黑版/白版对应文件时自动跳过对应输出）
+        if ok:
+            try:
+                proc1 = run_minimized([sys.executable, str(sticker_script), dx])
+                if proc1.returncode != 0:
+                    ok, msg = False, f"平铺图贴图执行失败: {dx}"
+            except Exception as e:
+                ok, msg = False, f"平铺图贴图启动失败: {e}"
+
+        # 4) 用贴好的 B/W 合成 BW
+        if ok:
+            try:
+                proc2 = run_minimized([sys.executable, str(batch_script), dx])
+                if proc2.returncode != 0:
+                    ok, msg = True, f"平铺图贴图完成，但BW合成执行失败: {dx}"
+            except Exception as e:
+                ok, msg = True, f"平铺图贴图完成，但BW合成启动失败: {e}"
+
+        if ok and not msg:
+            parts = []
+            if has_black:
+                parts.append("黑T")
+            if has_white:
+                parts.append("白T")
+            msg_prefix = "平铺图贴图（含" + "+".join(parts) + "+BW合成）" if parts else "平铺图贴图+BW合成"
+            # 5) 注册贴图/BW 成品元数据
+            Handler._register_uploads(dx)
+            msg = f"{msg_prefix}完成: {dx}"
+
+        return ok, msg
+
+    def _run_sticker_task(dx_list, skip_black=False):
+        """按顺序跑完一组 DX 的贴图流水线，PS 全程只开一次，全部做完再退出。
+        返回 [(dx, ok, msg), ...]。"""
+        quit_ps_script = Path(r"E:\Claude code\ps\quit_ps.py")
+        results = []
+        acquired = False
+        task_name = "批量平铺图贴图" if len(dx_list) > 1 else "平铺图贴图"
         try:
-            from w_mockup_extra import generate_w_template_mockup
-            w_ok, w_msg = generate_w_template_mockup(dx, BASE, runner)
-        except Exception as e:
-            w_ok, w_msg = False, f"W胚衣贴图异常: {e}"
-        print(f"  [贴图流水线] {w_msg}", flush=True)
+            acquired = _PS_TASK_LOCK.acquire(blocking=True, timeout=-1)
+            if not acquired:
+                return [(dx, False, "Photoshop 正被其他任务占用") for dx in dx_list]
 
-        # 3) 用贴好的 B/W 合成 BW
-        ok, msg = runner([sys.executable, str(batch_script), dx], label="BW合成")
-        if not ok:
-            return True, f"贴图完成，但BW合成失败: {dx} ({msg})"
+            _set_ps_status(True, task_name, "", f"0/{len(dx_list)}", f"共 {len(dx_list)} 款: {', '.join(dx_list)}")
+            print(f"\n[PS任务] 开始{task_name}，共 {len(dx_list)} 款: {', '.join(dx_list)}", flush=True)
+            for idx, dx in enumerate(dx_list, 1):
+                _set_ps_status(True, task_name, dx, f"{idx}/{len(dx_list)}", f"正在处理 {dx}")
+                ok, msg = Handler._run_one_sticker(dx, skip_black=skip_black)
+                results.append((dx, ok, msg))
+                status = "✅" if ok else "❌"
+                print(f"  {status} {dx}: {msg}", flush=True)
+            _set_ps_status(True, task_name, "", f"{len(dx_list)}/{len(dx_list)}", "全部完成，正在退出 Photoshop")
+            print(f"[PS任务] 全部完成，准备退出 Photoshop\n", flush=True)
+        finally:
+            if acquired:
+                if quit_ps_script.exists():
+                    try:
+                        run_minimized([sys.executable, str(quit_ps_script)], wait=True, timeout=60)
+                    except Exception as e:
+                        print(f"  [PS任务] 退出PS失败: {e}", flush=True)
+                _clear_ps_status()
+                _PS_TASK_LOCK.release()
+        return results
 
-        msg_prefix = "黑T+白T贴图+BW合成" if has_black else "PS贴图+BW合成"
-
-        # 4) 注册贴图/BW 成品元数据
-        Handler._register_uploads(dx)
-
-        return True, f"{msg_prefix}完成: {dx}"
-
-    # PS贴图：黑T优先用黑版专用文件 → 通用文件做白T → 合成BW
+    # 贴图入口：单面款走模特图贴图，其它走平铺图贴图+BW合成
     def _ps_sticker(self, dx):
-        if not re.match(r"^DX\d+$", dx):
+        if not dx:
             self._send_json({"ok": False, "msg": "DX号非法"}); return
-
-        _ensure_sticker_worker()
-        _STICKER_QUEUE.put({"dx": dx})
-        with _STICKER_STATUS_LOCK:
-            pending = _STICKER_STATUS["pending"] = _STICKER_QUEUE.qsize()
-            current = _STICKER_STATUS["current"]
-        msg = "已加入贴图队列"
-        if current:
-            msg += f"，当前正在处理 {current}"
-        if pending > 1:
-            msg += f"，前面还有 {pending - 1} 个任务"
-        self._send_json({"ok": True, "queued": True, "pending": pending, "msg": msg})
-
-    # 贴图队列状态查询（单张 + 批量共用）
-    def _sticker_status(self):
-        with _STICKER_STATUS_LOCK:
-            running = _STICKER_STATUS["running"]
-            pending = _STICKER_STATUS["pending"]
-            current = _STICKER_STATUS["current"]
-            last_result = _STICKER_STATUS["last_result"]
-
-        if running or pending > 0:
-            msg = "贴图队列运行中"
-            if current:
-                msg += f"：当前 {current}"
-            if pending:
-                msg += f"，还剩 {pending} 个任务"
-            self._send_json({"done": False, "running": running, "pending": pending, "current": current, "msg": msg})
-            return
-
-        if last_result:
-            with _STICKER_STATUS_LOCK:
-                _STICKER_STATUS["last_result"] = None
-            self._send_json({"done": True, "ok": last_result.get("ok", True), "msg": last_result.get("msg", ""), "results": last_result.get("results", [])})
-            return
-
-        self._send_json({"done": True, "ok": True, "msg": "无结果", "results": []})
+        dx_list = [d.strip() for d in dx.split(",") if re.match(r"^DX\d+$", d.strip())]
+        if not dx_list:
+            self._send_json({"ok": False, "msg": "DX号非法"}); return
+        # 批量贴图默认跳过黑T专用贴图（避免处理已有的黑版文件），单款贴图保留黑T
+        qs = parse_qs(urlparse(self.path).query) if '?' in self.path else {}
+        skip_black = len(dx_list) > 1 or qs.get("skip_black", [""])[0] == "1"
+        results = Handler._run_sticker_task(dx_list, skip_black=skip_black)
+        ok_all = all(r[1] for r in results)
+        msgs = "; ".join(f"{r[0]}: {r[2]}" for r in results)
+        self._send_json({"ok": ok_all, "msg": msgs})
 
     # BW合成（独立入口：仅用已贴好的 B/W 合成 BW）
     def _ps_batch(self, dx):
         if not re.match(r"^DX\d+$", dx):
             self._send_json({"ok": False, "msg": "DX号非法"}); return
         ps_script = Path(r"E:\\Claude code\\ps\\ps_batch_one.py")
+        quit_ps_script = Path(r"E:\\Claude code\\ps\\quit_ps.py")
         if not ps_script.exists():
             self._send_json({"ok": False, "msg": "BW合成脚本不存在"}); return
-        # 保持立即返回，后台线程等待 PS 完成后注册元数据
+        # 保持立即返回，后台线程获取 PS 锁后再运行，避免与贴图任务冲突
         def _run_and_register():
+            acquired = False
             try:
+                acquired = _PS_TASK_LOCK.acquire(blocking=True)
+                _set_ps_status(True, "BW合成", dx, "", f"正在合成 {dx} 的 BW 图")
                 proc = run_minimized([sys.executable, str(ps_script), dx], wait=True)
                 if proc.returncode == 0:
                     Handler._register_uploads(dx)
             except Exception as e:
                 print(f"  [BW合成] 后台注册失败: {e}", flush=True)
+            finally:
+                if acquired:
+                    if quit_ps_script.exists():
+                        try:
+                            print(f"  [BW合成] 正在退出 Photoshop...", flush=True)
+                            run_minimized([sys.executable, str(quit_ps_script)], wait=True, timeout=30)
+                        except Exception as e:
+                            print(f"  [BW合成] 退出PS失败: {e}", flush=True)
+                    _clear_ps_status()
+                    _PS_TASK_LOCK.release()
         import threading
         threading.Thread(target=_run_and_register, daemon=True).start()
-        self._send_json({"ok": True, "msg": f"已启动 BW合成: {dx}，PS将接管屏幕"})
+        self._send_json({"ok": True, "msg": f"已启动 BW合成: {dx}，后台运行中"})
+
+    # 返回当前 PS / 后台任务状态摘要
+    def _ps_status(self):
+        with _PS_STATUS_LOCK:
+            data = dict(_PS_STATUS)
+        # 若状态超过 30 秒未更新，自动视为已结束（防止异常未清状态）
+        if data.get("running") and time.time() - data.get("updated_at", 0) > 30:
+            data["running"] = False
+            data["detail"] = "状态已超时，可能已结束"
+        self._send_json(data)
 
     # 03_UPLOAD 贴图文件详情（按 BW / B / W 分组展示成品缩略图）
     def _upload_detail(self, dx, has_up):
@@ -2052,7 +2187,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 thumbs.append(
                     f'<div class="up-item">'
                     f'<div class="up-thumb cell">'
-                    f'<img src="/thumb?dx={dx}&kind=up&file={quote(f.name)}&t={ts}" onclick="openFolder(\'{dx}\',\'up\')">'
+                    f'<img src="/thumb?dx={dx}&kind=up&file={quote(f.name)}&t={ts}" onclick="openFolder(\'{dx}\',\'up\')" loading="lazy" decoding="async">'
                     f'</div>'
                     f'<div class="up-label" title="{f.name}">{label}</div>'
                     f'</div>'
@@ -2071,24 +2206,27 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         return f'<div class="upload-bar has-up"><div class="up-header"><span class="tag-up">\U0001f4ce \u5df2\u8d34\u56fe</span><span class="up-count">{len(files)} 张</span></div>{gallery}</div>'
 
     def _up_group(self, name, dx):
-        """根据文件名判断成品属于 BW / B / W / 其他。"""
+        """根据文件名判断成品属于 BW / B / W / 其他；支持 B1/W2/BW1/WB1 等版本号。"""
         stem = Path(name).stem
-        if 'BW' in stem:
+        # 去掉 _白T/_黑T 后提取基础 role
+        role_part = re.sub(r'_(白T|黑T)$', '', stem)
+        role_part = role_part[len(dx)+1:] if role_part.startswith(dx + "_") else role_part
+        role_part = re.sub(r'\d+$', '', role_part)
+        if role_part in ('BW', 'WB'):
             return 'BW'
-        if stem.startswith(f"{dx}_B_") or stem.endswith("_B"):
+        if role_part == 'B':
             return 'B'
-        if stem.startswith(f"{dx}_W_") or stem.endswith("_W"):
+        if role_part == 'W':
             return 'W'
         return '其他'
 
     def _up_label(self, name, dx):
-        """生成成品缩略图下方的小标签（如 白T / 黑T / 白 / 黑）。"""
+        """生成成品缩略图下方的小标签（如 白T / 黑T / 白 / 黑 / v1）。"""
         stem = Path(name).stem
         label = stem[len(dx):] if stem.startswith(dx) else stem
         label = label.strip('_')
-        # 去掉分组标识，保留颜色/版型描述
-        label = re.sub(r'^(B|W)_', '', label)
-        label = re.sub(r'_?(BW)$', '', label)
+        # 去掉基础分组标识（含版本号），保留颜色/版型/版本描述
+        label = re.sub(r'^(B|W|BW|WB)\d*_', '', label)
         label = label.replace('_', ' ').strip()
         return label if label else '成品'
 
@@ -2114,51 +2252,65 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         except Exception as e:
             self._send_json({"ok": False, "msg": f"\u653e\u5927\u5931\u8d25: {e}"})
 
-    # 反相去背图并自动跑黑T贴图（静态方法：实际执行逻辑，供队列 worker 调用）
-    @staticmethod
-    def _run_single_invert_sync(dx, file):
+    # 反相去背图并自动跑贴图流水线
+    def _invert_rem(self, dx, file):
+        from urllib.parse import parse_qs
         if not re.match(r"^DX\d+$", dx) or "/" in file or "\\" in file:
-            raise ValueError("参数非法")
-        if "_黑" in file:
-            raise ValueError("已是黑版专用图，无需反相")
+            self._send_json({"ok": False, "msg": "参数非法"}); return
         if not file.lower().endswith("_cut.png"):
-            raise ValueError("仅支持 _cut.png 去背图")
+            self._send_json({"ok": False, "msg": "仅支持 _cut.png 去背图"}); return
+
+        qs = parse_qs(self.path.split('?', 1)[1]) if '?' in self.path else {}
+        mode = qs.get("mode", ["black"])[0].lower()
+        if mode not in ("black", "white"):
+            self._send_json({"ok": False, "msg": "mode 必须是 black 或 white"}); return
+
+        # 已是对应专用图则无需再反
+        if mode == "black" and "_黑" in file:
+            self._send_json({"ok": False, "msg": "已是黑版专用图，无需反黑"}); return
+        if mode == "white" and "_白" in file:
+            self._send_json({"ok": False, "msg": "已是白版专用图，无需反白"}); return
+        # 从另一版专用图再反没有意义（剪影再反还是剪影），也跳过
+        if (mode == "black" and "_白" in file) or (mode == "white" and "_黑" in file):
+            self._send_json({"ok": False, "msg": "请从原始 B/W/BW 去背图执行反相"}); return
 
         src = BASE / dx / "02_REM_BG" / file
         if not src.exists():
-            raise FileNotFoundError(f"{file} 不存在")
+            self._send_json({"ok": False, "msg": f"{file} 不存在"}); return
 
-        # 生成目标文件名：DX0255_B_cut.png -> DX0255_黑B_cut.png
+        # 生成目标文件名：DX0255_B_cut.png -> DX0255_黑B_cut.png / DX0255_白B_cut.png
         stem = file[:-len("_cut.png")]
         suffix = stem[len(dx)+1:] if stem.startswith(dx + "_") else ""
         if not suffix:
-            raise ValueError("无法解析文件名后缀")
-        dest_name = f"{dx}_黑{suffix}_cut.png"
+            self._send_json({"ok": False, "msg": "无法解析文件名后缀"}); return
+        prefix = "黑" if mode == "black" else "白"
+        dest_name = f"{dx}_{prefix}{suffix}_cut.png"
         dest = BASE / dx / "02_REM_BG" / dest_name
 
         try:
             img = Image.open(src).convert("RGBA")
-            r, g, b, a = img.split()
-            rgb = Image.merge("RGB", (r, g, b))
-            inv_rgb = ImageOps.invert(rgb)
-            inv = Image.merge("RGBA", (*inv_rgb.split(), a))
+            # 智能显色：黑版走白墨打底流水线(极暗也显色)+保色；白版压暗亮部+保色
+            if mode == "black":
+                inv = black_shirt_print_optimize(img)
+            else:
+                inv = enhance_dark_print_for_black_shirt(img, shirt="white")
+            role = f"黑{suffix}" if mode == "black" else f"白{suffix}"
             inv.save(dest)
         except Exception as e:
-            raise RuntimeError(f"反相失败: {e}")
+            self._send_json({"ok": False, "msg": f"反相失败: {e}"}); return
 
-        # 注册黑版变体元数据
+        # 注册变体元数据
         if wb_meta is not None:
             try:
                 src_meta = _meta_for(src)
                 parent_uid = src_meta.get("uid")
                 gid = src_meta.get("group_id") or ""
-                black_role = f"黑{suffix}"
                 if parent_uid:
                     wb_meta.register_rembg(dest, uid=_new_uid(dest), group_id=gid,
-                                           role=black_role, parent_uid=parent_uid,
+                                           role=role, parent_uid=parent_uid,
                                            ai_file=file)
                 else:
-                    wb_meta.ensure_meta(dest, group_id=gid, stage="rembg", role=black_role)
+                    wb_meta.ensure_meta(dest, group_id=gid, stage="rembg", role=role)
             except Exception as e:
                 print(f"  [反相] 元数据注册失败 {dest}: {e}", flush=True)
 
@@ -2167,77 +2319,68 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             try: tf.unlink()
             except: pass
 
-        # 仅生成黑版反相图，不自动跑贴图流水线；贴图由用户单独触发
+        # 反相后重跑该款完整贴图+BW合成流水线
+        results = Handler._run_sticker_task([dx])
+        ok, msg = results[0][1], results[0][2]
+        self._send_json({"ok": ok, "msg": f"已生成 {dest_name}，{msg}"})
 
-    # 反相 HTTP 入口：加入统一队列，立即返回
-    def _invert_rem(self, dx, file):
-        if not re.match(r"^DX\d+$", dx) or "/" in file or "\\" in file:
-            self._send_json({"ok": False, "msg": "参数非法"}); return
-        if "_黑" in file:
-            self._send_json({"ok": False, "msg": "已是黑版专用图，无需反相"}); return
-        if not file.lower().endswith("_cut.png"):
-            self._send_json({"ok": False, "msg": "仅支持 _cut.png 去背图"}); return
-
-        _ensure_invert_worker()
-        _INVERT_QUEUE.put({"type": "single", "dx": dx, "file": file})
-        with _INVERT_STATUS_LOCK:
-            pending = _INVERT_STATUS["pending"] = _INVERT_QUEUE.qsize()
-            current = _INVERT_STATUS["current"]
-        msg = "已加入反相队列"
-        if current:
-            msg += f"，当前正在处理 {current}"
-        if pending > 1:
-            msg += f"，前面还有 {pending - 1} 个任务"
-        self._send_json({"ok": True, "queued": True, "pending": pending, "msg": msg})
-
-    # 批量反相 HTTP 入口：加入统一队列，立即返回
+    # 批量反相：对选中 DX 的所有原始 _cut.png 反相，并跑完整贴图流水线
     def _batch_invert_rem(self):
         from urllib.parse import parse_qs
         qs = parse_qs(self.path.split('?', 1)[1]) if '?' in self.path else {}
         dx_str = qs.get("dx", [""])[0]
+        mode = qs.get("mode", ["black"])[0].lower()
+        if mode not in ("black", "white"):
+            self._send_json({"ok": False, "msg": "mode 必须是 black 或 white"}); return
         if not dx_str:
             self._send_json({"ok": False, "msg": "缺少 dx 参数"}); return
         dx_list = [d.strip() for d in dx_str.split(",") if d.strip()]
         if not dx_list:
             self._send_json({"ok": False, "msg": "无效的 dx 参数"}); return
 
-        _ensure_invert_worker()
-        _INVERT_QUEUE.put({"type": "batch", "dx_list": dx_list})
-        with _INVERT_STATUS_LOCK:
-            pending = _INVERT_STATUS["pending"] = _INVERT_QUEUE.qsize()
-            current = _INVERT_STATUS["current"]
-        msg = f"批量反相已加入队列，共 {len(dx_list)} 款"
-        if current:
-            msg += f"，当前正在处理 {current}"
-        if pending > 1:
-            msg += f"，前面还有 {pending - 1} 个任务"
-        self._send_json({"ok": True, "queued": True, "pending": pending, "count": len(dx_list), "msg": msg})
+        lock = TEMP_REMBG / ".invert_lock"
+        if lock.exists():
+            self._send_json({"ok": False, "msg": "已有批量反相任务在运行，请等其完成"}); return
 
-    # 反相队列结果查询（兼容单张 + 批量）
+        label = "批量反黑" if mode == "black" else "批量反白"
+
+        def _run():
+            try:
+                lock.write_text("batch", encoding="utf-8")
+                _set_ps_status(True, label, "", f"0/{len(dx_list)}", f"共 {len(dx_list)} 款，先反相去背图再平铺图贴图+BW合成")
+                results = batch_invert_rem(dx_list, mode=mode)
+                ok_count = sum(1 for r in results if r["ok"])
+                fail_count = len(results) - ok_count
+                msg = f"完成 {ok_count}/{len(results)}"
+                if fail_count:
+                    msg += f", {fail_count}个失败"
+                result_file = TEMP_REMBG / "_batch_invert_result.json"
+                with open(result_file, 'w', encoding='utf-8') as f:
+                    json.dump({"ok": True, "msg": msg, "results": results}, f, ensure_ascii=False)
+            finally:
+                _clear_ps_status()
+                if lock.exists():
+                    lock.unlink()
+
+        import threading
+        threading.Thread(target=_run, daemon=True).start()
+        self._send_json({"ok": True, "msg": f"{label}已启动，共 {len(dx_list)} 款，将自动反相并平铺图贴图+BW合成"})
+
+    # 批量反相结果查询
     def _batch_invert_result(self):
-        with _INVERT_STATUS_LOCK:
-            running = _INVERT_STATUS["running"]
-            pending = _INVERT_STATUS["pending"]
-            current = _INVERT_STATUS["current"]
-            last_result = _INVERT_STATUS["last_result"]
-
-        if running or pending > 0:
-            msg = "反相队列运行中"
-            if current:
-                msg += f"：当前 {current}"
-            if pending:
-                msg += f"，还剩 {pending} 个任务"
-            self._send_json({"done": False, "running": running, "pending": pending, "current": current, "msg": msg})
-            return
-
-        # 队列空闲：消费上次结果
-        if last_result:
-            with _INVERT_STATUS_LOCK:
-                _INVERT_STATUS["last_result"] = None
-            self._send_json({"done": True, "ok": last_result.get("ok", True), "msg": last_result.get("msg", ""), "results": last_result.get("results", [])})
-            return
-
-        self._send_json({"done": True, "ok": True, "msg": "无结果", "results": []})
+        result_file = TEMP_REMBG / "_batch_invert_result.json"
+        lock = TEMP_REMBG / ".invert_lock"
+        if lock.exists():
+            self._send_json({"done": False, "msg": "批量反相进行中…"})
+        elif result_file.exists():
+            try:
+                data = json.loads(result_file.read_text(encoding="utf-8"))
+                result_file.unlink()
+                self._send_json({"done": True, **data})
+            except Exception:
+                self._send_json({"done": True, "ok": True, "msg": "完成", "results": []})
+        else:
+            self._send_json({"done": True, "ok": True, "msg": "无结果", "results": []})
 
     def _refresh_thumb(self, dx, stem):
         if not re.match(r"^DX\d+$", dx) or not stem or "/" in stem or "\\" in stem:
@@ -2273,19 +2416,22 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         else:
             self._send_json({"ok": False, "found": False, "msg": f"刷新失败：{cut_name} 无法读取"})
 
-    # 改名：_B / _W / _BW 互转（如 DX0264_B → DX0264_W / DX0264_BW）
-    def _rename_stem(self, dx, stem, target):
+    # 改名：任意后缀转换（如 DX0264_B → DX0264_BW / DX0264_RED1，对应 _cut 也改名）
+    def _rename_stem(self, dx, stem, target=""):
         if not re.match(r"^DX\d+$", dx) or not stem or "/" in stem or "\\" in stem:
             self._send_json({"ok": False, "msg": "参数非法"}); return
-        source = stem[-2:] if stem.endswith(("_B", "_W")) else (stem[-3:] if stem.endswith("_BW") else "")
-        if source not in ("_B", "_W", "_BW"):
-            self._send_json({"ok": False, "msg": "源文件名后缀必须是 _B/_W/_BW"}); return
-        if target not in ("B", "W", "BW"):
-            self._send_json({"ok": False, "msg": "目标必须是 B/W/BW"}); return
-        if source == "_" + target:
-            self._send_json({"ok": False, "msg": "源和目标相同"}); return
-        prefix = stem[:-len(source)]  # DX0264
-        new_stem = prefix + "_" + target
+        target = (target or "").strip()
+        # 兼容旧逻辑：未传 target 且 stem 以 _B/_W 结尾时默认改为 _BW
+        if not target:
+            if stem.endswith("_B") or stem.endswith("_W"):
+                target = "BW"
+            else:
+                self._send_json({"ok": False, "msg": "请指定新后缀"}); return
+        # target 允许中文、字母、数字、下划线、连字符
+        if not re.match(r'^[\u4e00-\u9fa5A-Za-z0-9_\-]+$', target) or ".." in target:
+            self._send_json({"ok": False, "msg": "新后缀非法"}); return
+        prefix = dx  # DX0264
+        new_stem = f"{prefix}_{target}"
         ai_new = new_stem + ".png"
         rem_new = new_stem + "_cut.png"
         errors = []
@@ -2319,6 +2465,14 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         for tf in THUMB_DIR.glob(f"{dx}__*__{stem}*"):
             try: tf.unlink()
             except: pass
+        # 同步 uid_map 中的文件路径（scan_projects 不再每次全量对账）
+        if wb_meta is not None:
+            try:
+                wb_meta.reconcile_dx(BASE / dx)
+            except Exception as e:
+                print(f"  [rename] 对账 {dx} 失败: {e}", flush=True)
+        # 文件改名后清空扫描缓存，下次请求重新索引
+        _invalidate_scan_cache()
         msg = "、".join(renamed) + ("。" + "；".join(errors) if errors else "")
         self._send_json({"ok": True, "msg": msg})
 
@@ -2421,13 +2575,11 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
 # ── 入口 ────────────────────────────────────────────
 def main():
-    # 先把 stdout/stderr 写入文件日志，避免最小化控制台后输出丢失
-    _setup_file_logging()
-
     # 首次启动若发现遗留锁/未恢复config，自动清理
     if CONFIG_BACKUP.exists():
         _restore_config()
         print("  ⚠ 检测到上次未完成的去背任务，已恢复 config.json")
+    TEMP_REMBG.mkdir(parents=True, exist_ok=True)
     lock = TEMP_REMBG / ".rembg_lock"
     if lock.exists():
         try: lock.unlink()
@@ -2438,12 +2590,6 @@ def main():
     print(f"  AI vs 去背 对比预览  →  {url}")
     print(f"  点缩略图：打开文件夹   x：送回收站   [重新去背]：驱动美图")
     print(f"  关闭此窗口停止服务")
-
-    # 启动反相队列工作线程（单张 + 批量统一串行处理）
-    _ensure_invert_worker()
-
-    # 启动 PS 贴图队列工作线程（单款 + 批量统一串行处理 + 超时兜底）
-    _ensure_sticker_worker()
 
     # 后台预扫描：启动后立即全量扫描，把结果 warming 到缓存，
     # 这样用户首次打开首页时就是热缓存，几乎秒开。
