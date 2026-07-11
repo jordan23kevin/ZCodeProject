@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 """白 T 恤样机贴图自动化工具包。"""
 
-__version__ = "1.4.1"
+__version__ = "1.6.0"
 
 from .core import (
+    add_white_underbase,
     apply_mockup,
     apply_mockup_transform,
     apply_transform,
+    black_shirt_print_optimize,
+    enhance_dark_print_for_black_shirt,
     find_effective_bbox,
     load_any_template,
     load_png_template,
@@ -17,9 +20,12 @@ from .core import (
 )
 
 __all__ = [
+    "add_white_underbase",
     "apply_mockup",
     "apply_mockup_transform",
     "apply_transform",
+    "black_shirt_print_optimize",
+    "enhance_dark_print_for_black_shirt",
     "find_effective_bbox",
     "load_any_template",
     "load_png_template",

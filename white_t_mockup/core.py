@@ -1,5 +1,18 @@
 # -*- coding: utf-8 -*-
-"""白 T 恤样机贴图核心逻辑。"""
+"""白 T 恤样机贴图核心逻辑。
+
+v1.6.0 (2026-07-12) 黑衫显色重构：
+  - 新增 prepare_method="white_underbase"（黑衫默认）：自适应浓度白墨打底
+    add_white_underbase + 轻度暗部提亮 enhance_dark_print_for_black_shirt，
+    组合为 black_shirt_print_optimize。模拟真实 DTG 黑衫『先喷白墨再喷彩色』，
+    使极暗区域在黑布上可见，同时保留全部原色、不漂白。
+  - 保留旧 prepare_method：dark_boost（仅提亮暗部）、value_invert / silhouette
+    （旧反相/剪影，已不推荐）。白衫 white_underbase/dark_boost 均为 no-op。
+  - 根因记录：旧『反黑』把非透明像素涂纯白(silhouette)或 HSV 明度反相
+    (value_invert)，导致颜色全丢/亮色变黑；且 PS 贴图(place_design.jsx)从不铺
+    白底，纯黑设计印黑布物理不可见。white_underbase 在贴图前把白墨打底烘进
+    设计图本身，无需改 PS 脚本即可显色。
+"""
 
 from __future__ import annotations
 
@@ -8,7 +21,13 @@ from typing import Literal, Tuple
 
 import numpy as np
 from PIL import Image
-from psd_tools import PSDImage
+
+# psd_tools 为可选依赖：仅在处理 PSD 模板时需要。
+# 离线/未安装环境下，PNG 模板仍可正常贴图（含 _tpl 扭曲管线）。
+try:
+    from psd_tools import PSDImage
+except ImportError:  # pragma: no cover - 离线环境无 psd_tools
+    PSDImage = None
 
 from .config import DEFAULT_BLEND_MODE, SUPPORTED_BLEND_MODES
 
@@ -159,8 +178,26 @@ def load_any_template(
     """自动识别 PSD 或 PNG 模板并加载。"""
     path = Path(template_path)
     if path.suffix.lower() == ".psd":
+        if PSDImage is None:
+            raise ImportError(
+                "处理 PSD 模板需要 psd_tools，但当前环境未安装。"
+                "请改用 PNG 模板，或安装：pip install psd-tools"
+            )
         return load_template(template_path)
     return load_png_template(template_path)
+
+
+def _paste_occluder_top(canvas: Image.Image, occluder_path) -> Image.Image:
+    """把生成的遮挡物 RGBA（最上层）盖到画布最上方，与画布同尺寸对齐。
+
+    遮挡物来自胚衣遮罩（peiyi_mask.generate_masks 产出的 *_occluder.png），
+    其像素坐标系与原始胚衣图一致；当画布尺寸不一致时自动缩放对齐。
+    """
+    occ = Image.open(str(occluder_path)).convert("RGBA")
+    if occ.size != canvas.size:
+        occ = occ.resize(canvas.size, Image.Resampling.LANCZOS)
+    canvas.paste(occ, (0, 0), occ)
+    return canvas
 
 
 def apply_transform(
@@ -236,8 +273,13 @@ def calculate_effective_position(
     return paste_x, paste_y, (left, top, right, bottom)
 
 
-def apply_realism(design, *, saturation=0.90, brightness=0.95, blur_radius=0.5):
-    """印花真实感：降饱和、降亮度、边缘柔化（模拟丝印略降色 + 纤维扩散）。"""
+def apply_realism(design, *, saturation=0.97, brightness=1.0, blur_radius=0.4):
+    """印花真实感：微降饱和、边缘柔化（模拟丝印 + 纤维扩散）。
+
+    关键：边缘柔化采用【预乘 alpha 感知模糊】——先按 alpha 预乘再模糊再还原，
+    避免透明底（RGB≈中灰）在模糊时渗入不透明的白字/浅色印花，从而不会把印花
+    整体染灰、变暗。brightness 默认 1.0（不再统一压暗印花，保持色彩鲜亮）。
+    """
     from PIL import ImageEnhance, ImageFilter
     d = design
     if saturation != 1.0:
@@ -245,7 +287,18 @@ def apply_realism(design, *, saturation=0.90, brightness=0.95, blur_radius=0.5):
     if brightness != 1.0:
         d = ImageEnhance.Brightness(d).enhance(brightness)
     if blur_radius and blur_radius > 0:
-        d = d.filter(ImageFilter.GaussianBlur(blur_radius))
+        arr = np.array(d.convert("RGBA")).astype(np.float32)
+        a = arr[:, :, 3:4] / 255.0
+        pm = arr.copy()
+        pm[:, :, :3] *= a  # 预乘：透明区 RGB 归零，不再污染
+        blurred = Image.fromarray(
+            np.clip(pm, 0, 255).astype(np.uint8), "RGBA"
+        ).filter(ImageFilter.GaussianBlur(blur_radius))
+        parr = np.array(blurred).astype(np.float32)
+        pa = parr[:, :, 3:4] / 255.0
+        pa[pa == 0] = 1.0
+        parr[:, :, :3] = np.clip(parr[:, :, :3] / pa, 0, 255)  # 还原（非预乘）
+        d = Image.fromarray(parr.astype(np.uint8), "RGBA")
     return d
 
 
@@ -319,6 +372,34 @@ def apply_displacement(
     return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), "RGBA")
 
 
+def apply_occlusion_alpha(
+    design: Image.Image,
+    occ: Image.Image,
+    paste_x: int,
+    paste_y: int,
+    strength: float = 1.0,
+) -> Image.Image:
+    """按遮挡图 occ（画布尺寸 L，255=完全可见，0=折入隐藏）降低 design 的 alpha。
+
+    真实布料的大褶皱折入内部，其表面图案被前方布料挡住而看不见。occ 图标出这些
+    折入区域，本函数据此把 design 对应位置的 alpha 拉低，使贴图在褶皱处自然淡出/
+    消失，仅在褶皱之外正常显示。strength=1.0 完全按 occ 隐藏，0 则不隐藏。
+    """
+    dw, dh = design.size
+    arr = np.array(design).astype(np.float32)
+    occ_arr = np.array(occ.convert("L")).astype(np.float32) / 255.0
+    H, W = occ_arr.shape
+
+    yy, xx = np.mgrid[0:dh, 0:dw]
+    cx = np.clip(paste_x + xx, 0, W - 1).astype(np.int32)
+    cy = np.clip(paste_y + yy, 0, H - 1).astype(np.int32)
+    vis = occ_arr[cy, cx]
+    if strength < 1.0:
+        vis = 1.0 - (1.0 - vis) * float(strength)
+    arr[:, :, 3] = arr[:, :, 3] * vis
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
+
+
 def transfer_shadow_highlight(
     canvas: Image.Image,
     design: Image.Image,
@@ -358,6 +439,16 @@ def transfer_shadow_highlight(
 
     if shadow is not None and shadow_opacity > 0:
         s = np.array(shadow.crop((bx0, by0, bx1, by1)).convert("L")).astype(np.float32) / 255.0
+        # 归一化为【相对褶皱阴影】：以印花区内平坦布料(高百分位)为基准=不压暗，
+        # 只保留“褶皱比平坦暗”的相对结构。避免黑衣绝对暗度(中位~0.13)整体压灰印花。
+        sel = strength_base > 0.05
+        ref = np.percentile(s[sel], 85) if sel.any() else 1.0
+        if ref < 1e-3:
+            ref = 1.0
+        s = np.clip(s / ref, 0.0, 1.0)
+        # 相对阴影再设下限，最深褶皱最多压到 SHADOW_FLOOR，防止细缝把印花打穿成黑
+        SHADOW_FLOOR = 0.55
+        s = SHADOW_FLOOR + (1.0 - SHADOW_FLOOR) * s
         s3 = s[..., None]
         st = (strength_base * shadow_opacity)[..., None]
         mul = base_rgb * s3  # multiply
@@ -399,23 +490,26 @@ def apply_mockup_transform(
     blend_mode: str | None = DEFAULT_BLEND_MODE,
     quality: int = 95,
     shirt_color: Literal["black", "white"] | None = None,
-    prepare_method: Literal["value_invert", "silhouette", "none"] = "value_invert",
+    prepare_method: Literal["value_invert", "silhouette", "none", "dark_boost", "white_underbase"] = "white_underbase",
     realism: bool = True,
-    saturation: float = 0.90,
-    brightness: float = 0.95,
-    blur_radius: float = 0.5,
+    saturation: float = 0.97,
+    brightness: float = 1.0,
+    blur_radius: float = 0.4,
     texture_mode: str = "multiply",
     texture_opacity: float = 0.25,
     tpl_dir: str | Path | None = None,
     disp_strength: float = 8.0,
-    shadow_opacity: float = 0.35,
-    highlight_opacity: float = 0.25,
+    shadow_opacity: float = 0.22,
+    highlight_opacity: float = 0.22,
+    occluder: str | Path | None = None,
+    occlusion_strength: float = 1.0,
 ) -> dict:
     """
     新版贴图方法：resize 到最终像素 → 旋转 → 按有效像素定位 → 混合。
 
     支持 PSD/PNG 模板；tpl_dir 含 mask.png 时启用模板管线：
-    displacement(disp，限 mask) → shadow(Multiply) + highlight(Overlay) 转移，限印花∩衣服区。
+    displacement(disp，限 mask) → occlusion(褶皱折入隐藏) → shadow(Multiply) +
+    highlight(Overlay) 转移，限印花∩衣服区。
     """
     design = Image.open(str(design_path)).convert("RGBA")
     if shirt_color is not None:
@@ -427,7 +521,7 @@ def apply_mockup_transform(
         transformed, effective_top_y, effective_center_x
     )
 
-    mask_im = disp_im = shadow_im = highlight_im = None
+    mask_im = disp_im = shadow_im = highlight_im = occ_im = None
     if tpl_dir:
         td = Path(tpl_dir)
         mask_im = _load_tpl_optional(td, "mask.png", canvas_size)
@@ -435,12 +529,20 @@ def apply_mockup_transform(
             disp_im = _load_tpl_optional(td, "disp.png", canvas_size)
             shadow_im = _load_tpl_optional(td, "shadow.png", canvas_size)
             highlight_im = _load_tpl_optional(td, "highlight.png", canvas_size)
+            occ_im = _load_tpl_optional(td, "occlusion.png", canvas_size)
     use_tpl = mask_im is not None
+    used_occlusion = False
 
     if use_tpl and disp_im is not None:
         transformed = apply_displacement(
             transformed, disp_im, mask_im, paste_x, paste_y, disp_strength
         )
+
+    if use_tpl and occ_im is not None and occlusion_strength > 0:
+        transformed = apply_occlusion_alpha(
+            transformed, occ_im, paste_x, paste_y, occlusion_strength
+        )
+        used_occlusion = True
 
     if realism:
         transformed = apply_realism(
@@ -465,6 +567,10 @@ def apply_mockup_transform(
     if foreground is not None and fg_position is not None:
         canvas.paste(foreground, fg_position, foreground)
 
+    # 最上层：生成的遮挡物（手/头发/配饰），自然盖在印花图案之上
+    if occluder is not None:
+        canvas = _paste_occluder_top(canvas, occluder)
+
     canvas_rgb = canvas.convert("RGB")
     canvas_rgb.save(str(output_path), "JPEG", quality=quality, optimize=True)
 
@@ -481,6 +587,8 @@ def apply_mockup_transform(
         "rotation_degrees": rotation_degrees,
         "blend_mode": blend_mode or "normal",
         "template_pipeline": use_tpl,
+        "occluder_applied": occluder is not None,
+        "occlusion_applied": used_occlusion,
     }
 
 
@@ -495,17 +603,19 @@ def apply_mockup(
     blend_mode: str | None = DEFAULT_BLEND_MODE,
     quality: int = 95,
     shirt_color: Literal["black", "white"] | None = None,
-    prepare_method: Literal["value_invert", "silhouette", "none"] = "value_invert",
+    prepare_method: Literal["value_invert", "silhouette", "none", "dark_boost", "white_underbase"] = "white_underbase",
     tpl_dir: str | Path | None = None,
     disp_strength: float = 8.0,
-    shadow_opacity: float = 0.35,
-    highlight_opacity: float = 0.25,
+    shadow_opacity: float = 0.22,
+    highlight_opacity: float = 0.22,
+    occluder: str | Path | None = None,
+    occlusion_strength: float = 1.0,
 ) -> dict:
     """
     旧版贴图方法：resize 到最终像素 → 按顶部/中心定位 → 混合 → 盖手部遮罩（仅 PSD）。
 
-    tpl_dir 含 mask.png 时启用模板管线：displacement(disp) + shadow/highlight 转移。
-    返回包含贴图参数的字典，便于测试和日志记录。
+    tpl_dir 含 mask.png 时启用模板管线：displacement(disp) + occlusion(褶皱折入隐藏)
+    + shadow/highlight 转移。返回包含贴图参数的字典，便于测试和日志记录。
     """
     design = Image.open(str(design_path)).convert("RGBA")
     if shirt_color is not None:
@@ -516,7 +626,7 @@ def apply_mockup(
     dw, dh = design_resized.size
     left, top = calculate_design_position(design_resized.size, center_x, top_y)
 
-    mask_im = disp_im = shadow_im = highlight_im = None
+    mask_im = disp_im = shadow_im = highlight_im = occ_im = None
     if tpl_dir:
         td = Path(tpl_dir)
         mask_im = _load_tpl_optional(td, "mask.png", canvas_size)
@@ -524,12 +634,20 @@ def apply_mockup(
             disp_im = _load_tpl_optional(td, "disp.png", canvas_size)
             shadow_im = _load_tpl_optional(td, "shadow.png", canvas_size)
             highlight_im = _load_tpl_optional(td, "highlight.png", canvas_size)
+            occ_im = _load_tpl_optional(td, "occlusion.png", canvas_size)
     use_tpl = mask_im is not None
+    used_occlusion = False
 
     if use_tpl and disp_im is not None:
         design_resized = apply_displacement(
             design_resized, disp_im, mask_im, left, top, disp_strength
         )
+
+    if use_tpl and occ_im is not None and occlusion_strength > 0:
+        design_resized = apply_occlusion_alpha(
+            design_resized, occ_im, left, top, occlusion_strength
+        )
+        used_occlusion = True
 
     canvas = Image.new("RGBA", canvas_size, (255, 255, 255, 255))
     canvas.paste(background, (0, 0), background)
@@ -543,6 +661,10 @@ def apply_mockup(
 
     canvas.paste(foreground, fg_position, foreground)
 
+    # 最上层：生成的遮挡物（手/头发/配饰），自然盖在印花图案之上
+    if occluder is not None:
+        canvas = _paste_occluder_top(canvas, occluder)
+
     canvas_rgb = canvas.convert("RGB")
     canvas_rgb.save(str(output_path), "JPEG", quality=quality, optimize=True)
 
@@ -554,6 +676,8 @@ def apply_mockup(
         "design_center": (center_x, top_y + dh // 2),
         "blend_mode": blend_mode or "normal",
         "template_pipeline": use_tpl,
+        "occluder_applied": occluder is not None,
+        "occlusion_applied": used_occlusion,
     }
 
 
@@ -612,10 +736,152 @@ def _hsv_to_rgb(hsv: np.ndarray) -> np.ndarray:
     return np.stack([r, g, b], axis=-1)
 
 
+def enhance_dark_print_for_black_shirt(
+    design: Image.Image,
+    dark_boost: float = 0.55,
+    protect_threshold: int = 140,
+    min_brightness: int = 20,
+    sat_compensation: float = 0.3,
+    smooth_radius: int = 9,
+) -> Image.Image:
+    """
+    黑衫智能显色：仅提亮暗部、完整保留原色，模拟数码印花白墨打底效果。
+
+    内部自动完成 PIL RGBA <-> OpenCV BGRA 双向转换，调用方直接传 PIL Image，
+    从根源避免红蓝互换的静默错误。对全透明 / 空图直接返回原图，不崩、不产废图。
+
+    :param design: 透明底 RGBA 设计图（PIL Image）
+    :param dark_boost: 暗部提亮强度 0~1，越大暗部越亮，黑衫推荐 0.45~0.65
+    :param protect_threshold: 亮部保护阈值 0~255，高于此亮度的像素完全不改动
+    :param min_brightness: 极暗保底亮度 0~255，纯黑图案强制提到此亮度，避免融进黑布
+    :param sat_compensation: 饱和度补偿 0~1，避免提亮后色彩发灰
+    :param smooth_radius: 权重过渡平滑半径（自动取整为奇数），越大过渡越柔和
+    :return: 增强后的 RGBA 图像（PIL Image）
+    """
+    if design is None:
+        return design
+    if design.mode != "RGBA":
+        design = design.convert("RGBA")
+    arr = np.array(design)
+    if arr.size == 0:
+        return design
+
+    # 仅本函数需要 OpenCV：懒加载，避免影响其它预处理与模块导入
+    import cv2
+
+    # PIL RGBA -> OpenCV BGRA
+    bgra = cv2.cvtColor(arr, cv2.COLOR_RGBA2BGRA)
+    bgr = bgra[..., :3].copy()
+    alpha = bgra[..., 3].astype(np.float32) / 255.0
+
+    valid_mask = alpha > 0.01
+    if not np.any(valid_mask):
+        return design  # 全透明，无需处理
+
+    lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+    L = lab[..., 0]
+    A = lab[..., 1]
+    B = lab[..., 2]
+
+    L_norm = L / 255.0
+    thresh_norm = protect_threshold / 255.0
+
+    # 暗部权重遮罩：越暗权重越高，亮部为 0；再乘 alpha，透明区权重强制为 0
+    weight = np.clip((thresh_norm - L_norm) / thresh_norm, 0.0, 1.0)
+    weight = weight * alpha
+
+    # 鲁棒性：smooth_radius 强制奇数，杜绝 GaussianBlur 参数报错
+    sr = int(round(smooth_radius)) | 1
+    if sr < 1:
+        sr = 1
+    weight = cv2.GaussianBlur(weight, (sr, sr), 0)
+    weight = np.clip(weight, 0.0, 1.0)
+
+    # 暗部伽马提亮（幅度仅由 dark_boost 控制，与权重解耦；下限防 nan）
+    target_gamma = max(0.15, 1.0 - dark_boost * 0.7)
+    L_boosted = 255.0 * np.power(L_norm, target_gamma)
+
+    # 极暗保底：纯黑/极暗像素强制提到 min_brightness，避免融进黑布
+    min_mask = (L < min_brightness) & valid_mask
+    L_boosted[min_mask] = np.maximum(L_boosted[min_mask], min_brightness)
+    L_boosted = np.clip(L_boosted, 0.0, 255.0)
+
+    # 加权融合：暗部用提亮值，亮部完全保留原始值
+    L_final = L * (1 - weight) + L_boosted * weight
+
+    # 饱和度补偿：仅在被提亮区域增强，亮部原色 100% 保留
+    sat_gain = 1.0 + sat_compensation * weight
+    A_final = (A - 128.0) * sat_gain + 128.0
+    B_final = (B - 128.0) * sat_gain + 128.0
+    A_final = np.clip(A_final, 0.0, 255.0)
+    B_final = np.clip(B_final, 0.0, 255.0)
+
+    lab_final = np.stack([L_final, A_final, B_final], axis=-1).astype(np.uint8)
+    bgr_final = cv2.cvtColor(lab_final, cv2.COLOR_LAB2BGR)
+
+    # OpenCV BGRA -> PIL RGBA
+    bgra_final = np.dstack([bgr_final, (alpha * 255).astype(np.uint8)])
+    rgba_final = cv2.cvtColor(bgra_final, cv2.COLOR_BGRA2RGBA)
+    return Image.fromarray(rgba_final, "RGBA")
+
+
+def add_white_underbase(
+    design: Image.Image,
+    max_white_opacity: float = 0.9,
+    min_white_opacity: float = 0.05,
+    transition_threshold: int = 130,
+    edge_feather: int = 5,
+    boost_sat: float = 0.35,
+) -> Image.Image:
+    """自适应浓度白墨打底（黑衫显色）：越暗白墨越厚，亮/饱和色保留原色。
+
+    模拟真实 DTG 黑衫印花『先喷白墨、再喷彩色』工序，使极暗区域在黑布上可见，
+    同时避免全铺白底导致的颜色漂白。内部完成 PIL↔数组转换，调用方直接传 PIL Image。
+    """
+    if getattr(design, "mode", None) != "RGBA":
+        design = design.convert("RGBA")
+    import cv2  # 懒加载，与其它预处理保持一致
+    arr = np.array(design)
+    rgb = arr[..., :3].astype(np.float32)
+    alpha = arr[..., 3].astype(np.float32) / 255.0
+    valid = alpha > 0.01
+    if not valid.any():
+        return design
+    rgb_u = rgb.astype(np.uint8)
+    gray = cv2.cvtColor(rgb_u, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+    hsv = cv2.cvtColor(rgb_u, cv2.COLOR_RGB2HSV).astype(np.float32)
+    sat = hsv[..., 1] / 255.0
+    th = transition_threshold / 255.0
+    white_mask = np.clip((th - gray) / th, 0.0, 1.0)            # 越暗越 1
+    white_alpha = min_white_opacity + white_mask * (max_white_opacity - min_white_opacity)
+    white_alpha = white_alpha * alpha
+    if edge_feather > 0:
+        k = int(edge_feather) * 2 + 1
+        white_alpha = cv2.GaussianBlur(white_alpha, (k, k), 0)
+    white_alpha = np.clip(white_alpha, 0.0, 1.0)
+    white = np.ones_like(rgb) * 255.0
+    # 保留色相：暗但饱和的颜色多保留原色，避免漂成纯白
+    keep = np.clip(gray + boost_sat * sat, 0.0, 1.0)
+    color_on_white = white * (1 - keep)[..., None] + rgb * keep[..., None]
+    final = rgb * (1 - white_alpha)[..., None] + color_on_white * white_alpha[..., None]
+    final = np.clip(final, 0, 255).astype(np.uint8)
+    out = np.dstack([final, (alpha * 255).astype(np.uint8)])
+    return Image.fromarray(out, "RGBA")
+
+
+def black_shirt_print_optimize(design: Image.Image) -> Image.Image:
+    """黑衫终极显色流水线：自适应白墨打底 + 轻度暗部提亮 + 饱和补偿。"""
+    step1 = add_white_underbase(design)
+    step2 = enhance_dark_print_for_black_shirt(
+        step1, dark_boost=0.25, protect_threshold=160, min_brightness=20, sat_compensation=0.2
+    )
+    return step2
+
+
 def prepare_design_for_shirt(
     design: Image.Image,
     shirt_color: Literal["black", "white"],
-    method: Literal["value_invert", "silhouette", "none"] = "value_invert",
+    method: Literal["value_invert", "silhouette", "none", "dark_boost", "white_underbase"] = "white_underbase",
 ) -> Image.Image:
     """
     在贴图前对设计图做预处理，使其更适合目标 T 恤颜色。
@@ -630,6 +896,19 @@ def prepare_design_for_shirt(
     """
     if method == "none":
         return design.copy()
+
+    if method == "dark_boost":
+        if shirt_color == "white":
+            # 白衫对称方案暂未实现，保持原色不处理
+            return design.copy()
+        return enhance_dark_print_for_black_shirt(design)
+
+    if method == "white_underbase":
+        if shirt_color == "white":
+            # 白衫无需白墨打底，保持原色
+            return design.copy()
+        # 黑衫默认：自适应白墨打底 + 轻度暗部提亮，极暗区域也能显色
+        return black_shirt_print_optimize(design)
 
     arr = np.array(design).astype(np.float32)
     alpha = arr[:, :, 3]

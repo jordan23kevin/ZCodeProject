@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.5.0] - 2026-07-12
+
+### Added
+- **原样保色贴图模式**（`--preserve-color`）：只做几何扭曲（displacement + 遮罩裁剪），完全不改颜色/亮度/饱和度。自动关闭反色/显色（prepare_method=none）、阴影正片叠底（shadow=0）、高光叠加（highlight=0）、降饱和（sat=1.0）、降亮度（bri=1.0）、边缘模糊（realism=False），混合模式 normal。褶皱立体感仅由 displacement 位移扭曲体现。
+- `enhance_dark_print_for_black_shirt()`（dark_boost）：黑衫智能显色算法。仅提亮暗部保留原色、保护亮部(>140)，模拟 DTG 白墨打底效果。默认 prepare_method。
+
+### Fixed
+- **cli.py 保色模式参数传递 bug**：`apply_mockup_transform()` / `apply_mockup()` 调用处使用 `args.shadow_opacity`/`args.highlight_opacity` 而非本地重写变量，导致 `--preserve-color` 模式下 shadow/highlight=0 不生效（bridge 写死的 0.35/0.25 照旧压暗）。
+- **cli.py 缺失 saturation/brightness 参数传递**：`--preserve-color` 设置的 sat=1.0/bri=1.0 未传给渲染函数。
+- **cli.py realism 在保色模式下仍生效**：保色模式应连边缘模糊也跳过。
+- **`transfer_shadow_highlight()` shadow 归一化**：shadow 从全局暗度改为"相对褶皱阴影"（p85 基准，SHADOW_FLOOR=0.55），不再整体压暗印花。
+- **`apply_realism()` 预乘 alpha 感知高斯模糊**：修复白字边缘锯齿，默认 blur_radius=0.4。
+
+### Changed
+- 生产默认 shadow_opacity / highlight_opacity：0.35/0.25 → **0.22/0.22**（cli.py + core.py + bridge 同步）。
+- `apply_realism()` 默认 saturation=0.97, brightness=1.0, blur_radius=0.4（原来降亮度过大）。
+- 诊断方法论：测量印花亮度必须用设计图自身 alpha 锁定白字核心像素（基线 #f9），不能用整图 lum≥阈值（会混入衬衫白背景/灰褶皱，产生雷同假象）。
+
+### Notes
+- **重要：两条渲染链** — ① `lovart_bridge.py /api/mockup`（手动贴图，hardcode --shadow/--highlight）；② `check_rem.py → w_mockup_extra.py`（自动贴图，用 presets.json）。改参数需两处同步。
+- **w_mockup_extra.py 黑衫贴图**：从 `--blend-mode screen`（仅改混合，无 dark_boost）→ `--preserve-color`（原样保色，几何变形 only）。
+- 回滚锚点：`v1.4.1`。
+
 ## [1.4.1] - 2026-07-10
 
 ### Fixed

@@ -106,3 +106,65 @@ result = base * blend / 255
 | `apply_mockup()` | 旧版高层封装 |
 | `apply_mockup_transform()` | 新版高层封装 |
 | `prepare_design_for_shirt()` | 根据目标 T 恤颜色预处理设计图：亮度反相、剪影或不做处理 |
+
+## 两条贴图渲染链（v1.5.0）
+
+贴图成品有两条入口，改动参数时需同步：
+
+### ① 手动贴图（lovart_bridge `/api/mockup`）
+
+```
+前端点击"贴图"
+  → lovart_bridge.py api_mockup() (POST /api/mockup)
+  → _run_white_t_mockup()
+  → subprocess: python -m white_t_mockup
+    参数: --template <胚衣> --final-w/h --rotate --effective-top-y/center-x
+           --disp-strength 12 --shadow-opacity 0.22 --highlight-opacity 0.22
+           --for-black-shirt / --for-white-shirt
+           [--preserve-color] [--occluder]
+```
+
+### ② 自动贴图（check_rem → w_mockup_extra）
+
+```
+check_rem.py 点击"贴图"
+  → _ps_sticker() → _run_sticker_task() → _run_one_sticker()
+  → 判定: 单面款(W-only/B-only) → w_mockup_extra.generate_single_side_mockup()
+  → subprocess: python -m white_t_mockup
+    参数: --preset <胚衣> [--preserve-color(黑衫)]
+```
+
+### 共享渲染核心（core.py）
+
+```
+prepare_design_for_shirt()  → 反色/显色/原样 (dark_boost/value_invert/none)
+apply_transform()           → 缩放+旋转+定位
+apply_displacement()        → 褶皱位移扭曲 (disp.png)
+apply_occlusion_alpha()     → 褶皱折入隐藏 (occlusion.png)
+apply_realism()             → 降饱和/降亮度/边缘模糊 (保色模式跳过)
+paste_with_blend()          → 混合贴图 (normal/multiply/screen)
+transfer_shadow_highlight() → 阴影Multiply/高光Overlay (限印花∩衣服)
+overlay_texture()           → 布纹透出 (保色模式跳过)
+_paste_occluder_top()       → 顶层遮挡物
+```
+
+## 保色模式（--preserve-color）
+
+仅做几何变形（遮罩裁剪 + displacement 位移扭曲），完全不碰颜色：
+
+| 参数 | 默认 | 保色模式 |
+|------|------|---------|
+| prepare_method | dark_boost | none |
+| saturation | 0.97 | 1.0 |
+| brightness | 1.0 | 1.0 |
+| shadow_opacity | 0.22 | 0.0 |
+| highlight_opacity | 0.22 | 0.0 |
+| realism | True | False |
+| blend_mode | (按衫色) | normal |
+
+### 排查方法论
+
+1. **确定渲染链**：单面款→check_rem→w_mockup_extra；多面款→check_rem→PS脚本；手动→bridge /api/mockup
+2. **测量亮度**：必须用设计图自身 alpha 锁定印花核心像素，不能用整图阈值（会混入衬衫白背景产生假象）
+3. **模板差异**：不同胚衣模板（如黑W1模特图 vs 黑W11平铺）背景亮度差异极大，会干扰整体亮度判断
+4. **暗像素消失**：设计图近黑(L<30)像素在黑衫上物理不可见，需 dark_boost 或白底(underbase)

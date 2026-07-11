@@ -111,21 +111,21 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--prepare-method",
-        choices=["value_invert", "silhouette", "none"],
-        default="value_invert",
-        help="预处理方法（默认: value_invert）",
+        choices=["value_invert", "silhouette", "none", "dark_boost", "white_underbase"],
+        default="white_underbase",
+        help="预处理方法（默认: white_underbase 黑衫白墨打底显色；dark_boost 仅提亮；value_invert/silhouette 为旧反相逻辑）",
     )
     shirt_group = parser.add_mutually_exclusive_group()
     shirt_group.add_argument(
         "--shirt-color",
         choices=["black", "white"],
         default=None,
-        help="目标 T 恤颜色，启用预处理（反黑/反白）",
+        help="目标 T 恤颜色，启用预处理（黑衫优化/反白）",
     )
     shirt_group.add_argument(
         "--for-black-shirt",
         action="store_true",
-        help="快捷开关：等价于 --shirt-color black --prepare-method value_invert",
+        help="快捷开关：等价于 --shirt-color black --prepare-method white_underbase（黑衫白墨打底显色）",
     )
     shirt_group.add_argument(
         "--for-white-shirt",
@@ -145,10 +145,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="关闭真实感处理（降饱和/亮度/模糊 + 布纹透出），用于对比原效果",
     )
     parser.add_argument(
+        "--preserve-color",
+        action="store_true",
+        help="原样保色贴图：只做几何(遮罩裁剪+褶皱扭曲)，完全不改颜色/亮度"
+             "（自动关反色/显色、阴影正片叠底、高光叠加、降饱和，饱和/亮度=1.0，普通混合）。"
+             "褶皱立体感仅由 displacement 位移扭曲体现，与衣服无色差。",
+    )
+    parser.add_argument(
         "--blur",
         type=float,
-        default=0.5,
-        help="印花边缘高斯模糊半径 px（默认 0.5，0 关闭）",
+        default=0.4,
+        help="印花边缘高斯模糊半径 px（默认 0.4，预乘alpha感知，0 关闭）",
     )
     parser.add_argument(
         "--texture-opacity",
@@ -171,14 +178,26 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--shadow-opacity",
         type=float,
-        default=0.35,
-        help="阴影转移(Multiply)透明度（默认 0.35，黑T主力）",
+        default=0.22,
+        help="阴影转移(Multiply)透明度（默认 0.22，已归一化为相对褶皱阴影，不再整体压暗印花）",
     )
     parser.add_argument(
         "--highlight-opacity",
         type=float,
-        default=0.25,
-        help="高光转移(Overlay)透明度（默认 0.25）",
+        default=0.22,
+        help="高光转移(Overlay)透明度（默认 0.22）",
+    )
+    parser.add_argument(
+        "--occlusion-strength",
+        type=float,
+        default=1.0,
+        help="褶皱折入隐藏强度（读 _tpl/occlusion.png，1.0=完全按遮挡隐藏，0=关闭）",
+    )
+    # ---- 顶层遮挡物（胚衣遮罩 *_occluder.png）：贴图被前景遮挡物盖住，更真实 ----
+    parser.add_argument(
+        "--occluder",
+        default=None,
+        help="顶层遮挡物 PNG（如 *_occluder.png）：贴图会被遮挡物盖住，模拟真实前后景关系",
     )
     return parser
 
@@ -230,14 +249,30 @@ def main() -> None:
 
     if args.for_black_shirt:
         shirt_color = "black"
-        prepare_method = "value_invert"
+        prepare_method = "white_underbase"
     elif args.for_white_shirt:
         shirt_color = "white"
         prepare_method = "value_invert"
 
-    # 混合模式：显式 --blend-mode > 按衫色默认（黑T screen / 白T multiply）> preset 默认
+    # 真实感颜色参数（默认与 core 一致：微降饱和 0.97、亮度 1.0）
+    saturation = 0.97
+    brightness = 1.0
+    shadow_opacity = args.shadow_opacity
+    highlight_opacity = args.highlight_opacity
+
+    # ---- 原样保色模式：只做几何，颜色/亮度完全不变 ----
+    if args.preserve_color:
+        prepare_method = "none"      # 不反色、不显色，保留原始 RGB
+        saturation = 1.0             # 不降饱和
+        brightness = 1.0             # 不改亮度
+        shadow_opacity = 0.0         # 关阴影正片叠底（不压暗）
+        highlight_opacity = 0.0      # 关高光叠加（不提亮）
+
+    # 混合模式：显式 --blend-mode > 保色(normal) > 按衫色默认（黑T screen / 白T multiply）> preset 默认
     if args.blend_mode:
         blend_mode = args.blend_mode
+    elif args.preserve_color:
+        blend_mode = "normal"        # 普通叠加，原色贴上，无色差
     elif shirt_color == "black":
         blend_mode = "normal"
     elif shirt_color == "white":
@@ -275,23 +310,29 @@ def main() -> None:
             quality=quality,
             shirt_color=shirt_color,
             prepare_method=prepare_method,
-            realism=not args.no_realism,
+            realism=not args.no_realism and not args.preserve_color,
             blur_radius=args.blur,
             texture_opacity=args.texture_opacity,
             tpl_dir=tpl_dir,
             disp_strength=args.disp_strength,
-            shadow_opacity=args.shadow_opacity,
-            highlight_opacity=args.highlight_opacity,
+            saturation=saturation,
+            brightness=brightness,
+            shadow_opacity=shadow_opacity,
+            highlight_opacity=highlight_opacity,
+            occluder=args.occluder,
+            occlusion_strength=args.occlusion_strength,
         )
+        mode_tag = " [保色]" if args.preserve_color else ""
         print(
-            f"已保存: {args.output}  尺寸: {result['output_size']}  混合模式: {result['blend_mode']}"
+            f"已保存: {args.output}  尺寸: {result['output_size']}  混合模式: {result['blend_mode']}{mode_tag}"
         )
         print(
             f"模板: {Path(template_path).name}  最终像素={result['final_w']}x{result['final_h']}, 旋转={result['rotation_degrees']}°, "
             f"有效像素最高点 y={result['effective_top']}, 中心 x={result['effective_center_x']}"
         )
         if result.get("template_pipeline"):
-            print(f"模板管线: displacement + shadow/highlight  (tpl_dir={tpl_dir})")
+            _occ = " + occlusion(褶皱隐藏)" if result.get("occlusion_applied") else ""
+            print(f"模板管线: displacement + shadow/highlight{_occ}  (tpl_dir={tpl_dir})")
     else:
         top = args.top_y if args.top_y is not None else params.get("top_y", DEFAULT_TOP_Y)
         center = args.center_x if args.center_x is not None else params.get("center_x", DEFAULT_CENTER_X)
@@ -314,11 +355,14 @@ def main() -> None:
             prepare_method=prepare_method,
             tpl_dir=tpl_dir,
             disp_strength=args.disp_strength,
-            shadow_opacity=args.shadow_opacity,
-            highlight_opacity=args.highlight_opacity,
+            shadow_opacity=shadow_opacity,
+            highlight_opacity=highlight_opacity,
+            occluder=args.occluder,
+            occlusion_strength=args.occlusion_strength,
         )
+        mode_tag = " [保色]" if args.preserve_color else ""
         print(
-            f"已保存: {args.output}  尺寸: {result['output_size']}  混合模式: {result['blend_mode']}"
+            f"已保存: {args.output}  尺寸: {result['output_size']}  混合模式: {result['blend_mode']}{mode_tag}"
         )
         print(
             f"模板: {Path(template_path).name}  大小={result['design_size']}, "
@@ -326,7 +370,8 @@ def main() -> None:
             f"中心={result['design_center']}"
         )
         if result.get("template_pipeline"):
-            print(f"模板管线: displacement + shadow/highlight  (tpl_dir={tpl_dir})")
+            _occ = " + occlusion(褶皱隐藏)" if result.get("occlusion_applied") else ""
+            print(f"模板管线: displacement + shadow/highlight{_occ}  (tpl_dir={tpl_dir})")
 
 
 if __name__ == "__main__":
