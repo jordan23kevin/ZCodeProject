@@ -1202,7 +1202,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/refresh-thumb":
             self._refresh_thumb(dx, stem)
         elif path == "/rename":
-            self._rename_stem(dx, stem)
+            target = qs.get("target", [""])[0]
+            self._rename_stem(dx, stem, target)
         elif path == "/repair-names":
             self._repair_names()
         elif path == "/refresh":
@@ -1352,9 +1353,20 @@ class Handler(BaseHTTPRequestHandler):
                     if not pr:
                         return ""
                     gid = pr.get("group_id", "")
-                    return f'''<div class="bw-half" data-group-id="{gid}" data-ai-uid="{pr.get("ai_uid") or ""}" data-rem-uid="{pr.get("rem_uid") or ""}" data-stem="{pr["stem"]}">
-                        <div class="stem"><span class="badge {badge_class}">{badge_text}</span>
-                            <button class="ren-btn" onclick="event.stopPropagation();renameStem('{dx}','{pr["stem"]}')" title="改为BW合并图">↗BW</button></div>
+                    stem = pr["stem"]
+                    if stem.endswith("_B"):
+                        opts = [("W", "→ W"), ("BW", "→ BW")]
+                    elif stem.endswith("_W"):
+                        opts = [("B", "→ B"), ("BW", "→ BW")]
+                    elif stem.endswith("_BW"):
+                        opts = [("B", "→ B"), ("W", "→ W")]
+                    else:
+                        opts = []
+                    opt_html = "".join(f'<option value="{k}">{v}</option>' for k, v in opts)
+                    rename_sel = f'''<select class="ren-sel" onchange="event.stopPropagation(); if(this.value){{renameStem('{dx}','{stem}',this.value);}} this.selectedIndex=0;" title="改名为...">
+                        <option value="" selected>改名...</option>{opt_html}</select>''' if opts else ""
+                    return f'''<div class="bw-half" data-group-id="{gid}" data-ai-uid="{pr.get("ai_uid") or ""}" data-rem-uid="{pr.get("rem_uid") or ""}" data-stem="{stem}">
+                        <div class="stem"><span class="badge {badge_class}">{badge_text}</span>{rename_sel}</div>
                         {_render_cells(dx, pr)}
                     </div>'''
 
@@ -1476,6 +1488,9 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .ren-btn {{ display:inline; font-size:12px; padding:1px 5px; margin-left:3px; border-radius:2px;
            background:#4caf50; color:#fff; border:none; cursor:pointer; vertical-align:middle; }}
 .ren-btn:hover {{ background:#388e3c; }}
+.ren-sel {{ display:inline; font-size:12px; padding:1px 3px; margin-left:3px; border-radius:2px;
+            background:#4caf50; color:#fff; border:none; cursor:pointer; vertical-align:middle; }}
+.ren-sel option {{ background:#fff; color:#333; }}
 .cell.deleted {{ opacity:.3; }}
 .empty {{ text-align:center; color:#888; margin-top:40px; font-size:16px; }}
 .toast {{ position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#333; color:#fff;
@@ -1487,7 +1502,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             background:#00b300; }}
 .preview img {{ display:block; max-width:900px; max-height:90vh; object-fit:contain; }}
 /* pipeline status */
-.pipeline {{ display:flex; align-items:center; gap:5px; font-size:12px; margin-left:6px; }}
+.pipeline {{ display:none; align-items:center; gap:5px; font-size:12px; margin-left:6px; }}
 .pipe {{ display:inline-flex; align-items:center; gap:2px; padding:2px 6px; border-radius:3px; font-weight:600; }}
 .pipe-ok {{ background:#0d4420; color:#7ee787; }}
 .pipe-miss {{ background:#4d1a1a; color:#f87171; }}
@@ -2258,14 +2273,19 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         else:
             self._send_json({"ok": False, "found": False, "msg": f"刷新失败：{cut_name} 无法读取"})
 
-    # 改名：B/W → BW（如 DX0264_B → DX0264_BW，对应 _cut 也改名）
-    def _rename_stem(self, dx, stem):
+    # 改名：_B / _W / _BW 互转（如 DX0264_B → DX0264_W / DX0264_BW）
+    def _rename_stem(self, dx, stem, target):
         if not re.match(r"^DX\d+$", dx) or not stem or "/" in stem or "\\" in stem:
             self._send_json({"ok": False, "msg": "参数非法"}); return
-        if not (stem.endswith("_B") or stem.endswith("_W")):
-            self._send_json({"ok": False, "msg": "只有B/W可以改为BW"}); return
-        prefix = stem[:-2]  # DX0264
-        new_stem = prefix + "_BW"
+        source = stem[-2:] if stem.endswith(("_B", "_W")) else (stem[-3:] if stem.endswith("_BW") else "")
+        if source not in ("_B", "_W", "_BW"):
+            self._send_json({"ok": False, "msg": "源文件名后缀必须是 _B/_W/_BW"}); return
+        if target not in ("B", "W", "BW"):
+            self._send_json({"ok": False, "msg": "目标必须是 B/W/BW"}); return
+        if source == "_" + target:
+            self._send_json({"ok": False, "msg": "源和目标相同"}); return
+        prefix = stem[:-len(source)]  # DX0264
+        new_stem = prefix + "_" + target
         ai_new = new_stem + ".png"
         rem_new = new_stem + "_cut.png"
         errors = []

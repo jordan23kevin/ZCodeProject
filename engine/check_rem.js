@@ -74,10 +74,11 @@ function copyMissing(){
   if(!miss.length){showToast('当前页面没有缺图款'); return;}
   navigator.clipboard.writeText(miss.join(',')).then(()=>{showToast('已复制 '+miss.length+' 个缺图款: '+miss.join(','));}).catch(()=>{showToast('复制失败');});
 }
-function renameStem(dx,stem){
-  var msg='将 '+dx+'/'+stem+' 改为BW？\n文件: '+stem+'.png → '+stem.slice(0,-2)+'_BW.png\n去背: '+stem+'_cut.png → '+stem.slice(0,-2)+'_BW_cut.png';
+function renameStem(dx,stem,target){
+  var newStem = stem.slice(0, stem.lastIndexOf('_')+1) + target;
+  var msg='将 '+dx+'/'+stem+' 改为 '+newStem+'？\n文件: '+stem+'.png → '+newStem+'.png\n去背: '+stem+'_cut.png → '+newStem+'_cut.png';
   if(!confirm(msg))return;
-  fetch('/rename?dx='+dx+'&stem='+encodeURIComponent(stem)).then(r=>r.json()).then(d=>{showToast(d.msg);if(d.ok) setTimeout(function(){ location.reload(); },1500);});
+  fetch('/rename?dx='+dx+'&stem='+encodeURIComponent(stem)+'&target='+encodeURIComponent(target)).then(r=>r.json()).then(d=>{showToast(d.msg);if(d.ok) setTimeout(function(){ location.reload(); },1500);});
 }
 function delImg(dx,which,file,cellId){
   if(!confirm('删除 '+dx+'/'+which+'/'+file+' ？（送回收站，可撤销）'))return;

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.4.1
+Y2 Bridge Server v2.4.2
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
@@ -244,6 +244,7 @@ from urllib.error import URLError
 from ctypes import wintypes
 from pathlib import Path
 from datetime import datetime
+import urllib.parse
 
 try:
     from flask import Flask, jsonify, request, send_file, abort, make_response
@@ -304,6 +305,81 @@ RETAIL_PRICE_SCRIPT = RETAIL_PRICE_DIR / "建议零售价.js"
 ACTIVITY_DIR        = 'E:/Claude code/Temu自动化/报活动'
 ACTIVITY_ENTRYPOINT = ACTIVITY_DIR + '/entrypoint/run.py'
 ACTIVITY_STATE_FILE = ACTIVITY_DIR + '/state/state.json'
+
+# ============================================================================
+# 胚衣制作（素材库）路径
+# ============================================================================
+MATERIAL_DIR   = BASE_DIR / "03_MATERIAL"
+# 四大分类：白(W正/B背) / 黑(W正/B背)
+PEIYI_CATEGORIES = {
+    "W白": MATERIAL_DIR / "W白",
+    "B白": MATERIAL_DIR / "B白",
+    "W黑": MATERIAL_DIR / "W黑",
+    "B黑": MATERIAL_DIR / "B黑",
+}
+# 各分类底色（JPG 输出）：白胚衣用白底、黑胚衣用黑底
+PEIYI_BG = {
+    "W白": (255, 255, 255),
+    "B白": (255, 255, 255),
+    "W黑": (0, 0, 0),
+    "B黑": (0, 0, 0),
+}
+PEIYI_SIZE = (1340, 1785)   # 目标分辨率
+PEIYI_DPI  = (72, 72)       # 目标 DPI
+PEIYI_ALLOWED_EXT = ('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff')
+# 遮罩功能生成的侧车文件后缀：这些不显示在素材库画廊，只在“预览遮罩”时单独查看
+PEIYI_MASK_SUFFIXES = (
+    '_occluder.png', '_occluder_mask.png', '_body_mask.png',
+    '_parse.png', '_alpha.png',
+)
+# 每张素材侧车(.meta.json)记录的5个贴图参数，与 胚衣参数表_模板.csv 第5-9列一致
+PEIYI_META_FIELDS = [
+    ("width", "缩放后宽(px)", 0),
+    ("height", "缩放后高(px)", 0),
+    ("rotation", "旋转角度(负=逆/正=顺)", 0),
+    ("highest_y", "最高像素点y", 0),
+    ("center_x", "中心点x", 670),   # 670 = 1340 画布宽中点
+]
+PEIYI_META_KEYS = [k for k, _, _ in PEIYI_META_FIELDS]
+
+# 贴图（AI 去背贴图）相关常量
+TPL_ROOT = Path(r"D:\Semems\1胚衣\_tpl")          # _tpl/<款名>/ 扭曲素材根
+CSV_PATH = Path(r"E:\Kimi Code\docs\胚衣参数表_模板.csv")
+MOCKUP_PY = Path(r"C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe")
+MOCKUP_ROOT = Path(r"E:/Kimi Code")              # white_t_mockup 所在目录（运行 -m white_t_mockup）
+PY_PACKAGES = "E:/python_packages"
+MOCKUP_OUT = BASE_DIR / "03_MOCKUP_OUT"          # 贴图成品输出
+ZCODE_PROJECT = Path(__file__).resolve().parent  # 本文件所在目录（peiyi_mask / tpl_generator 在此）
+
+
+def _single_thread_env(base_env):
+    """准备子进程环境：禁用 OpenMP/MKL 多线程，并清理无效 PATH 项（如 cv2 留下的裸驱动器号）。"""
+    env = dict(base_env)
+    # cv2 初始化会往 PATH 追加形如 "E;" 的裸驱动器号，导致子进程 Python 找不到 DLL 而静默退出
+    raw_path = env.get("PATH", "")
+    cleaned = []
+    for p in raw_path.split(os.pathsep):
+        p = p.strip()
+        if not p:
+            continue
+        # 丢弃纯驱动器号项（如 "E" 或 "E:"）
+        if len(p.rstrip(":")) == 1 and p[0].isalpha():
+            continue
+        cleaned.append(p)
+    env["PATH"] = os.pathsep.join(cleaned)
+    env.update({
+        "OMP_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "VECLIB_MAXIMUM_THREADS": "1",
+        "NUMEXPR_NUM_THREADS": "1",
+        # 彻底关闭 cv2 内部多线程：后台/服务进程里 cv2 的 warp/remap 等多线程操作
+        # 偶发段错误（静默 rc!=0、无输出），关闭后所有 cv2 子进程稳定
+        "OPENCV_DISABLE_THREADING": "1",
+    })
+    return env
+MOCKUP_OUT.mkdir(parents=True, exist_ok=True)
+
 
 # ============================================================================
 # 工具函数：处理 Lovart 去重记录
@@ -3989,6 +4065,757 @@ def api_retail_price_signal():
         return jsonify({"ok": True, "msg": "已发送'好了'信号"})
     except Exception as e:
         return jsonify({"error": f"创建信号文件失败: {e}"}), 500
+
+
+# ============================================================================
+# 胚衣制作（素材库）
+# ============================================================================
+
+@app.route('/peiyi')
+def peiyi_page():
+    """胚衣制作页面：分类上传素材，自动处理为 1340×1785 @ 72DPI。"""
+    return send_file(str(Path(__file__).parent / 'peiyi.html'))
+
+
+def _peiyi_max_index(dest_dir, prefix: str) -> int:
+    """返回该分类文件夹中已存在的最大序号（黑W12.jpg -> 12），用于按进入顺序命名。"""
+    max_idx = 0
+    plen = len(prefix)
+    if dest_dir.exists():
+        for fn in os.listdir(dest_dir):
+            low = fn.lower()
+            if low.endswith('.jpg') and low.startswith(prefix.lower()):
+                num_part = fn[plen:-4]
+                if num_part.isdigit():
+                    max_idx = max(max_idx, int(num_part))
+    return max_idx
+
+
+def _peiyi_process_image(src_path: str, category: str, dest_path: str):
+    """读取源图，强制拉伸到 1340×1785，合成底色，以 72 DPI 存为 JPG。"""
+    from PIL import Image, ImageOps
+    bg = PEIYI_BG.get(category, (255, 255, 255))
+    with Image.open(src_path) as im:
+        try:
+            im = ImageOps.exif_transpose(im)
+        except Exception:
+            pass
+        if im.mode in ('RGBA', 'LA') or (im.mode == 'P' and 'transparency' in im.info):
+            base = Image.new('RGB', im.size, bg)
+            if im.mode == 'P':
+                im = im.convert('RGBA')
+            base.paste(im, (0, 0), im)
+            im = base
+        else:
+            im = im.convert('RGB')
+        # 强制拉伸铺满目标尺寸（用户确认：允许变形）
+        im = im.resize(PEIYI_SIZE, Image.LANCZOS)
+        im.save(dest_path, 'JPEG', dpi=PEIYI_DPI, quality=92)
+
+
+@app.route('/api/peiyi/upload', methods=['POST'])
+def api_peiyi_upload():
+    """批量上传素材：按 category 自动处理并存入对应文件夹。"""
+    category = request.form.get('category', '')
+    if category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': f'未知分类: {category}'}), 400
+    files = request.files.getlist('files')
+    if not files:
+        return jsonify({'ok': False, 'error': '未收到文件'}), 400
+
+    dest_dir = PEIYI_CATEGORIES[category]
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    # 按进入顺序命名：颜色 + 面 + 序号（黑W1, 黑W2 ...；白B1 ...）
+    prefix = (category[1] if len(category) > 1 else '') + category[0]
+    next_idx = _peiyi_max_index(dest_dir, prefix) + 1
+
+    results = []
+    ok_count = 0
+    for f in files:
+        orig = f.filename or 'material'
+        if not orig.lower().endswith(PEIYI_ALLOWED_EXT):
+            results.append({'file': orig, 'ok': False, 'error': '不支持的图片格式'})
+            continue
+        tmp = dest_dir / (f'_tmp_{datetime.now().strftime("%H%M%S%f")}_{os.path.splitext(orig)[1]}')
+        f.save(str(tmp))
+        try:
+            out_name = f'{prefix}{next_idx}.jpg'
+            next_idx += 1
+            out_path = dest_dir / out_name
+            # 保险：序号理论上递增不会撞，仍做兜底顺延
+            while out_path.exists():
+                out_name = f'{prefix}{next_idx}.jpg'
+                next_idx += 1
+                out_path = dest_dir / out_name
+            _peiyi_process_image(str(tmp), category, str(out_path))
+            results.append({'file': orig, 'ok': True, 'saved': out_path.name})
+            ok_count += 1
+        except Exception as e:
+            results.append({'file': orig, 'ok': False, 'error': str(e)})
+        finally:
+            try:
+                os.remove(str(tmp))
+            except OSError:
+                pass
+
+    return jsonify({'ok': True, 'category': category, 'saved': ok_count, 'results': results})
+
+
+def _peiyi_read_meta(dest_dir, name):
+    """读取与图片同名的 .meta.json 侧车，返回5个参数字典；不存在/损坏返回 None。"""
+    stem, _ = os.path.splitext(name)
+    mp = dest_dir / (stem + '.meta.json')
+    if not mp.exists():
+        return None
+    try:
+        data = json.loads(mp.read_text(encoding='utf-8'))
+        return {k: data.get(k) for k in PEIYI_META_KEYS}
+    except Exception:
+        return None
+
+
+@app.route('/api/peiyi/list')
+def api_peiyi_list():
+    """列出各分类已存素材（用于画廊预览），含每张图的贴图参数 meta。"""
+    category = request.args.get('category', '')
+    if category and category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    cats = [category] if category else list(PEIYI_CATEGORIES.keys())
+    out = {}
+    for c in cats:
+        d = PEIYI_CATEGORIES[c]
+        items = []
+        if d.exists():
+            for fn in os.listdir(d):
+                # 只把“原图”纳入画廊：① 允许的图像格式；② 非临时文件；③ 非遮罩侧车
+                lfn = fn.lower()
+                ext = os.path.splitext(lfn)[1]
+                if ext not in PEIYI_ALLOWED_EXT:
+                    continue
+                if fn.startswith('_tmp_'):
+                    continue
+                if any(lfn.endswith(s) for s in PEIYI_MASK_SUFFIXES):
+                    continue
+                fp = d / fn
+                try:
+                    st = fp.stat()
+                    meta = _peiyi_read_meta(d, fn)
+                    unfilled = (meta is None)   # 尚未填写五项数据
+                    if unfilled:
+                        meta = {k: default for k, _, default in PEIYI_META_FIELDS}
+                    # 遮罩状态（body_mask / occluder_mask / occluder / parse）
+                    stem, _ = os.path.splitext(fn)
+                    occ_mask_path = d / (stem + '_occluder_mask.png')
+                    occ_path = d / (stem + '_occluder.png')
+                    occ_px = None
+                    has_mask = False
+                    if occ_mask_path.exists():
+                        has_mask = True
+                        try:
+                            occ_arr = np.array(Image.open(str(occ_mask_path)))
+                            occ_px = int((occ_arr > 0).sum())
+                        except Exception:
+                            occ_px = None
+                    elif occ_path.exists():
+                        has_mask = True
+                    mask_urls = {}
+                    for suffix, key in [
+                        ('_occluder.png', 'occluder'),
+                        ('_occluder_mask.png', 'occluder_mask'),
+                        ('_body_mask.png', 'body_mask'),
+                        ('_parse.png', 'parse'),
+                    ]:
+                        mp = d / (stem + suffix)
+                        if mp.exists():
+                            mask_urls[key] = f'/api/peiyi/material/{urllib.parse.quote(c)}/{urllib.parse.quote(mp.name)}'
+                    items.append({
+                        'name': fn,
+                        'size': st.st_size,
+                        # URL 编码文件名/分类，避免中文路径导致浏览器无法加载图片
+                        'url': f'/api/peiyi/material/{urllib.parse.quote(c)}/{urllib.parse.quote(fn)}',
+                        'modified': datetime.fromtimestamp(st.st_mtime).isoformat(),
+                        'meta': meta,
+                        'unfilled': unfilled,
+                        'has_mask': has_mask,
+                        'occluder_px': occ_px,
+                        'mask_urls': mask_urls,
+                        '_mtime': st.st_mtime,
+                    })
+                except OSError:
+                    pass
+            # 排序：① 未填写五项数据的排最前；② 同组内按修改时间倒序（后进入排前面）
+            items.sort(key=lambda e: (0 if e['unfilled'] else 1, -e['_mtime']))
+            for e in items:
+                e.pop('_mtime', None)
+        out[c] = items
+    return jsonify({'ok': True, 'categories': out})
+
+
+@app.route('/api/peiyi/material/<category>/<path:filename>')
+def api_peiyi_material(category, filename):
+    """返回已存素材（原图 / 遮罩侧车）。
+
+    遮罩文件会被“重新生成遮罩”覆盖更新，因此此处禁用浏览器缓存
+    （Cache-Control: no-store, no-cache），确保预览/画廊实时反映最新内容；
+    并按真实扩展名返回正确 MIME（PNG 遮罩不再被当成 JPEG，避免渲染异常）。
+    """
+    if category not in PEIYI_CATEGORIES:
+        abort(404)
+    safe = os.path.basename(filename)
+    fp = PEIYI_CATEGORIES[category] / safe
+    if not fp.exists():
+        abort(404)
+    ext = os.path.splitext(safe)[1].lower().lstrip('.')
+    mime_map = {'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+                'png': 'image/png', 'webp': 'image/webp', 'bmp': 'image/bmp'}
+    mime = mime_map.get(ext, 'image/jpeg')
+    resp = send_file(str(fp), mimetype=mime, max_age=0)
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+
+def _explorer_select_file(path):
+    """在资源管理器中打开 path 所在文件夹并【选中】该文件（Windows 最可靠方式）。
+
+    为什么不用 explorer /select,：该命令对带空格/中文的路径解析极不稳定，
+    一旦解析失败就会回退到“文档库”。这里改用系统底层
+    SHOpenFolderAndSelectItems（专业软件通用做法），彻底避开该坑。
+    返回 True 表示已成功触发；全部失败时返回 False。
+    """
+    import os
+    import ctypes
+    from ctypes import wintypes, POINTER, byref, c_void_p, c_uint
+    path = os.path.normpath(str(path))
+    folder = os.path.dirname(path)
+    # 方法1：ctypes 调用 Shell 接口精准选中文件（无空格/中文坑）
+    try:
+        shell32 = ctypes.windll.shell32
+        ole32 = ctypes.windll.ole32
+        # 必须先初始化 COM（STA），否则 Shell 接口会报“尚未调用 CoInitialize”
+        init_hr = ole32.CoInitialize(None)
+        try:
+            shell32.SHParseDisplayName.argtypes = [
+                wintypes.LPCWSTR, c_void_p, POINTER(c_void_p), c_uint, POINTER(c_uint)
+            ]
+            shell32.SHParseDisplayName.restype = ctypes.HRESULT
+            shell32.SHOpenFolderAndSelectItems.argtypes = [
+                c_void_p, c_uint, POINTER(c_void_p), c_uint
+            ]
+            shell32.SHOpenFolderAndSelectItems.restype = ctypes.HRESULT
+            pidl = c_void_p()
+            attrs = c_uint()
+            hr = shell32.SHParseDisplayName(path, None, byref(pidl), 0, byref(attrs))
+            if hr == 0 and pidl:
+                try:
+                    shell32.SHOpenFolderAndSelectItems(pidl, 0, None, 0)
+                    return True
+                finally:
+                    ole32.CoTaskMemFree(pidl)
+        finally:
+            # 仅有本函数成功初始化时才反初始化，避免误关别的模块已初始化的 COM
+            if init_hr == 0:
+                ole32.CoUninitialize()
+    except Exception:
+        pass
+    # 方法2：兜底 explorer /select,（带引号，正确处理空格/中文）
+    try:
+        subprocess.Popen(f'explorer.exe /select,"{path}"', shell=True)
+        return True
+    except Exception:
+        pass
+    # 方法3：兜底只打开正确文件夹（至少不会跑到“文档”）
+    try:
+        os.startfile(folder)
+        return True
+    except Exception:
+        pass
+    try:
+        subprocess.Popen(f'explorer.exe "{folder}"', shell=True)
+        return True
+    except Exception:
+        return False
+
+
+@app.route('/api/peiyi/open', methods=['POST'])
+def api_peiyi_open():
+    """在文件资源管理器中打开该素材所在文件夹并选中该文件（仅本机/localhost 生效）。"""
+    data = request.get_json(silent=True) or {}
+    category = data.get('category', '')
+    name = data.get('name', '')
+    if category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    safe = os.path.basename(name)
+    fp = PEIYI_CATEGORIES[category] / safe
+    if not fp.exists():
+        return jsonify({'ok': False, 'error': '文件不存在'}), 404
+    try:
+        ok = _explorer_select_file(str(fp))
+        return jsonify({'ok': ok, 'path': str(fp)})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/peiyi/delete', methods=['POST'])
+def api_peiyi_delete():
+    """删除某个已存素材。"""
+    data = request.get_json(silent=True) or {}
+    category = data.get('category', '')
+    name = data.get('name', '')
+    if category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    safe = os.path.basename(name)
+    fp = PEIYI_CATEGORIES[category] / safe
+    if not fp.exists():
+        return jsonify({'ok': False, 'error': '文件不存在'}), 404
+    try:
+        os.remove(str(fp))
+        # 同时删除该素材的遮罩/参数侧车文件
+        stem, _ = os.path.splitext(safe)
+        for suffix in ['.meta.json', '_occluder.png', '_occluder_mask.png', '_body_mask.png', '_parse.png', '_alpha.png']:
+            try:
+                (fp.parent / (stem + suffix)).unlink(missing_ok=True)
+            except Exception:
+                pass
+        return jsonify({'ok': True, 'msg': f'{safe} 已删除'})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/peiyi/reindex', methods=['POST'])
+def api_peiyi_reindex():
+    """把某分类文件夹内所有图片按进入顺序（修改时间）重新编号为 黑W1, 黑W2 ...。
+    用于手动拖入、尚未按规则命名的图片。两遍重命名避免同名冲突。"""
+    data = request.get_json(silent=True) or {}
+    category = data.get('category', '')
+    if category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    d = PEIYI_CATEGORIES[category]
+    if not d.exists():
+        return jsonify({'ok': True, 'renamed': 0, 'msg': '空文件夹'})
+    prefix = (category[1] if len(category) > 1 else '') + category[0]
+
+    files = [fn for fn in os.listdir(d)
+             if fn.lower().endswith('.jpg') and not fn.startswith('_tmp_')]
+    files.sort(key=lambda fn: os.path.getmtime(str(d / fn)))
+
+    # 第一遍：全部移到临时名，腾出目标名
+    tmp_map = []
+    for i, fn in enumerate(files):
+        tmp = f'_re_{i}_{fn}'
+        os.rename(str(d / fn), str(d / tmp))
+        tmp_map.append((tmp, i + 1))
+    # 第二遍：临时名 -> 黑W1, 黑W2 ...
+    renamed = 0
+    for tmp, idx in tmp_map:
+        new_name = f'{prefix}{idx}.jpg'
+        dest = d / new_name
+        n = idx
+        while dest.exists():
+            n += 1
+            dest = d / f'{prefix}{n}.jpg'
+        os.rename(str(d / tmp), str(dest))
+        renamed += 1
+    return jsonify({'ok': True, 'renamed': renamed, 'prefix': prefix,
+                    'msg': f'已重新编号为 {prefix}1..{prefix}{renamed}'})
+
+
+@app.route('/api/peiyi/meta', methods=['POST'])
+def api_peiyi_meta():
+    """保存单张素材的5个贴图参数到同名 .meta.json 侧车（与 胚衣参数表_模板.csv 第5-9列一致）。"""
+    data = request.get_json(silent=True) or {}
+    category = data.get('category', '')
+    name = data.get('name', '')
+    if category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    safe = os.path.basename(name)
+    d = PEIYI_CATEGORIES[category]
+    if not (d / safe).exists():
+        return jsonify({'ok': False, 'error': '文件不存在'}), 404
+    stem, _ = os.path.splitext(safe)
+    meta = {}
+    for k, _, default in PEIYI_META_FIELDS:
+        v = data.get(k)
+        if v is None or v == '':
+            meta[k] = default
+        else:
+            try:
+                meta[k] = float(v)
+            except (TypeError, ValueError):
+                meta[k] = default
+    (d / (stem + '.meta.json')).write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
+    return jsonify({'ok': True, 'meta': meta})
+
+
+@app.route('/api/peiyi/mask', methods=['POST'])
+def api_peiyi_mask():
+    """为单张胚衣素材生成三层遮罩 + _tpl 扭曲素材。
+
+    返回 JSON 在原有 masks 基础上新增 tpl 字段（_tpl 生成状态）。
+    """
+    data = request.get_json(silent=True) or {}
+    category = data.get('category', '')
+    name = data.get('name', '')
+    if category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    safe = os.path.basename(name)
+    d = PEIYI_CATEGORIES[category]
+    fp = d / safe
+    if not fp.exists():
+        return jsonify({'ok': False, 'error': '文件不存在'}), 404
+    # 隔离到子进程执行（cv2/OpenMP 偶发崩溃会拖垮主服务，故必须隔离）
+    try:
+        MOCKUP_OUT.mkdir(parents=True, exist_ok=True)
+        env = _single_thread_env(os.environ)
+        env["PYTHONPATH"] = f"{ZCODE_PROJECT};{PY_PACKAGES}"
+        out_log = MOCKUP_OUT / "_mask_stdout.log"
+        err_log = MOCKUP_OUT / "_mask_stderr.log"
+        startupinfo = None
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+        with open(out_log, "w", encoding="utf-8", errors="replace") as of, \
+             open(err_log, "w", encoding="utf-8", errors="replace") as ef:
+            r = subprocess.run(
+                [str(MOCKUP_PY), str(ZCODE_PROJECT / "_peiyi_worker.py"), "mask", str(fp), category,
+                 str(out_log) + ".json"],
+                cwd=str(ZCODE_PROJECT), env=env,
+                stdin=subprocess.DEVNULL, stdout=of, stderr=ef,
+                timeout=600,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                startupinfo=startupinfo,
+            )
+        raw = out_log.read_text(encoding="utf-8", errors="replace").strip()
+        err = err_log.read_text(encoding="utf-8", errors="replace").strip()
+        res_path = str(out_log) + ".json"
+        if r.returncode != 0 or not Path(res_path).exists():
+            return jsonify({'ok': False,
+                            'error': f'subprocess rc={r.returncode}: {err[-800:]}',
+                            'trace': raw[-800:]}), 500
+        res = json.loads(Path(res_path).read_text(encoding="utf-8", errors="replace"))
+        return jsonify(res), (200 if res.get('ok') else 500)
+    except Exception as e:
+        import traceback as _tb
+        _tb.print_exc()
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}', 'trace': _tb.format_exc()[-1500:]}), 500
+
+
+# ============================================================================
+# 贴图（AI 去背贴图）：自动按胚衣数据 + 遮罩 + 扭曲精准贴入
+# ============================================================================
+def _resolve_peiyi_embryo(category, name):
+    """素材库图片路径、款名 stem、衫色（按分类名含 黑/白 推断）。"""
+    safe = os.path.basename(name)
+    fp = PEIYI_CATEGORIES[category] / safe
+    stem = fp.stem
+    color = "black" if "黑" in category else "white"
+    return fp, stem, color
+
+
+def _find_category_for_stem(stem):
+    """按款名 stem 在四大分类里反查 category + 文件名。"""
+    for cat, d in PEIYI_CATEGORIES.items():
+        if not d.exists():
+            continue
+        cand = d / f"{stem}.jpg"
+        if cand.exists():
+            return cat, cand.name
+        cand = d / stem
+        if cand.exists():
+            return cat, cand.name
+    return None, None
+
+
+def _load_presets():
+    """同步 CSV→presets.json（若 CSV 更新）并读取 templates。"""
+    try:
+        sys.path.insert(0, str(Path(r"E:/Kimi Code/scripts")))
+        import sync_presets_from_csv
+        sync_presets_from_csv.sync_if_stale()
+    except Exception:
+        pass
+    p = Path(r"E:/Kimi Code/white_t_mockup/presets.json")
+    try:
+        return json.loads(p.read_text(encoding="utf-8")).get("templates", {})
+    except Exception:
+        return {}
+
+
+def _preset_key_for_stem(stem, presets):
+    if stem in presets:
+        return stem
+    for k, v in presets.items():
+        if Path(v.get("path", "")).stem == stem:
+            return k
+    return None
+
+
+def _embryo_fields(category, name, presets):
+    """读取5个贴图字段：素材库 .meta.json 优先，CSV→presets 兜底。
+
+    注意：meta 未填写的字段必须显式视为「缺失」（None），不能用 670 这类
+    魔法默认值占位，否则会挡住 presets 的同名字段（如中心点x）。
+    """
+    meta = _peiyi_read_meta(PEIYI_CATEGORIES[category], name) or {}
+
+    def _num(v):
+        if v is None or v == "":
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    fw = _num(meta.get("width"))
+    fh = _num(meta.get("height"))
+    rot = _num(meta.get("rotation"))
+    ty = _num(meta.get("highest_y"))
+    cx = _num(meta.get("center_x"))
+
+    stem = Path(name).stem
+    pkey = _preset_key_for_stem(stem, presets)
+    p = presets.get(pkey) if pkey else None
+    if p:
+        if fw is None:
+            fw = _num(p.get("final_w"))
+        if fh is None:
+            fh = _num(p.get("final_h"))
+        if rot is None:
+            rot = _num(p.get("rotation_degrees"))
+        if ty is None:
+            ty = _num(p.get("effective_top_y"))
+        if cx is None:
+            cx = _num(p.get("effective_center_x"))
+    # 兜底默认值（仅在所有来源都缺失时）
+    fw = fw or 0.0
+    fh = fh or 0.0
+    rot = rot or 0.0
+    ty = ty or 0.0
+    cx = cx if cx is not None else 670.0
+    return {"final_w": fw, "final_h": fh, "rotation": rot, "top_y": ty, "center_x": cx}
+
+
+def _ensure_tpl(stem, fp):
+    """确保 _tpl/<款名>/ 存在（自动生成扭曲素材）。返回 tpl_dir 或 None。"""
+    tpl_dir = TPL_ROOT / stem
+    if (tpl_dir / "mask.png").exists():
+        return tpl_dir
+    try:
+        import tpl_generator
+        out_dir, cov, hint, src = tpl_generator.generate_tpl_for_material(str(fp), TPL_ROOT)
+        return out_dir
+    except Exception as e:
+        print(f"[贴图] _tpl 生成失败 {stem}: {e}", flush=True)
+        return None
+
+
+def _ensure_occluder(fp, category):
+    """若素材库图片尚未生成 body/occluder 遮罩，则生成（best-effort，超时/失败不阻塞贴图）。"""
+    occ = fp.parent / (fp.stem + "_occluder.png")
+    if occ.exists():
+        return occ
+    try:
+        env = _single_thread_env(os.environ)
+        env["PYTHONPATH"] = f"{ZCODE_PROJECT};{PY_PACKAGES}"
+        code = (
+            "import peiyi_mask,sys\n"
+            "r=peiyi_mask.generate_masks(sys.argv[1], category=sys.argv[2])\n"
+            "print('OK' if r.get('ok') else 'FAIL', str(r.get('error',''))[:200])\n"
+        )
+        r = subprocess.run(
+            [str(MOCKUP_PY), "-c", code, str(fp), category],
+            cwd=str(MOCKUP_ROOT), env=env, capture_output=True, text=True, timeout=600,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        print(f"[贴图] 遮罩生成: {r.stdout.strip()[-200:]} {r.stderr.strip()[-200:]}", flush=True)
+    except Exception as e:
+        print(f"[贴图] 遮罩生成跳过 {fp.name}: {e}", flush=True)
+    return occ if occ.exists() else None
+
+
+def _remove_white_bg(path):
+    """把近白底的 PNG 转透明底（适用于白底/纯色底设计图）。"""
+    try:
+        from PIL import Image
+        import numpy as np
+        im = Image.open(path).convert("RGBA")
+        a = np.array(im)
+        rgb = a[..., :3].astype(np.int16)
+        white = (rgb[:, :, 0] > 240) & (rgb[:, :, 1] > 240) & (rgb[:, :, 2] > 240)
+        a[white, 3] = 0
+        Image.fromarray(a).save(path)
+    except Exception:
+        pass
+
+
+def _run_white_t_mockup(design_path, out_path, preset_key, fp, fields, tpl_dir, color, occluder):
+    env = _single_thread_env(os.environ)
+    env["PYTHONPATH"] = f"{MOCKUP_ROOT};{PY_PACKAGES}"
+    # 彻底关闭 cv2 内部多线程：后台进程里 cv2 的 warp/remap 多线程偶发段错误，
+    # 关闭后基本不再崩溃（白 T 恤合成依赖 displacement 扭曲，最易触发）
+    env["OPENCV_DISABLE_THREADING"] = "1"
+    env["OMP_NUM_THREADS"] = "1"
+    env["MKL_NUM_THREADS"] = "1"
+    env["OPENBLAS_NUM_THREADS"] = "1"
+    env["NUMEXPR_NUM_THREADS"] = "1"
+    env["VECLIB_MAXIMUM_THREADS"] = "1"
+
+    cmd = [str(MOCKUP_PY), "-m", "white_t_mockup", str(design_path), str(out_path)]
+    if preset_key:
+        cmd += ["--preset", preset_key]
+    else:
+        cmd += ["--template", str(fp)]
+    cmd += [
+        "--final-w", str(int(fields["final_w"])),
+        "--final-h", str(int(fields["final_h"])),
+        "--rotate", str(fields["rotation"]),
+        "--effective-top-y", str(int(fields["top_y"])),
+        "--effective-center-x", str(int(fields["center_x"])),
+        "--disp-strength", "12",
+        "--shadow-opacity", "0.22",
+        "--highlight-opacity", "0.22",
+    ]
+    if tpl_dir:
+        cmd += ["--tpl-dir", str(tpl_dir)]
+    cmd += ["--for-black-shirt" if color == "black" else "--for-white-shirt"]
+    if occluder:
+        cmd += ["--occluder", str(occluder)]
+
+    dbg = MOCKUP_OUT / "_mockup_run.log"
+    try:
+        with open(dbg, "w", encoding="utf-8") as f:
+            f.write("CMD: " + " ".join(cmd) + "\n")
+            f.write("CWD: " + str(MOCKUP_ROOT) + "\n")
+            f.write("PYTHONPATH: " + env["PYTHONPATH"] + "\n")
+            f.write("OPENCV_DISABLE_THREADING: " + env.get("OPENCV_DISABLE_THREADING", "") + "\n")
+    except Exception:
+        pass
+
+    startupinfo = None
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+
+    last = None
+    import time as _t
+    for attempt in range(1, 4):
+        out_log = MOCKUP_OUT / f"_mockup_stdout_{attempt}.log"
+        err_log = MOCKUP_OUT / f"_mockup_stderr_{attempt}.log"
+        try:
+            with open(out_log, "w", encoding="utf-8", errors="replace") as of, \
+                 open(err_log, "w", encoding="utf-8", errors="replace") as ef:
+                r = subprocess.run(
+                    cmd, cwd=str(MOCKUP_ROOT), env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=of, stderr=ef,
+                    timeout=300,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                    startupinfo=startupinfo,
+                )
+        except Exception as e:
+            import traceback as _tb
+            r = type("_R", (), {"returncode": -1, "stdout": "",
+                                "stderr": f"[bridge] 启动异常: {_tb.format_exc()}"})()
+        try:
+            r.stdout = out_log.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            r.stdout = ""
+        try:
+            r.stderr = err_log.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            r.stderr = ""
+        try:
+            with open(dbg, "a", encoding="utf-8") as f:
+                f.write(f"attempt {attempt}: rc={r.returncode} stderr={r.stderr[:200]}\n")
+        except Exception:
+            pass
+        last = r
+        if r.returncode == 0:
+            break
+        _t.sleep(2)  # cv2 偶发段错误，重试常能成功
+    return last
+
+
+@app.route('/api/mockup', methods=['POST'])
+def api_mockup():
+    """贴图：自动读取胚衣5字段 + 遮罩 + 扭曲，精准贴入。
+
+    入参（multipart）：
+      design         : 贴图素材文件（建议透明底 PNG；白底图可勾选 auto_remove_bg）
+      template       : 胚衣标识，支持 "分类/文件名"（如 W白/白W3.jpg）或款名；
+                        多个用逗号分隔即批量贴图
+      auto_remove_bg : '1' 表示把白底设计图去背
+    """
+    try:
+        design = request.files.get('design')
+        if not design:
+            return jsonify({'ok': False, 'error': '未收到贴图素材'}), 400
+        templates = (request.form.get('template') or '').strip()
+        if not templates:
+            return jsonify({'ok': False, 'error': '未指定胚衣'}), 400
+        names = [t.strip() for t in templates.split(',') if t.strip()]
+        auto_bg = request.form.get('auto_remove_bg') == '1'
+
+        MOCKUP_OUT.mkdir(parents=True, exist_ok=True)
+        des_path = MOCKUP_OUT / f"_des_{datetime.now().strftime('%H%M%S%f')}.png"
+        design.save(str(des_path))
+        if auto_bg:
+            _remove_white_bg(des_path)
+
+        presets = _load_presets()
+        results = []
+        for t in names:
+            if '/' in t:
+                category, name = t.split('/', 1)
+            else:
+                category, name = _find_category_for_stem(t)
+            if not category or category not in PEIYI_CATEGORIES:
+                results.append({'template': t, 'ok': False, 'error': '未找到该胚衣（请检查素材库分类）'})
+                continue
+            fp, stem, color = _resolve_peiyi_embryo(category, name)
+            if not fp.exists():
+                results.append({'template': t, 'ok': False, 'error': f'素材库图片不存在: {fp.name}'})
+                continue
+            fields = _embryo_fields(category, name, presets)
+            if not fields['final_w'] or not fields['final_h']:
+                results.append({'template': t, 'ok': False,
+                                'error': '该胚衣缺少缩放后宽/高（请在素材库填写，或检查胚衣参数表）'})
+                continue
+            pkey = _preset_key_for_stem(stem, presets)
+            tpl_dir = _ensure_tpl(stem, fp)
+            occ = _ensure_occluder(fp, category)
+            out_path = MOCKUP_OUT / f"{stem}_{datetime.now().strftime('%H%M%S%f')}.jpg"
+            r = _run_white_t_mockup(des_path, out_path, pkey, fp, fields, tpl_dir, color, occ)
+            if r.returncode != 0:
+                err = (r.stderr or r.stdout or '')[-600:]
+                results.append({'template': t, 'ok': False, 'error': err})
+                continue
+            results.append({
+                'template': t, 'ok': True,
+                'url': f"/api/mockup/result/{out_path.name}",
+                'fields': fields, 'color': color,
+                'used_tpl': tpl_dir is not None, 'used_occluder': occ is not None,
+                'preset': pkey,
+            })
+        return jsonify({'ok': any(x['ok'] for x in results), 'results': results})
+    except Exception as e:
+        import traceback as _tb
+        _tb.print_exc()
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}', 'trace': _tb.format_exc()[-1500:]}), 500
+
+
+@app.route('/api/mockup/result/<path:filename>')
+def api_mockup_result(filename):
+    safe = os.path.basename(filename)
+    fp = MOCKUP_OUT / safe
+    if not fp.exists() or fp.resolve().parent != MOCKUP_OUT.resolve():
+        abort(404)
+    return send_file(str(fp), mimetype='image/jpeg', max_age=0)
 
 
 # ============================================================================
