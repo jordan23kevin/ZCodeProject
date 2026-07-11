@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.6.0] - 2026-07-12
+
+### Added
+- **黑衫白墨打底 `prepare_method="white_underbase"`（新默认）**：`add_white_underbase()` 自适应浓度白墨打底（越暗白墨越厚 max0.9/min0.05，transition_threshold=130，edge_feather=5，boost_sat=0.35 保饱和色）+ `black_shirt_print_optimize()`（白墨打底 → 轻度 dark_boost=0.25 提亮 + 饱和补偿）。模拟真实 DTG 黑衫『先喷白墨、再喷彩色』，使极暗区域在黑布上可见，同时保留全部原色、不漂成白。
+- `__init__.py` 导出 `add_white_underbase` / `black_shirt_print_optimize` / `enhance_dark_print_for_black_shirt`。
+
+### Fixed
+- **`add_white_underbase()` 缺 `import cv2`**：函数内用 cv2 但未导入（cv2 仅在 `enhance_dark_print_for_black_shirt` 懒加载），直接调用会 `NameError: name 'cv2' is not defined`。已在函数内补懒加载。
+
+### Changed
+- 黑衫默认预处理 `dark_boost` → **`white_underbase`**（core.py `prepare_design_for_shirt` / `apply_mockup` / `apply_mockup_transform` 默认值 + cli.py `--prepare-method` 默认 + `--for-black-shirt` 路由）。
+- cli.py `--prepare-method` choices 增加 `white_underbase`。
+- 白衫 `white_underbase` / `dark_boost` 均为 no-op（保持原色）。
+
+### Root Cause（为什么换 white_underbase）
+- 旧『反黑』两条路都废：`silhouette` 把非透明像素涂纯白（颜色全丢）；`value_invert` 做 HSV 明度反相（亮色变黑）。
+- 即便 dark_boost 保住颜色、提亮暗部，也救不了**接近纯黑**的设计：PS 贴图脚本 `place_design.jsx` 只把设计图 duplicate 到黑衫胚衣、保留透明，**从不铺白底**。纯黑印黑布物理不可见（实测 DX0635 图 51% 像素近黑）。
+- white_underbase 在贴图前把白墨打底**烘进设计图本身**，无需改 PS 脚本即可显色。
+- 实测（DX0635 真实图）：近黑(0-20)像素 64万→4413；接近白(>245)=0（不漂白）；红字 (101,16,23)→(127,52,59) 保色。
+
+### Notes
+- **两套黑衫流程都已接 white_underbase**：① `white_t_mockup`（效果图生成，E:/Kimi Code）；② `check_rem.py`（AI 去背贴图页『反黑』按钮 → `_黑W_cut.png` → PS place_design 平铺图，D:/Semems WB 运行版）。check_rem.py 内联了同款 add_white_underbase/black_shirt_print_optimize。
+- **check_rem 是常驻进程**：改 check_rem.py 后须 kill 端口 8766 进程，由 lovart_bridge 守护线程重拉才生效（重启 lovart_bridge.bat 不会带走它）。
+- 回滚锚点：`v1.5.0`。
+
 ## [1.5.0] - 2026-07-12
 
 ### Added

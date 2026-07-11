@@ -61,3 +61,17 @@ go.signal
 # OS
 .DS_Store
 Thumbs.db
+
+# ── 临时/测试产物（不进版本控制，保持仓库干净可复现） ──
+_*.jpg
+_*.png
+_demo*.jpg
+out_*.jpg
+demo_result_*.jpg
+contaminated_dx.json
+content_trace.csv
+split_*.json
+split_*backup*/
+mockup_output/
+_peiyi_worker.py
+_test_*.py
