@@ -1,6 +1,15 @@
 # -*- coding: utf-8 -*-
 """白 T 恤样机贴图核心逻辑。
 
+v1.6.2 (2026-07-12) 褶皱贴合增强：
+  - apply_displacement 新增 mask_feather（默认 5px），对 mask 边缘高斯羽化，
+    使位移在印花边界平滑衰减到 0，配合更大 disp_strength 也不产生边界折叠/撕裂。
+
+v1.6.1 (2026-07-12) 褶皱低频化：
+  - apply_displacement 新增 smooth（默认 80）+ dead_zone（默认 15，软斜坡）。
+  - smooth 只保留大褶皱形变，抑制小褶皱/布纹水波纹；dead_zone 让小起伏区域
+    几乎不扭曲，软斜坡消除旧硬死区导致的重映射折叠撕裂。
+
 v1.6.0 (2026-07-12) 黑衫显色重构：
   - 新增 prepare_method="white_underbase"（黑衫默认）：自适应浓度白墨打底
     add_white_underbase + 轻度暗部提亮 enhance_dark_print_for_black_shirt，
@@ -348,6 +357,7 @@ def apply_displacement(
     strength: float = 8.0,
     smooth: float = 80.0,
     dead_zone: float = 15.0,
+    mask_feather: float = 5.0,
 ) -> Image.Image:
     """
     按置换图 disp（画布尺寸 L 模式）对 design 做形变，限 mask 区域。
@@ -359,12 +369,19 @@ def apply_displacement(
             抹掉小褶皱/布纹等高频分量，消除印花"水波纹"抖动。0=不平滑（旧行为）。
     dead_zone: 灰度死区。|g-128| < dead_zone 的区域 off 平滑趋零（软斜坡），
             小起伏区域几乎不扭曲；边界为平滑过渡，避免硬台阶导致重映射折叠/撕裂。
+    mask_feather: 对 mask 边缘做高斯羽化（sigma 像素），使位移在 mask 边界处
+            平滑衰减到 0，避免 mask 硬边造成重映射折叠/设计边缘撕裂。0=不羽化。
     """
     dw, dh = design.size
     arr = np.array(design).astype(np.float32)
     disp_arr = np.array(disp.convert("L")).astype(np.float32)
     mask_arr = np.array(mask.convert("L")).astype(np.float32) / 255.0
     H, W = disp_arr.shape
+
+    # 对 mask 边缘羽化：位移在边界平滑衰减，消除 mask 硬边带来的折叠/撕裂
+    if mask_feather and mask_feather > 0:
+        import cv2
+        mask_arr = cv2.GaussianBlur(mask_arr, (0, 0), float(mask_feather))
 
     # 低频化：只让大褶皱参与位移（sigma 越大，保留的褶皱尺度越大）
     if smooth and smooth > 0:
@@ -521,6 +538,7 @@ def apply_mockup_transform(
     disp_strength: float = 8.0,
     disp_smooth: float = 80.0,
     disp_dead_zone: float = 15.0,
+    disp_mask_feather: float = 5.0,
     shadow_opacity: float = 0.22,
     highlight_opacity: float = 0.22,
     occluder: str | Path | None = None,
@@ -560,6 +578,7 @@ def apply_mockup_transform(
         transformed = apply_displacement(
             transformed, disp_im, mask_im, paste_x, paste_y, disp_strength,
             smooth=disp_smooth, dead_zone=disp_dead_zone,
+            mask_feather=disp_mask_feather,
         )
 
     if use_tpl and occ_im is not None and occlusion_strength > 0:
@@ -632,6 +651,7 @@ def apply_mockup(
     disp_strength: float = 8.0,
     disp_smooth: float = 80.0,
     disp_dead_zone: float = 15.0,
+    disp_mask_feather: float = 5.0,
     shadow_opacity: float = 0.22,
     highlight_opacity: float = 0.22,
     occluder: str | Path | None = None,
@@ -668,6 +688,7 @@ def apply_mockup(
         design_resized = apply_displacement(
             design_resized, disp_im, mask_im, left, top, disp_strength,
             smooth=disp_smooth, dead_zone=disp_dead_zone,
+            mask_feather=disp_mask_feather,
         )
 
     if use_tpl and occ_im is not None and occlusion_strength > 0:
