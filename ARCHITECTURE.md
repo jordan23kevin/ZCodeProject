@@ -1,7 +1,24 @@
-# Y2 系统架构文档 v2.3.23
+# Y2 系统架构文档 v2.4.0
 
-> 工程类型: 图像生产血缘数据库 + 控制面板 + 贴图成品流水线 + AI 生图对比复审 + Temu 核价集成 + Temu 报活动集成
+> 工程类型: 图像生产血缘数据库 + 控制面板 + 纯软件贴图成品流水线 + AI 生图对比复审 + Temu 核价集成 + Temu 报活动集成
 > 遵循: B+ 四层血缘闭环架构
+
+---
+
+## v2.4.0 变更
+
+本次版本将贴图流水线从 Photoshop 依赖全面转为纯软件实现，并记录两个新增代码仓库：
+
+- **贴图流水线去 PS 化**
+  - `E:\Claude code\ps` 下的 `ps_batch.py`（v2.0）、`wb_sticker_ps.py`（v2.4）、`process_black.py` / `process_white.py`（v2.5）全部改为纯 PIL 实现，不再依赖 win32com / Photoshop COM；`ps_batch.py` 的 BW 合成改用 `compose_bw_pil`（底图 1340×1785、圆直径 595、正面图宽度贴合圆圈 ≈44.4%、圆心 (1014,1449)、白边 5px、无阴影）。
+  - 平铺图贴花由 `StickerSession.place_design` 纯 PIL 仿射复刻旧 `place_design.jsx`（trim + 缩放 + 平移 + 绕中心旋转 + normal 合成），与 PS 版像素差 0.3–0.9（JPEG 重编码级）。
+  - 模特图贴图由 `E:\Kimi Code\white_t_mockup`（v1.8.0）负责，gradient 位移 + 布料同步明度（仅缩放 HSV 的 V，H/S 零偏差），纯软件不依赖 PS。
+  - 命名规则统一由 `D:\Semems WB\04_OS\engine\wb_naming.py`（唯一出处）生成与解析。
+  - 重装 / 迁移 Photoshop 不再影响贴图流水线；点「贴图」末尾调用的 `quit_ps.py` 在 PS 未运行时会直接返回，无害。
+- **新增仓库**
+  - `E:\Kimi Code\white_t_mockup`：模特图位移贴图引擎（gradient 模式）。
+  - `D:\Semems WB\04_OS`：贴图引擎与命名规则（wb_naming / w_mockup_extra）。
+- **Bridge 侧**：无代码改动，仅更新依赖版本号与本文档；`lovart_bridge.py` / `lovart_bridge.bat` 版本号维持 v2.3.23。
 
 ---
 
@@ -148,17 +165,17 @@
          │    POST /api/lineage/register│   子进程调用 (最小化窗口)
          │    (+ uid/group_id)          ▼
          │                 ┌────────────────────────────────────────┐
-         │                 │      PS 贴图流水线（E:\Claude code\ps） │
+         │                 │      纯软件贴图流水线（E:\Claude code\ps） │
          │                 │  ┌────────────────────────────────────┐  │
-         │                 │  │ 1. process_black.py  v2.2          │  │
+         │                 │  │ 1. process_black.py  v2.5（纯软件）          │  │
          │                 │  │    黑T专用贴图 + BW合成              │  │
          │                 │  ├────────────────────────────────────┤  │
          │                 │  │ 2. ps_sticker_one.py →             │  │
-         │                 │  │    wb_sticker_ps.py v2.2 通用白T贴图│  │
+         │                 │  │    wb_sticker_ps.py v2.4 通用贴花│  │
          │                 │  │    （检测到黑B/W/BW 时跳过黑T输出） │  │
          │                 │  ├────────────────────────────────────┤  │
          │                 │  │ 3. ps_batch_one.py →               │  │
-         │                 │  │    ps_batch.py v2.2 合成 BW         │  │
+         │                 │  │    ps_batch.py v2.0 合成 BW（纯PIL）         │  │
          │                 │  └────────────────────────────────────┘  │
          │                 └────────────────────────────────────────┘
          │
@@ -208,11 +225,12 @@ check_rem.py 的 HTML 模板使用 Python f-string 生成，JS 代码中的 `{}`
 用户之前需要手动「贴图」→「BW合成」两步，且黑T容易用错通用图。
 **解决方案**: `/ps-sticker` 统一调度三段脚本：
 
-1. `process_black.py` — 若存在 `DX_黑B/W/BW_cut.png`，先做黑T贴图+BW合成
-2. `wb_sticker_ps.py` — 通用 B/W/BW 贴图；若检测到对应黑版文件，自动跳过黑T输出
+1. `process_black.py` — 若存在 `DX_黑B/W/BW_cut.png`，先做黑T贴花+BW合成
+2. `wb_sticker_ps.py` — 通用 B/W/BW 贴花；若检测到对应黑版文件，自动跳过黑T输出
 3. `ps_batch.py` — 用已贴好的 B/W 合成最终 BW
 
 前端「贴图」与「批量贴图」均调用完整流水线，一步出成品。
+**2026-07-12 起上述三段均为纯软件（PIL），不再连接 Photoshop**（详见 `E:\Claude code\ps\PIPELINE.md`）。
 
 ### 黑版专用优先策略
 

@@ -1,7 +1,8 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.3.23` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.2` + `check_online_listed.py v1.3.20` + `temu-hengjia-engine v5.2.1` + `temu-activity-engine v4.1.3`
-> 最后更新: 2026-07-06
+> 对应版本: `lovart_bridge.py v2.3.23` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.2` + `check_online_listed.py v1.3.20` + `temu-hengjia-engine v5.2.1` + `temu-activity-engine v4.1.3` + 贴图流水线 `ps v2.0/v2.4/v2.5` + `white_t_mockup v1.8.0` + `04_OS wb_naming v2.3.0`
+> 最后更新: 2026-07-12
+> 贴图流水线已从 Photoshop 依赖全面转为纯软件（PIL），详见 `E:\Claude code\ps\PIPELINE.md`
 
 ---
 
@@ -11,7 +12,9 @@
 |------|----------|------|------|------|
 | ZCodeProject | `C:\Users\Administrator\ZCodeProject` | `https://github.com/jordan23kevin/ZCodeProject.git` | `master` | Y2 控制台 Bridge + 前端页面 |
 | lovart-official | `E:\Claude code\lovart-official` | `https://github.com/jordan23kevin/lovart-official.git` | `main` | Lovart 生图管线 |
-| ps（贴图流水线） | `E:\Claude code\ps` | （未纳入本次推送） | — | PS 贴图 + BW 合成 |
+| ps（贴图流水线） | `E:\Claude code\ps` | `https://github.com/jordan23kevin/ps-compositing.git` | `master` | 纯软件平铺贴花 + BW 合成（PIL，无 PS 依赖） |
+| white_t_mockup（模特图位移贴图引擎） | `E:\Kimi Code\white_t_mockup` | `https://github.com/jordan23kevin/ZCodeProject.git` | `white-t-mockup` | 模特图 gradient 位移贴图（纯软件，与 Bridge 同仓不同分支） |
+| 04_OS（贴图引擎与命名） | `D:\Semems WB\04_OS` | `https://github.com/jordan23kevin/semems-wb-04os.git` | `master` | wb_naming 命名规则 + w_mockup_extra 模特图渲染 |
 | wb上款 | `E:\Claude code\wb上款` | `https://github.com/jordan23kevin/wb-listing.git` | `main` | 批量上款 |
 | temu-hengjia-engine | `E:\Claude code\Temu自动化\核价` | `https://github.com/jordan23kevin/temu-hengjia-engine.git` | `main` | Temu 批量核价引擎 |
 | temu-activity-engine | `E:\Claude code\Temu自动化\报活动` | `git@github.com:jordan23kevin/temu-baohuodong.git` | `master` | Temu 批量报活动 |
@@ -42,20 +45,42 @@ git pull origin main
 # Temu 报活动引擎
 cd "E:\Claude code\Temu自动化\报活动"
 git pull origin master
+
+# 贴图流水线（平铺贴花 + BW 合成，纯软件）
+cd "E:\Claude code\ps"
+git pull origin master
+
+# 模特图位移贴图引擎（与 Bridge 同仓，独立分支）
+cd "E:\Kimi Code"
+git pull origin white-t-mockup
+
+# 贴图引擎与命名规则
+cd "D:\Semems WB\04_OS"
+git pull origin master
 ```
 
 ### 2.2 安装/检查依赖
 
 ```bash
+# Bridge / 控制台 / 去背预览 / 贴图流水线共用
 pip install flask Pillow requests pywin32 pythoncom numpy
+
+# white_t_mockup（模特图位移贴图）额外需要 OpenCV
+# 注意：本机 cv2 来自 E:/python_packages（系统包目录），运行时需注入：
+#   set PYTHONPATH=E:/python_packages;E:/Kimi Code
+pip install opencv-python
 ```
+> 贴图流水线（ps / white_t_mockup / 04_OS）已不再依赖 `pywin32` / `pythoncom` / Photoshop；
+> `pywin32` / `pythoncom` 仅 Bridge 的窗口操作（夸克/Edge 误触防护）与美图去背流程使用。
 
 ### 2.3 配置检查
 
 - 提示词文件必须存在：`E:\Claude code\lovart-official\config\POD AI VIRAL FACTORY v3.md`
 - `config/settings.py` 中的 `PROMPT_FILE` 指向上述文件。
 - 密钥文件：`E:\Claude code\lovart-official\config\keys.json`（不提交到 Git，本地保留）。
-- Photoshop 路径与各脚本中的 `PS_EXE` 一致（当前为 `D:\Program Files\Adobe Photoshop 2025 v26.0\Adobe Photoshop 2025\Photoshop.exe`）。
+- 贴图流水线已纯软件化，**不再需要 Photoshop**；重装 / 迁移 Photoshop 不影响贴图。
+- 模特图贴图引擎 `white_t_mockup` 运行前需设置 `PYTHONPATH=E:/python_packages;E:/Kimi Code`（cv2 在 E:/python_packages）。
+- 美图秀秀仍用于去背流程（与贴图无关）。
 
 ### 2.4 启动
 
@@ -117,7 +142,7 @@ git reset --hard HEAD~1
 如果已打 Tag（推荐）：
 
 ```bash
-# ZCodeProject
+# ZCodeProject（Bridge / 控制台）
 cd C:\Users\Administrator\ZCodeProject
 git fetch origin --tags
 git checkout v2.3.22
@@ -132,6 +157,20 @@ cd "E:\Claude code\wb上款"
 git fetch origin --tags
 git checkout v2.2.1
 ```
+
+### 4.3 回滚到「贴图流水线纯软件化」里程碑（2026-07-12）
+
+本次将贴图流水线从 Photoshop 全面改为纯软件。四个相关仓库在该里程碑打了统一 Tag，便于一键回滚到该状态：
+
+| 仓库 | 本地路径 | 分支 | 里程碑 Tag | 回滚命令 |
+|------|----------|------|-----------|----------|
+| ZCodeProject（Bridge） | `C:\Users\Administrator\ZCodeProject` | `master` | `pipeline-2026-07-12` | `git checkout pipeline-2026-07-12` |
+| ps（贴图流水线） | `E:\Claude code\ps` | `master` | `pipeline-2026-07-12` | `git checkout pipeline-2026-07-12` |
+| white_t_mockup（模特图引擎） | `E:\Kimi Code` | `white-t-mockup` | `pipeline-2026-07-12-wtm` | `git checkout pipeline-2026-07-12-wtm` |
+| 04_OS（命名/引擎） | `D:\Semems WB\04_OS` | `master` | `pipeline-2026-07-12` | `git checkout pipeline-2026-07-12` |
+
+> 回滚后执行第 2.4 节的启动步骤（双击 `D:\Semems WB\01_INBOX\lovart_bridge.bat`）即可恢复服务。
+> 如要回到「仍依赖 Photoshop 的旧贴图流水线」，需在上述每个仓库回退到 `pipeline-2026-07-12` Tag 之前的提交（见各仓库 `git log`）。
 
 ### 4.3 回滚后重启
 
@@ -196,9 +235,9 @@ git checkout v2.2.1
 
 - **Lovart API Key**: `E:\Claude code\lovart-official\config\keys.json`
 - **提示词文件**: `E:\Claude code\lovart-official\config\POD AI VIRAL FACTORY v3.md`
-- **Python 依赖**: `flask`, `Pillow`, `requests`, `pywin32`, `pythoncom`, `numpy`
-- **Photoshop**: `D:\Program Files\Adobe Photoshop 2025 v26.0\Adobe Photoshop 2025\Photoshop.exe`
-- **美图秀秀**: 去背流程需要，运行期间会接管屏幕
+- **Python 依赖**: `flask`, `Pillow`, `requests`, `pywin32`, `pythoncom`, `numpy`（Bridge / 去背用）；`opencv-python`（white_t_mockup 用，cv2 来自 `E:/python_packages`）
+- **Photoshop**: 贴图流水线已不再依赖；新装 / 迁移 Photoshop 不影响贴图。仅旧版脚本（`pipeline-2026-07-12` Tag 之前的提交）需要。
+- **美图秀秀**: 去背流程需要，运行期间会接管屏幕（与贴图无关）
 
 ---
 
@@ -236,6 +275,24 @@ git checkout v2.2.1
 | 核价时长页无法完成 | `utils/js_helpers.py` 中 JS 辅助函数每次 `_eval()` 都 `sc.scrollTop = 0` 重置到顶部 | 移除 JS 内部重置，由 `core/engine.py` 入口 `_reset_scroll()` 统一重置；循环调用从当前位置继续 | `temu-hengjia-engine/utils/js_helpers.py` / `core/engine.py` |
 | 核价结果散落 | 输出目录不固定 | 统一输出到 `C:/Users/Administrator/Desktop/核价档案`，Bridge 提供下载 API | `lovart_bridge.py` |
 | 版本号不一致 | `lovart_bridge.bat` 标题/横幅与 Python 端不一致 | 全部统一为 v2.3.20 | `lovart_bridge.py` / `lovart_bridge.bat` |
+
+---
+
+## 11. 贴图流水线纯软件化（2026-07-12）
+
+将贴图流水线从 Photoshop COM 依赖全面改为纯 PIL / 纯软件，保证重装 / 迁移 Photoshop 后仍能 100% 复现。
+
+| 问题 | 根因 | 解决方案 | 文件位置 |
+|------|------|----------|----------|
+| BW 合成失败，缺 `白BW/黑BW` | Photoshop 2025 缺失旧版私有动作集「正反图」，`app.actionSets` 返回 undefined | 路线 B：用参考图 `DX0481` 像素级 PIL 复刻 `compose_bw_pil`（底图 1340×1785、圆直径 595、正面图宽度贴合圆圈 ≈44.4%、圆心 (1014,1449)、白边 5px、无阴影） | `ps/ps_batch.py` |
+| 平铺图贴花依赖 Photoshop | 旧 `place_design.jsx` 走 win32com 调用 PS | 纯 PIL 仿射复刻（trim + 缩放 + 平移 + 绕中心旋转 + normal 合成），与 PS 版像素差 0.3–0.9（JPEG 重编码级） | `ps/wb_sticker_ps.py` |
+| 点「贴图」卡在 PS 动作 | `process_black/white.py` 调缺失的 PS 动作 | `bw_synth` 改调 `ps_batch.process_dx`（纯 PIL）；移除 `win32com/pythoncom` 导入与 COM 死代码 | `ps/process_black.py`、`ps/process_white.py` |
+| 用户误以为要 50% 缩放 | 口述规格与参考图不符 | 实测反向测量参考图，正面图实际占比 44.4%（宽度贴合圆圈），按此生成的图与 `DX0481` 像素一致 | `ps/ps_batch.py::compose_bw_pil` |
+| 模特图贴图颜色失真 / 位移水波纹 | 旧 `multiply` 混合 + 硬死区位移导致折叠重影 | `white_t_mockup` 改 gradient 位移 + `_limit_gradient_2d` 防重影 + 布料同步明度（仅缩放 HSV 的 V）；软死区消除撕裂 | `E:\Kimi Code\white_t_mockup\core.py` |
+| 命名不统一，跨脚本解析失败 | 各脚本硬编码命名规则 | 命名唯一出处 `D:\Semems WB\04_OS\engine\wb_naming.py`，生成与解析全局跟随 | `04_OS/engine/wb_naming.py` |
+
+> 复现验证：纯软件重构后，`tasklist` 确认无 Photoshop 进程；DX0641 贴花 + BW 合计 <2 秒；BW 合成单张 0.3 秒。
+> 详见 `E:\Claude code\ps\PIPELINE.md`（系统总览、环境依赖、十项问题方案表、100% 复现步骤、回滚）。
 
 ---
 
