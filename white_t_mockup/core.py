@@ -217,6 +217,23 @@ def load_any_template(
     return load_png_template(template_path)
 
 
+def _harden_occluder_alpha(occ: Image.Image) -> Image.Image:
+    """把 occluder 的 alpha 通道归一化到 [0,255]，消除半透导致的印花渗出。
+
+    peiyi_mask 导出的 *_occluder.png alpha 最大值常为 254 且边缘灰度不均匀，
+    直接 paste 会让下方印花（如心形/文字）从手部边缘微透出来。本函数把
+    非透明区域整体拉升到 255，保留纯透明区域，使手/头发/配饰完全盖住印花。
+    """
+    if occ.mode != "RGBA":
+        occ = occ.convert("RGBA")
+    r, g, b, a = occ.split()
+    a_arr = np.array(a, dtype=np.uint16)
+    if a_arr.max() > 0:
+        a_arr = (a_arr * 255 // a_arr.max()).clip(0, 255).astype(np.uint8)
+    a = Image.fromarray(a_arr)
+    return Image.merge("RGBA", (r, g, b, a))
+
+
 def _paste_occluder_top(canvas: Image.Image, occluder_path) -> Image.Image:
     """把生成的遮挡物 RGBA（最上层）盖到画布最上方，与画布同尺寸对齐。
 
@@ -226,7 +243,7 @@ def _paste_occluder_top(canvas: Image.Image, occluder_path) -> Image.Image:
     occ = Image.open(str(occluder_path)).convert("RGBA")
     if occ.size != canvas.size:
         occ = occ.resize(canvas.size, Image.Resampling.LANCZOS)
-    canvas.paste(occ, (0, 0), occ)
+    canvas.paste(_harden_occluder_alpha(occ), (0, 0), _harden_occluder_alpha(occ))
     return canvas
 
 
@@ -517,12 +534,14 @@ def apply_occlusion_alpha(
     paste_x: int,
     paste_y: int,
     strength: float = 1.0,
+    min_visibility: float = 0.0,
 ) -> Image.Image:
     """按遮挡图 occ（画布尺寸 L，255=完全可见，0=折入隐藏）降低 design 的 alpha。
 
     真实布料的大褶皱折入内部，其表面图案被前方布料挡住而看不见。occ 图标出这些
     折入区域，本函数据此把 design 对应位置的 alpha 拉低，使贴图在褶皱处自然淡出/
     消失，仅在褶皱之外正常显示。strength=1.0 完全按 occ 隐藏，0 则不隐藏。
+    min_visibility 可限制最低可见度（例如黑衫上保留 25% 贴图，防止露出黑底形成黑斑）。
     """
     dw, dh = design.size
     arr = np.array(design).astype(np.float32)
@@ -535,6 +554,8 @@ def apply_occlusion_alpha(
     vis = occ_arr[cy, cx]
     if strength < 1.0:
         vis = 1.0 - (1.0 - vis) * float(strength)
+    if min_visibility > 0.0:
+        vis = np.clip(vis, float(min_visibility), 1.0)
     arr[:, :, 3] = arr[:, :, 3] * vis
     return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
 
@@ -769,6 +790,7 @@ def apply_mockup_transform(
     highlight_opacity: float = 0.22,
     occluder: str | Path | None = None,
     occlusion_strength: float = 1.0,
+    occlusion_min_visibility: float = 0.0,
     fabric_shading: bool = True,
     shading_blur: float = 4.0,
 ) -> dict:
@@ -819,7 +841,7 @@ def apply_mockup_transform(
 
     if use_tpl and occ_im is not None and occlusion_strength > 0:
         transformed = apply_occlusion_alpha(
-            transformed, occ_im, paste_x, paste_y, occlusion_strength
+            transformed, occ_im, paste_x, paste_y, occlusion_strength, occlusion_min_visibility
         )
         used_occlusion = True
 
@@ -862,7 +884,7 @@ def apply_mockup_transform(
 
     # 最上层：生成的遮挡物（手/头发/配饰），自然盖在印花图案之上
     if occluder_im is not None:
-        canvas.paste(occluder_im, (0, 0), occluder_im)
+        canvas.paste(_harden_occluder_alpha(occluder_im), (0, 0), _harden_occluder_alpha(occluder_im))
 
     canvas_rgb = canvas.convert("RGB")
     canvas_rgb.save(str(output_path), "JPEG", quality=quality, optimize=True)
@@ -907,6 +929,7 @@ def apply_mockup(
     highlight_opacity: float = 0.22,
     occluder: str | Path | None = None,
     occlusion_strength: float = 1.0,
+    occlusion_min_visibility: float = 0.0,
     fabric_shading: bool = True,
     shading_blur: float = 4.0,
 ) -> dict:
@@ -952,7 +975,7 @@ def apply_mockup(
 
     if use_tpl and occ_im is not None and occlusion_strength > 0:
         design_resized = apply_occlusion_alpha(
-            design_resized, occ_im, left, top, occlusion_strength
+            design_resized, occ_im, left, top, occlusion_strength, occlusion_min_visibility
         )
         used_occlusion = True
 
@@ -982,7 +1005,7 @@ def apply_mockup(
 
     # 最上层：生成的遮挡物（手/头发/配饰），自然盖在印花图案之上
     if occluder_im is not None:
-        canvas.paste(occluder_im, (0, 0), occluder_im)
+        canvas.paste(_harden_occluder_alpha(occluder_im), (0, 0), _harden_occluder_alpha(occluder_im))
 
     canvas_rgb = canvas.convert("RGB")
     canvas_rgb.save(str(output_path), "JPEG", quality=quality, optimize=True)

@@ -1,5 +1,15 @@
 # CHANGELOG — white_t_mockup（模特图贴图引擎）
 
+## v1.8.1 — 2026-07-12（手部遮挡完全盖印花）
+- `core.py` 新增 `_harden_occluder_alpha`：
+  - peiyi_mask 生成的 `*_occluder.png` alpha 最大只有 254 且边缘偏灰，直接 `paste`
+    会导致手部/前景像半透明玻璃，下方印花（心形、文字等）从边缘微透出来。
+  - 现在把非透明遮挡区 alpha 整体拉升到 255，保留纯透明背景，手/头发/配饰
+    完全盖住印花，不再出现"贴图贴在手上"的情况。
+- `_paste_occluder_top` 与 `apply_mockup_transform` / `apply_mockup` 中的
+  手动 paste 均调用 `_harden_occluder_alpha`。
+- `__init__.py`：`__version__ = "1.8.1"`。
+
 ## v1.8.0 — 2026-07-12（布料同步明度）
 - `core.py` 新增 `apply_fabric_synced_shading` + `_compute_fabric_synced_shading_field`：
   - 仅缩放印花 HSV 的 **V（明度）**，H/S 零偏差 → 印花固有色与源文件完全一致。
