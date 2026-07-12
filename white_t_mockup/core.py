@@ -1,6 +1,17 @@
 # -*- coding: utf-8 -*-
 """白 T 恤样机贴图核心逻辑。
 
+v1.7.0 (2026-07-12) 2D 梯度褶皱贴合 + 手部防扭曲 + 消除重影：
+  - apply_displacement 新增 disp_mode="gradient"：把 disp 当高度场，沿褶皱切线做
+    2D 梯度位移（off_x=strength*∂h/∂x, off_y=strength*∂h/∂y），印花真正「裹」在
+    褶皱上，而非旧版 isotropic 的鼓包/平移。
+  - 新增 _limit_gradient_2d：对位移场自适应高斯模糊，保证 |∇off|≤0.45，消除
+    尖锐褶皱脊处的重映射折叠与镜像重影（五角星/文字不再出现双影）。
+  - 新增 occluder 参数：在 smooth 前把手部/前景覆盖区的 disp 压平到 128（无位移），
+    并 50px 羽化边缘，解决手在位移图中形成「引力场」导致文字扭曲的问题；
+    手部仍只作为顶层遮挡物覆盖印花。
+  - 明确 mask 不再参与位移计算，只由设计图 alpha 裁剪区域，避免贴图沿遮罩轮廓变形。
+
 v1.6.2 (2026-07-12) 褶皱贴合增强：
   - apply_displacement 新增 mask_feather（默认 5px），对 mask 边缘高斯羽化，
     使位移在印花边界平滑衰减到 0，配合更大 disp_strength 也不产生边界折叠/撕裂。
@@ -348,6 +359,30 @@ def _remap_channels(arr: np.ndarray, map_x: np.ndarray, map_y: np.ndarray) -> np
     return Ia * (1 - wx) * (1 - wy) + Ib * wx * (1 - wy) + Ic * (1 - wx) * wy + Id * wx * wy
 
 
+def _limit_gradient_2d(offx: np.ndarray, offy: np.ndarray, limit: float = 0.45, max_sigma: float = 90.0):
+    """限制位移场梯度，保证重映射 (x-offx, y-offy) 是单射（无折叠/重影）。
+
+    做法：对位移场 (offx, offy) 反复做高斯模糊，直到其最大相邻差分（即 |∇off| 的离散
+    上界）≤ limit。高斯模糊只压低位移幅度、抹平尖锐褶皱脊处的局部反转，绝不引入折叠；
+    低频的大尺度褶皱跟随被保留。保证重映射雅可比行列式 det≥(1-limit)^2-limit^2=1-2*limit>0
+    （limit<0.5），故处处可逆、无重影。limit 越小越保守。
+    """
+    import cv2
+    ox = offx.astype(np.float32).copy()
+    oy = offy.astype(np.float32).copy()
+    L = float(limit)
+    sigma = 3.0
+    for _ in range(30):
+        gx = max(float(np.abs(np.diff(ox, axis=1)).max()), float(np.abs(np.diff(ox, axis=0)).max()))
+        gy = max(float(np.abs(np.diff(oy, axis=1)).max()), float(np.abs(np.diff(oy, axis=0)).max()))
+        if max(gx, gy) <= L:
+            break
+        sigma = min(sigma * 1.25, max_sigma)
+        ox = cv2.GaussianBlur(ox, (0, 0), float(sigma))
+        oy = cv2.GaussianBlur(oy, (0, 0), float(sigma))
+    return ox, oy
+
+
 def apply_displacement(
     design: Image.Image,
     disp: Image.Image,
@@ -358,52 +393,109 @@ def apply_displacement(
     smooth: float = 80.0,
     dead_zone: float = 15.0,
     mask_feather: float = 5.0,
+    occluder: Image.Image | None = None,
+    disp_mode: str = "isotropic",
 ) -> Image.Image:
     """
-    按置换图 disp（画布尺寸 L 模式）对 design 做形变，限 mask 区域。
+    按置换图 disp（画布尺寸 L 模式）对 design 做形变。
 
-    disp 灰度 128=不偏移，>128 向 +，<128 向 -；strength 为最大像素偏移。
-    mask=0 处不偏移。各向同性（x/y 同灰度偏移）。paste_x/paste_y 为 design 在画布的左上角。
+    disp 灰度 128=不偏移；strength 为最大像素偏移（梯度模式下以全图梯度最大值为基准归一化）。
+    paste_x/paste_y 为 design 在画布的左上角。
 
-    smooth: 对 disp 做大尺度高斯平滑（sigma 像素）后再取偏移——只保留大褶皱形变，
+    ⚠ 遮罩(mask)【不参与位移】：位移只由 disp 决定，mask 仅在合成阶段由设计图自身
+    alpha 裁剪贴图区域。之前把 mask 乘进位移场导致「贴图跟着遮罩轮廓变形」，已修正。
+
+    occluder: 手部/前景遮挡物（RGBA 或 L，与画布同尺寸）。disp.png 通常从整张模特照
+    生成，手/前景的明暗会被当成「褶皱」形成强位移梯度（即「手部引力场」）。
+    本函数把遮挡物区域内的 disp 强制压平到 128（无位移），并羽化边缘，避免手处产生
+    扭曲，同时遮挡物仍会在最后一步盖在印花上面——实现「遮罩只遮挡，不扭曲」。
+
+    disp_mode:
+      - "isotropic"（旧/默认）：各向同性单通道位移 off=(g-128)/128*strength，x/y 同推。
+        表现为大尺度「鼓包/平移」，褶皱贴合弱。
+      - "gradient"（褶皱贴合）：把 disp 当高度场，沿褶皱切线方向做 2D 梯度位移
+        off_x=strength*∂h/∂x, off_y=strength*∂h/∂y。印花随褶皱起伏被压缩/拉伸，
+        真正「裹」在衣服上。位移场经梯度限幅(_limit_gradient_2d)，消除尖锐褶皱脊处
+        的重映射折叠/镜像重影，同时保留大尺度褶皱跟随。
+
+    smooth: 对 disp 做高斯平滑（sigma 像素）后再取偏移——只保留大褶皱形变，
             抹掉小褶皱/布纹等高频分量，消除印花"水波纹"抖动。0=不平滑（旧行为）。
-    dead_zone: 灰度死区。|g-128| < dead_zone 的区域 off 平滑趋零（软斜坡），
+    dead_zone: 灰度死区。|g-128| < dead_zone 的区域高度趋平（软斜坡），
             小起伏区域几乎不扭曲；边界为平滑过渡，避免硬台阶导致重映射折叠/撕裂。
-    mask_feather: 对 mask 边缘做高斯羽化（sigma 像素），使位移在 mask 边界处
-            平滑衰减到 0，避免 mask 硬边造成重映射折叠/设计边缘撕裂。0=不羽化。
+    mask_feather: 保留参数（兼容旧调用方）。当前版本位移计算不再使用遮罩，故忽略。
     """
     dw, dh = design.size
     arr = np.array(design).astype(np.float32)
     disp_arr = np.array(disp.convert("L")).astype(np.float32)
-    mask_arr = np.array(mask.convert("L")).astype(np.float32) / 255.0
     H, W = disp_arr.shape
 
-    # 对 mask 边缘羽化：位移在边界平滑衰减，消除 mask 硬边带来的折叠/撕裂
-    if mask_feather and mask_feather > 0:
-        import cv2
-        mask_arr = cv2.GaussianBlur(mask_arr, (0, 0), float(mask_feather))
+    import cv2
+
+    # 关键：遮挡物（手/前景）区域内，位移必须清零。
+    # disp.png 通常从整张模特照生成，手/前景的明暗会被当成「褶皱」形成强位移梯度。
+    # 但遮挡物最终是盖在印花上面的，这块区域本就不该扭曲印花，否则会出现「手部引力场」。
+    # 这里把遮挡物区域内的 disp 强制压平到 128（无位移），并羽化边缘，避免手边界产生
+    # 新的位移悬崖。注意：这一步行在 smooth 之前，防止手梯度在平滑中扩散到衣服区域。
+    if occluder is not None:
+        if occluder.mode == "L":
+            occ_arr = np.array(occluder).astype(np.float32) / 255.0
+        elif occluder.mode == "RGBA":
+            occ_arr = np.array(occluder.split()[-1]).astype(np.float32) / 255.0
+        else:
+            occ_arr = np.array(occluder.convert("L")).astype(np.float32) / 255.0
+        # 对齐到 disp 尺寸
+        if occ_arr.shape != disp_arr.shape:
+            occ_arr = np.array(
+                Image.fromarray((occ_arr * 255).astype(np.uint8)).resize(
+                    (disp_arr.shape[1], disp_arr.shape[0]), Image.Resampling.LANCZOS
+                )
+            ).astype(np.float32) / 255.0
+        # 羽化边缘：50px 过渡带，足够吞掉手边缘扩散的伪梯度
+        occ_arr = cv2.GaussianBlur(occ_arr, (0, 0), float(50.0))
+        # 加权：遮挡物区域内 disp=128（无位移），外部保持原 disp
+        disp_arr = disp_arr * (1.0 - occ_arr) + 128.0 * occ_arr
 
     # 低频化：只让大褶皱参与位移（sigma 越大，保留的褶皱尺度越大）
     if smooth and smooth > 0:
-        import cv2
         disp_arr = cv2.GaussianBlur(disp_arr, (0, 0), float(smooth))
 
+    # 软死区：把平坦(≈128)区域高度压平，该处梯度自然为 0、不产生位移；
+    # 边界为平滑过渡，消除旧硬死区导致的重映射折叠/撕裂。
+    if dead_zone and dead_zone > 0:
+        d = np.abs(disp_arr - 128.0)
+        ramp = np.clip(d / float(dead_zone), 0.0, 1.0)
+        disp_arr = 128.0 + (disp_arr - 128.0) * ramp
+
+    # 关键：遮罩(mask)【不参与位移计算】——它只用于在合成阶段由设计图自身 alpha
+    # 裁剪贴图区域。若把遮罩乘进位移场，贴图会被遮罩轮廓线从 0 渐变拉拽、跟着遮罩
+    # 形状变形（这正是之前「按遮罩扭曲」的根因）。
     yy, xx = np.mgrid[0:dh, 0:dw].astype(np.float32)
     cx = np.clip(paste_x + xx, 0, W - 1).astype(np.int32)
     cy = np.clip(paste_y + yy, 0, H - 1).astype(np.int32)
-    g = disp_arr[cy, cx]
-    m = mask_arr[cy, cx]
-    # 软死区：|g-128| 在 dead_zone 内时 off 随距离平滑趋零（不再硬置 0）。
-    # 旧版硬死区在 |g-128|=dead_zone 处从 0 突跳到 (dead_zone/128)*strength（strength=30 时
-    # 约 3.5px/像素），使重映射 d(off)/dx>1 发生折叠(fold-over)，文字在 128±dead_zone
-    # 轮廓线上被对折/重影，表现为「上下撕裂」。软斜坡彻底消除该台阶，褶皱位移量不变。
-    if dead_zone and dead_zone > 0:
-        d = np.abs(g - 128.0)
-        ramp = np.clip(d / float(dead_zone), 0.0, 1.0)
-        g = 128.0 + (g - 128.0) * ramp
-    off = (g - 128.0) / 128.0 * strength * m
-    map_x = xx - off
-    map_y = yy - off
+
+    if disp_mode == "gradient":
+        # 2D 梯度位移：把 disp 当高度场，沿褶皱切线方向把印花压缩/拉伸，
+        # 使其真正「裹」在衣服褶皱上。位移量正比于高度场梯度（即褶皱陡度）。
+        gx = cv2.Sobel(disp_arr, cv2.CV_32F, 1, 0, ksize=5)
+        gy = cv2.Sobel(disp_arr, cv2.CV_32F, 0, 1, ksize=5)
+        mag = np.sqrt(gx.astype(np.float32) ** 2 + gy.astype(np.float32) ** 2)
+        maxmag = float(mag.max()) if mag.max() > 1e-3 else 1.0
+        scale = strength / maxmag
+        offx = gx[cy, cx] * scale
+        offy = gy[cy, cx] * scale
+        # 防重影(重映射折叠)：对位移场做梯度限幅，保证重映射处处单射。
+        # 尖锐褶皱脊处梯度方向 180° 翻转会导致折叠镜像，限幅把这种局部反转压平，
+        # 但保留大尺度褶皱跟随（整体位移量基本不变）。
+        offx, offy = _limit_gradient_2d(offx, offy, limit=0.45)
+        map_x = xx - offx
+        map_y = yy - offy
+    else:
+        # 各向同性（旧行为）：单通道位移 off=(g-128)/128*strength，x/y 同推。
+        # 同样不加遮罩，仅由 disp 决定；表现为大尺度「鼓包/平移」，褶皱贴合弱。
+        g = disp_arr[cy, cx]
+        off = (g - 128.0) / 128.0 * strength
+        map_x = xx - off
+        map_y = yy - off
 
     out = _remap_channels(arr, map_x, map_y)
     return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), "RGBA")
@@ -539,6 +631,7 @@ def apply_mockup_transform(
     disp_smooth: float = 80.0,
     disp_dead_zone: float = 15.0,
     disp_mask_feather: float = 5.0,
+    disp_mode: str = "isotropic",
     shadow_opacity: float = 0.22,
     highlight_opacity: float = 0.22,
     occluder: str | Path | None = None,
@@ -551,11 +644,19 @@ def apply_mockup_transform(
     displacement(disp，限 mask) → occlusion(褶皱折入隐藏) → shadow(Multiply) +
     highlight(Overlay) 转移，限印花∩衣服区。
     disp_smooth/disp_dead_zone：位移低频化（只保留大褶皱）+ 小起伏死区，防水波纹。
+    disp_mode：isotropic=旧各向同性鼓包；gradient=沿褶皱切线 2D 梯度位移（贴合褶皱）。
     """
     design = Image.open(str(design_path)).convert("RGBA")
     if shirt_color is not None:
         design = prepare_design_for_shirt(design, shirt_color, prepare_method)
     background, foreground, fg_position, canvas_size = load_any_template(template_path)
+
+    # 提前加载遮挡物，后续会同时用于：① 位移阶段屏蔽手/前景的伪梯度；② 最后盖在印花上。
+    occluder_im = None
+    if occluder is not None:
+        occluder_im = Image.open(str(occluder)).convert("RGBA")
+        if occluder_im.size != canvas_size:
+            occluder_im = occluder_im.resize(canvas_size, Image.Resampling.LANCZOS)
 
     transformed = apply_transform_ps(design, final_w, final_h, rotation_degrees)
     paste_x, paste_y, effective_bbox = calculate_effective_position(
@@ -578,7 +679,7 @@ def apply_mockup_transform(
         transformed = apply_displacement(
             transformed, disp_im, mask_im, paste_x, paste_y, disp_strength,
             smooth=disp_smooth, dead_zone=disp_dead_zone,
-            mask_feather=disp_mask_feather,
+            mask_feather=disp_mask_feather, occluder=occluder_im, disp_mode=disp_mode,
         )
 
     if use_tpl and occ_im is not None and occlusion_strength > 0:
@@ -611,8 +712,8 @@ def apply_mockup_transform(
         canvas.paste(foreground, fg_position, foreground)
 
     # 最上层：生成的遮挡物（手/头发/配饰），自然盖在印花图案之上
-    if occluder is not None:
-        canvas = _paste_occluder_top(canvas, occluder)
+    if occluder_im is not None:
+        canvas.paste(occluder_im, (0, 0), occluder_im)
 
     canvas_rgb = canvas.convert("RGB")
     canvas_rgb.save(str(output_path), "JPEG", quality=quality, optimize=True)
@@ -652,6 +753,7 @@ def apply_mockup(
     disp_smooth: float = 80.0,
     disp_dead_zone: float = 15.0,
     disp_mask_feather: float = 5.0,
+    disp_mode: str = "isotropic",
     shadow_opacity: float = 0.22,
     highlight_opacity: float = 0.22,
     occluder: str | Path | None = None,
@@ -667,6 +769,12 @@ def apply_mockup(
     if shirt_color is not None:
         design = prepare_design_for_shirt(design, shirt_color, prepare_method)
     background, foreground, fg_position, canvas_size = load_template(template_path)
+
+    occluder_im = None
+    if occluder is not None:
+        occluder_im = Image.open(str(occluder)).convert("RGBA")
+        if occluder_im.size != canvas_size:
+            occluder_im = occluder_im.resize(canvas_size, Image.Resampling.LANCZOS)
 
     design_resized = design.resize((int(final_w), int(final_h)), Image.Resampling.LANCZOS)
     dw, dh = design_resized.size
@@ -688,7 +796,7 @@ def apply_mockup(
         design_resized = apply_displacement(
             design_resized, disp_im, mask_im, left, top, disp_strength,
             smooth=disp_smooth, dead_zone=disp_dead_zone,
-            mask_feather=disp_mask_feather,
+            mask_feather=disp_mask_feather, occluder=occluder_im, disp_mode=disp_mode,
         )
 
     if use_tpl and occ_im is not None and occlusion_strength > 0:
@@ -710,8 +818,8 @@ def apply_mockup(
     canvas.paste(foreground, fg_position, foreground)
 
     # 最上层：生成的遮挡物（手/头发/配饰），自然盖在印花图案之上
-    if occluder is not None:
-        canvas = _paste_occluder_top(canvas, occluder)
+    if occluder_im is not None:
+        canvas.paste(occluder_im, (0, 0), occluder_im)
 
     canvas_rgb = canvas.convert("RGB")
     canvas_rgb.save(str(output_path), "JPEG", quality=quality, optimize=True)

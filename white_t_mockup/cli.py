@@ -188,6 +188,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="位移死区（灰度级，默认 15）：|disp-128| 小于此值的区域不扭曲",
     )
     parser.add_argument(
+        "--disp-mode",
+        choices=["isotropic", "gradient"],
+        default="isotropic",
+        help="位移模式：isotropic=旧各向同性鼓包(平移)；gradient=沿褶皱切线 2D 梯度位移(贴合褶皱形态)",
+    )
+    parser.add_argument(
         "--shadow-opacity",
         type=float,
         default=0.22,
@@ -329,6 +335,7 @@ def main() -> None:
             disp_strength=args.disp_strength,
             disp_smooth=args.disp_smooth,
             disp_dead_zone=args.disp_dead_zone,
+            disp_mode=args.disp_mode,
             saturation=saturation,
             brightness=brightness,
             shadow_opacity=shadow_opacity,
