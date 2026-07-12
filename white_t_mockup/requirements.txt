@@ -1,0 +1,11 @@
+# white_t_mockup 运行依赖（模特图贴图引擎）
+# 运行时需 PYTHONPATH=E:/python_packages;E:/Kimi Code
+#   - E:/python_packages 提供 cv2 / numpy / torch 等（本机实际安装位置）
+#   - E:/Kimi Code 提供 white_t_mockup 包本身
+
+Pillow>=10.0
+numpy>=1.24
+opencv-python>=4.8        # 实际来自 E:/python_packages，需 PYTHONPATH 注入
+
+# 说明：torch / kornia 等若用到也来自 E:/python_packages，不通过 pip 安装。
+# 纯软件运行，无需 Photoshop。

@@ -147,9 +147,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--preserve-color",
         action="store_true",
-        help="原样保色贴图：只做几何(遮罩裁剪+褶皱扭曲)，完全不改颜色/亮度"
-             "（自动关反色/显色、阴影正片叠底、高光叠加、降饱和，饱和/亮度=1.0，普通混合）。"
-             "褶皱立体感仅由 displacement 位移扭曲体现，与衣服无色差。",
+        help="原样保色贴图：色相/饱和度零偏差，仅由【布料同步明度】按同位置布料"
+             "明暗调制印花明度(V)，实现『印花与布料同光同暗』；关闭反色/显色、"
+             "旧阴影正片叠底/高光叠加(会偏色)、降饱和。褶皱立体感由 displacement"
+             "位移扭曲 + 布料同步明度共同体现，与衣服无色差。",
     )
     parser.add_argument(
         "--blur",
@@ -210,6 +211,20 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=1.0,
         help="褶皱折入隐藏强度（读 _tpl/occlusion.png，1.0=完全按遮挡隐藏，0=关闭）",
+    )
+    # ---- 布料同步明度（印花与布料同光同暗，H/S 零偏差）----
+    parser.add_argument(
+        "--no-fabric-shading",
+        action="store_true",
+        help="关闭布料同步明度（默认开启）：开启时仅缩放印花明度(V)使其严格跟随"
+             "同位置布料明暗，色相/饱和度零偏差，深褶处自然隐没；关闭则退回旧阴影转移。",
+    )
+    parser.add_argument(
+        "--shading-blur",
+        type=float,
+        default=4.0,
+        help="布料明暗场高斯平滑 sigma（默认 4）：仅用于抗锯齿，值越小暗缝越不向外扩散；"
+             "深缝判定由局部对比完成，与本品无关。",
     )
     # ---- 顶层遮挡物（胚衣遮罩 *_occluder.png）：贴图被前景遮挡物盖住，更真实 ----
     parser.add_argument(
@@ -342,6 +357,8 @@ def main() -> None:
             highlight_opacity=highlight_opacity,
             occluder=args.occluder,
             occlusion_strength=args.occlusion_strength,
+            fabric_shading=not args.no_fabric_shading,
+            shading_blur=args.shading_blur,
         )
         mode_tag = " [保色]" if args.preserve_color else ""
         print(
@@ -382,6 +399,8 @@ def main() -> None:
             highlight_opacity=highlight_opacity,
             occluder=args.occluder,
             occlusion_strength=args.occlusion_strength,
+            fabric_shading=not args.no_fabric_shading,
+            shading_blur=args.shading_blur,
         )
         mode_tag = " [保色]" if args.preserve_color else ""
         print(

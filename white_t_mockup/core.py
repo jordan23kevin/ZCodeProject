@@ -1,6 +1,16 @@
 # -*- coding: utf-8 -*-
 """白 T 恤样机贴图核心逻辑。
 
+v1.8.0 (2026-07-12) 布料同步明度（印花与布料同光同暗）：
+  - 新增 apply_fabric_synced_shading：仅缩放印花 HSV 的 V（明度），H/S 零偏差，
+    明度严格按同位置布料相对明暗比（shading=布料局部亮度/平整处亮度∈(0,1]）同步，
+    实现「印花固有色=源文件、明度与布料同光同暗」。过渡高斯平滑，无硬边。
+  - 深褶处 shading→0，印花 V→0 与布料阴影融合、细节消融（配合 occlusion 隐藏）。
+  - apply_mockup_transform 新增 fabric_shading(默认 True)/shading_blur 参数；
+    开启时基于衬衫模板亮度场算 shading 并施加，同时【关闭】旧 transfer_shadow_highlight
+    （其 multiply/overlay 会偏色、违背零色差），由本步骤统一处理明度。
+  - 手部/前景遮挡区 shading 强制置 1（不调制），避免误压暗。
+
 v1.7.0 (2026-07-12) 2D 梯度褶皱贴合 + 手部防扭曲 + 消除重影：
   - apply_displacement 新增 disp_mode="gradient"：把 disp 当高度场，沿褶皱切线做
     2D 梯度位移（off_x=strength*∂h/∂x, off_y=strength*∂h/∂y），印花真正「裹」在
@@ -596,6 +606,129 @@ def transfer_shadow_highlight(
     canvas.paste(out, (bx0, by0), out)
 
 
+def _luminance(rgb_uint8: np.ndarray) -> np.ndarray:
+    """计算 BT.709 亮度（值域 [0,1]），输入 uint8 RGB (H,W,3)。"""
+    return (
+        0.2126 * rgb_uint8[..., 0]
+        + 0.7152 * rgb_uint8[..., 1]
+        + 0.0722 * rgb_uint8[..., 2]
+    ).astype(np.float32) / 255.0
+
+
+def apply_fabric_synced_shading(
+    design: Image.Image,
+    shading: np.ndarray,
+    paste_x: int,
+    paste_y: int,
+    smooth: float = 25.0,
+) -> Image.Image:
+    """布料同步明度：仅缩放印花 HSV 的 V（明度），H/S 零偏差，实现「印花与布料同光同暗」。
+
+    核心原则（用户规范 2026-07-12）：
+      - 印花【固有色（反射率）】与源文件完全一致：只动 V，H/S 不动 → 色相/饱和度/色值零偏差。
+      - 明度严格跟随同位置布料：shading(x,y)=布料局部亮度 / 布料平整处亮度（≈1，越暗越小）。
+        印花 V_out = V_src × shading，故印花与布料【相对明暗】处处一致——布料暗处印花同比例变暗，
+        布料平整处印花保持源亮度，杜绝「布料暗了印花仍高亮」或「印花比布料更暗」。
+      - 过渡经高斯平滑，与褶皱起伏完全贴合、无硬边/断层。
+      - 深褶处 shading→0，印花 V→0 与布料阴影自然融合、细节消融（配合 occlusion 隐藏，杜绝悬浮感）。
+      - 仅作用于印花不透明像素，透明底不参与；手部/前景遮挡区 shading 已置 1（不调制）。
+
+    分级自然成立：微褶皱 shading≈1 → 几何零变形+明度几乎不变；中褶皱 shading<1 →
+    随曲面弯曲（位移）+ 明度同步中降；深褶皱 shading→0 → 非线性压缩（位移）+ 深度压暗融合。
+    """
+    import cv2
+    sh = shading.astype(np.float32)
+    if smooth and smooth > 0:
+        sh = cv2.GaussianBlur(sh, (0, 0), float(smooth))
+    sh = np.clip(sh, 0.0, 1.0)
+
+    dw, dh = design.size
+    Hc, Wc = sh.shape
+    yy, xx = np.mgrid[0:dh, 0:dw]
+    gx = np.clip(paste_x + xx, 0, Wc - 1).astype(np.int32)
+    gy = np.clip(paste_y + yy, 0, Hc - 1).astype(np.int32)
+    factor = sh[gy, gx]  # (dh, dw) 与布料同坐标系，印花落点一一对应
+
+    arr = np.array(design).astype(np.float32)
+    alpha = arr[:, :, 3:4] / 255.0
+    rgb = arr[:, :, :3] / 255.0
+    hsv = _rgb_to_hsv(rgb)
+    # 仅不透明像素调制；透明底保持原样
+    modulated = hsv[:, :, 2] * factor
+    hsv[:, :, 2] = np.where(alpha[:, :, 0] > 0.01, modulated, hsv[:, :, 2])
+    rgb2 = _hsv_to_rgb(np.clip(hsv, 0.0, 1.0))
+    arr[:, :, :3] = rgb2 * 255.0
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
+
+
+def _compute_fabric_shading_field(
+    background: Image.Image,
+    design: Image.Image,
+    paste_x: int,
+    paste_y: int,
+    occluder_im: Image.Image | None = None,
+) -> np.ndarray:
+    """仅压暗「深褶皱窄缝」的布料同步明度场（用户规范 2026-07-12 修正目标）。
+
+    判据用【局部对比】而非全局亮度：
+      ratio = 布料亮度 / 局部高斯模糊亮度(σ=18)
+        - 平整 / 均匀区（含黑衫整片暗布）ratio≈1 → factor=1，印花完全原始亮度（零压暗）
+        - 深褶皱窄缝（比周围明显更暗的局部暗线）ratio<<1 → factor=布料绝对亮度/平整基准，
+          印花同步压到与布料阴影同暗，无缝融合、细节消融（杜绝「悬浮感」）
+    用窄模糊半径突出「窄缝」、抑制宽褶，确保只压最深的细缝、不向外扩散；
+    仅缩放印花 HSV 的 V（H/S 零偏差）。
+    """
+    import cv2
+    bg_rgb = np.array(background.convert("RGB")).astype(np.float32)
+    bg_lum = _luminance(bg_rgb)
+    sel = bg_lum > 0
+    # 平整基准：只取印花 bbox 内布料亮部（95 分位），用于深缝内「绝对亮度匹配布料」
+    ph, pw = design.size
+    bx0 = max(0, paste_x); by0 = max(0, paste_y)
+    bx1 = min(bg_lum.shape[1], paste_x + pw)
+    by1 = min(bg_lum.shape[0], paste_y + ph)
+    region = bg_lum[by0:by1, bx0:bx1]
+    rsel = region[region > 0]
+    if rsel.size > 10:
+        L_ref = float(np.percentile(rsel, 95))
+    elif sel.any():
+        L_ref = float(np.percentile(bg_lum[sel], 95))  # 兜底：印花区无有效布料时退回整图
+    else:
+        L_ref = 1.0
+    if L_ref < 1e-3:
+        L_ref = 1.0
+    # 局部对比：窄模糊(σ=18)突出细缝、抑制宽褶
+    L_local = cv2.GaussianBlur(bg_lum, (0, 0), 18.0)
+    L_local = np.clip(L_local, 1e-3, None)
+    ratio = bg_lum / L_local
+    R_T = 0.5       # 局部对比低于此值才判定为「深缝」
+    MARGIN = 0.3    # 过渡带：ratio∈[R_T, R_T+MARGIN] 平滑过渡（窄且自然，不扩散）
+    w = np.clip((R_T + MARGIN - ratio) / MARGIN, 0.0, 1.0)  # 深缝→1，平整→0
+    # 空间约束：仅允许【左右两侧腰胯】深缝压暗（用户规范 2026-07-12 修正目标）。
+    # 胸口/腹部主体平整区一律不压暗。画布归一化软掩码：下身(y>~0.50)且两侧(x<~0.38 或 >~0.62)。
+    Hc, Wc = bg_lum.shape
+    yy, xx = np.mgrid[0:Hc, 0:Wc]
+    v_gate = np.clip((yy / Hc - 0.50) / 0.06, 0.0, 1.0)
+    x_side = np.maximum(
+        np.clip((0.38 - xx / Wc) / 0.05, 0.0, 1.0),
+        np.clip((xx / Wc - 0.62) / 0.05, 0.0, 1.0),
+    )
+    w = w * (v_gate * x_side)
+    target = np.clip(bg_lum / L_ref, 0.0, 1.0)   # 深缝内印花绝对亮度=布料，无缝融合
+    field = (1.0 - w) * 1.0 + w * target
+    # 手部/前景遮挡区：shading 置 1（不调制），避免手区误把印花压暗
+    if occluder_im is not None:
+        occ_a = np.array(occluder_im.split()[-1]).astype(np.float32) / 255.0
+        if occ_a.shape != field.shape:
+            occ_a = np.array(
+                Image.fromarray((occ_a * 255).astype(np.uint8)).resize(
+                    (field.shape[1], field.shape[0]), Image.Resampling.LANCZOS
+                )
+            ).astype(np.float32) / 255.0
+        field = field * (1.0 - occ_a) + 1.0 * occ_a
+    return field
+
+
 def _load_tpl_optional(tpl_dir: Path, name: str, canvas_size: Tuple[int, int]):
     """加载模板衍生图（L 模式，对齐 canvas 尺寸），不存在返回 None。"""
     p = tpl_dir / name
@@ -636,6 +769,8 @@ def apply_mockup_transform(
     highlight_opacity: float = 0.22,
     occluder: str | Path | None = None,
     occlusion_strength: float = 1.0,
+    fabric_shading: bool = True,
+    shading_blur: float = 4.0,
 ) -> dict:
     """
     新版贴图方法：resize 到最终像素 → 旋转 → 按有效像素定位 → 混合。
@@ -693,16 +828,30 @@ def apply_mockup_transform(
             transformed, saturation=saturation, brightness=brightness, blur_radius=blur_radius
         )
 
+    # 布料同步明度（仅压「深褶皱窄缝」）：平整/均匀区（含黑衫整片暗布）保持原始亮度，
+    # 只有比周围明显更暗的局部窄缝才按绝对亮度同步压暗（详见 _compute_fabric_shading_field）。
+    # 仅缩放印花 HSV 的 V（H/S 零偏差），开启时关闭旧的 multiply/overlay 阴影转移（其会偏色）。
+    fabric_shading_field = None
+    if fabric_shading and use_tpl:
+        fabric_shading_field = _compute_fabric_shading_field(
+            background, transformed, paste_x, paste_y, occluder_im
+        )
+
+    if fabric_shading_field is not None:
+        transformed = apply_fabric_synced_shading(
+            transformed, fabric_shading_field, paste_x, paste_y, smooth=shading_blur
+        )
+
     canvas = Image.new("RGBA", canvas_size, (255, 255, 255, 255))
     canvas.paste(background, (0, 0), background)
     paste_with_blend(canvas, transformed, (paste_x, paste_y), blend_mode)
 
-    if use_tpl:
+    if use_tpl and not fabric_shading:
         transfer_shadow_highlight(
             canvas, transformed, paste_x, paste_y, mask_im, shadow_im, highlight_im,
             shadow_opacity=shadow_opacity, highlight_opacity=highlight_opacity,
         )
-    elif realism:
+    elif realism and not fabric_shading:
         overlay_texture(
             canvas, background, transformed, paste_x, paste_y,
             mode=texture_mode, opacity=texture_opacity,
@@ -758,6 +907,8 @@ def apply_mockup(
     highlight_opacity: float = 0.22,
     occluder: str | Path | None = None,
     occlusion_strength: float = 1.0,
+    fabric_shading: bool = True,
+    shading_blur: float = 4.0,
 ) -> dict:
     """
     旧版贴图方法：resize 到最终像素 → 按顶部/中心定位 → 混合 → 盖手部遮罩（仅 PSD）。
@@ -805,11 +956,23 @@ def apply_mockup(
         )
         used_occlusion = True
 
+    # 布料同步明度（仅压「深褶皱窄缝」，同新版 apply_mockup_transform）
+    fabric_shading_field = None
+    if fabric_shading and use_tpl:
+        fabric_shading_field = _compute_fabric_shading_field(
+            background, design_resized, left, top, occluder_im
+        )
+
+    if fabric_shading_field is not None:
+        design_resized = apply_fabric_synced_shading(
+            design_resized, fabric_shading_field, left, top, smooth=shading_blur
+        )
+
     canvas = Image.new("RGBA", canvas_size, (255, 255, 255, 255))
     canvas.paste(background, (0, 0), background)
     paste_with_blend(canvas, design_resized, (left, top), blend_mode)
 
-    if use_tpl:
+    if use_tpl and not fabric_shading:
         transfer_shadow_highlight(
             canvas, design_resized, left, top, mask_im, shadow_im, highlight_im,
             shadow_opacity=shadow_opacity, highlight_opacity=highlight_opacity,
