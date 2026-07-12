@@ -346,12 +346,18 @@ def apply_displacement(
     paste_x: int,
     paste_y: int,
     strength: float = 8.0,
+    smooth: float = 80.0,
+    dead_zone: float = 15.0,
 ) -> Image.Image:
     """
     按置换图 disp（画布尺寸 L 模式）对 design 做形变，限 mask 区域。
 
     disp 灰度 128=不偏移，>128 向 +，<128 向 -；strength 为最大像素偏移。
     mask=0 处不偏移。各向同性（x/y 同灰度偏移）。paste_x/paste_y 为 design 在画布的左上角。
+
+    smooth: 对 disp 做大尺度高斯平滑（sigma 像素）后再取偏移——只保留大褶皱形变，
+            抹掉小褶皱/布纹等高频分量，消除印花"水波纹"抖动。0=不平滑（旧行为）。
+    dead_zone: 灰度死区。|g-128| < dead_zone 的区域偏移强制为 0——小起伏区域完全不扭曲。
     """
     dw, dh = design.size
     arr = np.array(design).astype(np.float32)
@@ -359,11 +365,19 @@ def apply_displacement(
     mask_arr = np.array(mask.convert("L")).astype(np.float32) / 255.0
     H, W = disp_arr.shape
 
+    # 低频化：只让大褶皱参与位移（sigma 越大，保留的褶皱尺度越大）
+    if smooth and smooth > 0:
+        import cv2
+        disp_arr = cv2.GaussianBlur(disp_arr, (0, 0), float(smooth))
+
     yy, xx = np.mgrid[0:dh, 0:dw].astype(np.float32)
     cx = np.clip(paste_x + xx, 0, W - 1).astype(np.int32)
     cy = np.clip(paste_y + yy, 0, H - 1).astype(np.int32)
     g = disp_arr[cy, cx]
     m = mask_arr[cy, cx]
+    # 死区：小起伏不扭曲
+    if dead_zone and dead_zone > 0:
+        g = np.where(np.abs(g - 128.0) < float(dead_zone), 128.0, g)
     off = (g - 128.0) / 128.0 * strength * m
     map_x = xx - off
     map_y = yy - off
@@ -499,6 +513,8 @@ def apply_mockup_transform(
     texture_opacity: float = 0.25,
     tpl_dir: str | Path | None = None,
     disp_strength: float = 8.0,
+    disp_smooth: float = 80.0,
+    disp_dead_zone: float = 15.0,
     shadow_opacity: float = 0.22,
     highlight_opacity: float = 0.22,
     occluder: str | Path | None = None,
@@ -510,6 +526,7 @@ def apply_mockup_transform(
     支持 PSD/PNG 模板；tpl_dir 含 mask.png 时启用模板管线：
     displacement(disp，限 mask) → occlusion(褶皱折入隐藏) → shadow(Multiply) +
     highlight(Overlay) 转移，限印花∩衣服区。
+    disp_smooth/disp_dead_zone：位移低频化（只保留大褶皱）+ 小起伏死区，防水波纹。
     """
     design = Image.open(str(design_path)).convert("RGBA")
     if shirt_color is not None:
@@ -535,7 +552,8 @@ def apply_mockup_transform(
 
     if use_tpl and disp_im is not None:
         transformed = apply_displacement(
-            transformed, disp_im, mask_im, paste_x, paste_y, disp_strength
+            transformed, disp_im, mask_im, paste_x, paste_y, disp_strength,
+            smooth=disp_smooth, dead_zone=disp_dead_zone,
         )
 
     if use_tpl and occ_im is not None and occlusion_strength > 0:
@@ -606,6 +624,8 @@ def apply_mockup(
     prepare_method: Literal["value_invert", "silhouette", "none", "dark_boost", "white_underbase"] = "white_underbase",
     tpl_dir: str | Path | None = None,
     disp_strength: float = 8.0,
+    disp_smooth: float = 80.0,
+    disp_dead_zone: float = 15.0,
     shadow_opacity: float = 0.22,
     highlight_opacity: float = 0.22,
     occluder: str | Path | None = None,
@@ -640,7 +660,8 @@ def apply_mockup(
 
     if use_tpl and disp_im is not None:
         design_resized = apply_displacement(
-            design_resized, disp_im, mask_im, left, top, disp_strength
+            design_resized, disp_im, mask_im, left, top, disp_strength,
+            smooth=disp_smooth, dead_zone=disp_dead_zone,
         )
 
     if use_tpl and occ_im is not None and occlusion_strength > 0:

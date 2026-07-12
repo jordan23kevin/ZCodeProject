@@ -176,6 +176,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="置换最大像素偏移（默认 12.0）",
     )
     parser.add_argument(
+        "--disp-smooth",
+        type=float,
+        default=80.0,
+        help="位移图高斯平滑 sigma（默认 80）：只保留大褶皱形变，消除小褶皱水波纹；0=不平滑",
+    )
+    parser.add_argument(
+        "--disp-dead-zone",
+        type=float,
+        default=15.0,
+        help="位移死区（灰度级，默认 15）：|disp-128| 小于此值的区域不扭曲",
+    )
+    parser.add_argument(
         "--shadow-opacity",
         type=float,
         default=0.22,
@@ -315,6 +327,8 @@ def main() -> None:
             texture_opacity=args.texture_opacity,
             tpl_dir=tpl_dir,
             disp_strength=args.disp_strength,
+            disp_smooth=args.disp_smooth,
+            disp_dead_zone=args.disp_dead_zone,
             saturation=saturation,
             brightness=brightness,
             shadow_opacity=shadow_opacity,
@@ -355,6 +369,8 @@ def main() -> None:
             prepare_method=prepare_method,
             tpl_dir=tpl_dir,
             disp_strength=args.disp_strength,
+            disp_smooth=args.disp_smooth,
+            disp_dead_zone=args.disp_dead_zone,
             shadow_opacity=shadow_opacity,
             highlight_opacity=highlight_opacity,
             occluder=args.occluder,
