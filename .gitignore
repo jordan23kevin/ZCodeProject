@@ -33,4 +33,5 @@ bridge.log.*.bak
 # 测试/临时产物(下划线前缀)
 _*.jpg
 _*.png
+_*.py
 _mockup_output/
