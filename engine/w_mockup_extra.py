@@ -1,75 +1,233 @@
 # -*- coding: utf-8 -*-
-"""AI 去背/贴图 OS 的额外 W 胚衣贴图 helper。
+"""单面贴图新流程 v2.0（模特图贴图）：02_REM_BG 里只有 W 或只有 B 时，用 white_t_mockup 胚衣出图。
 
-在原有 PS 贴图流程后调用：随机选一个 W 后缀胚衣 preset（当前如 W3.psd），
-用 white_t_mockup 额外生成一张 W 胚衣白 T 图。
+变更 v2.0（架构重构）：
+  - 胚衣来源从 presets.json/CSV 改为素材库（D:\\Semems WB\\03_MATERIAL\\）。
+  - 参数从素材库同名 .meta.json 读取（width/height/rotation/highest_y/center_x）。
+  - 扭曲素材自动探测 D:\\Semems\\1胚衣\\_tpl\\<款名>\\（mask/disp/shadow/highlight/occlusion）。
+  - 黑衫贴图用 --preserve-color（原样保色，几何变形 only）。
+  - 不再依赖 presets.json 和 胚衣参数表_模板.csv。
+
+变更 v1.1：
+  - 黑衫从 `--blend-mode screen` 改为 `--preserve-color`。
+
+胚衣选择规则：
+- W 款出 4 张：随机 2 白胚衣 + 随机 2 黑胚衣（不足则有多少出多少）。
+- B 款出 2 张：随机 1 白胚衣 + 随机 1 黑胚衣。
+- 某颜色无候选则跳过该颜色（记入返回 msg），不报错。
+
+去背图颜色路由（check_rem 调用时传入）：
+- cut_path：指定用哪张去背图（默认 ``{dx}_{role}_cut.png``）。
+- only_color：``"白"`` 只贴白T 胚衣、``"黑"`` 只贴黑T 胚衣、``None`` 两色都贴。
 """
 
 from __future__ import annotations
 
 import json
+import random
+import re
 from pathlib import Path
 
-
+# white_t_mockup 工程根目录与专用解释器（psd_tools/PIL 都装在这个 venv 里）
 W_MOCKUP_ROOT = Path(r"E:\Kimi Code")
 W_MOCKUP_PY = W_MOCKUP_ROOT / "psd_env" / "Scripts" / "python.exe"
-W_MOCKUP_PRESETS = W_MOCKUP_ROOT / "white_t_mockup" / "presets.json"
+
+# 素材库根目录（胚衣 jpg + meta.json 参数）
+MATERIAL_DIR = Path(r"D:\Semems WB\03_MATERIAL")
+# 扭曲素材根目录（mask/disp/shadow/highlight/occlusion）
+TPL_ROOT = Path(r"D:\Semems\1胚衣\_tpl")
+
+# 素材库分类目录映射：(role, color) → 目录
+_CATEGORY_MAP = {
+    ("W", "白"): MATERIAL_DIR / "W白",
+    ("W", "黑"): MATERIAL_DIR / "W黑",
+    ("B", "白"): MATERIAL_DIR / "B白",
+    ("B", "黑"): MATERIAL_DIR / "B黑",
+}
+
+# W 款各颜色固定使用的正面胚衣（素材库中的 stem 名）
+_W_MANDATORY_WHITE = "白W11"
+_W_MANDATORY_BLACK = "黑W11"
 
 
-def _load_w_template_names() -> list[str]:
-    """从 white_t_mockup/presets.json 读取 W 后缀胚衣模板名。"""
-    if not W_MOCKUP_PRESETS.exists():
-        return []
+def _read_meta(embryo_path: Path) -> dict | None:
+    """读取素材库胚衣的 .meta.json 参数。返回 None 表示缺失或损坏。"""
+    meta_path = embryo_path.parent / (embryo_path.stem + ".meta.json")
+    if not meta_path.exists():
+        return None
     try:
-        data = json.loads(W_MOCKUP_PRESETS.read_text(encoding="utf-8"))
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        w = data.get("width", 0)
+        h = data.get("height", 0)
+        if not w or not h or w <= 0 or h <= 0:
+            return None
+        return {
+            "final_w": int(w),
+            "final_h": int(h),
+            "rotation": float(data.get("rotation", 0)),
+            "effective_top_y": int(data.get("highest_y", 0)),
+            "effective_center_x": int(data.get("center_x", 670)),
+        }
     except Exception:
-        return []
-
-    names = []
-    for name in data.get("templates", {}).keys():
-        upper = name.upper()
-        # W 胚衣：W3.psd / W4.png 这类；排除 BW。
-        if upper.startswith("W") and not upper.startswith("BW") and upper.endswith((".PSD", ".PNG", ".JPG", ".JPEG")):
-            names.append(name)
-    return sorted(names)
+        return None
 
 
-def generate_w_template_mockup(dx: str, base_dir: Path, runner) -> tuple[bool, str]:
-    """为指定 DX 额外生成一张 W 胚衣贴图。
+def _find_tpl_dir(embryo_path: Path) -> str | None:
+    """自动探测扭曲素材目录：D:\\Semems\\1胚衣\\_tpl\\<款名>\\。"""
+    cand = TPL_ROOT / embryo_path.stem
+    if (cand / "mask.png").exists():
+        return str(cand)
+    return None
 
-    runner 由 check_rem.py 传入，签名与 _run_ps_script_with_timeout 相同：
-    runner(cmd, cwd=..., label=...) -> (ok, msg)
+
+def _find_occluder(embryo_path: Path) -> str | None:
+    """自动探测顶层遮挡物：<款名>_occluder.png。"""
+    occ = embryo_path.parent / (embryo_path.stem + "_occluder.png")
+    if occ.exists():
+        return str(occ)
+    return None
+
+
+def _list_material_embryos(role: str, color: str) -> list[dict]:
+    """列出素材库中指定 role+color 的可用胚衣。
+
+    返回 [{path, stem, meta, tpl_dir, occluder}, ...]，仅包含有有效 meta.json 的胚衣。
     """
-    rem_dir = base_dir / dx / "02_REM_BG"
-    up_dir = base_dir / dx / "03_UPLOAD"
-    cut_path = rem_dir / f"{dx}_W_cut.png"
+    cat_dir = _CATEGORY_MAP.get((role, color))
+    if not cat_dir or not cat_dir.is_dir():
+        return []
+    results = []
+    for fp in sorted(cat_dir.iterdir()):
+        if not fp.is_file():
+            continue
+        if fp.suffix.lower() not in (".jpg", ".jpeg", ".png"):
+            continue
+        # 跳过遮罩侧车文件
+        if any(fp.name.endswith(s) for s in ("_occluder.png", "_occluder_mask.png",
+                                              "_body_mask.png", "_parse.png", "_alpha.png")):
+            continue
+        meta = _read_meta(fp)
+        if meta is None:
+            continue
+        results.append({
+            "path": fp,
+            "stem": fp.stem,
+            "meta": meta,
+            "tpl_dir": _find_tpl_dir(fp),
+            "occluder": _find_occluder(fp),
+        })
+    return results
 
-    if not cut_path.exists():
-        return True, f"无 {cut_path.name}，跳过 W 胚衣"
 
-    templates = _load_w_template_names()
-    if not templates:
-        return True, "没有 W 胚衣 preset，跳过 W 胚衣"
+def _version_from_stem(stem: str) -> str:
+    """从胚衣文件名提取版本号：黑W4 → W4, 白B3 → B3。"""
+    return re.sub(r"^[黑白]", "", stem) or stem
 
-    # 固定优先使用 W3.psd；不存在时回退到第一个可用模板
-    template_name = "W3.psd" if "W3.psd" in templates else templates[0]
-    template_stem = Path(template_name).stem
-    out_path = up_dir / f"{dx}_W_{template_stem}_白T.jpg"
-    up_dir.mkdir(parents=True, exist_ok=True)
 
-    if not W_MOCKUP_PY.exists():
-        return False, f"W 胚衣 Python 不存在: {W_MOCKUP_PY}"
+def generate_single_side_mockup(
+    dx: str,
+    base_dir: Path,
+    role: str,
+    runner,
+    cut_path: str | Path | None = None,
+    only_color: str | None = None,
+) -> tuple[bool, str]:
+    """用素材库胚衣为单面款出模特图贴图。
 
-    cmd = [
-        str(W_MOCKUP_PY),
-        "-m",
-        "white_t_mockup",
-        str(cut_path),
-        str(out_path),
-        "--preset",
-        template_name,
-    ]
-    ok, msg = runner(cmd, cwd=str(W_MOCKUP_ROOT), label=f"W胚衣贴图({template_name})")
-    if not ok:
-        return False, f"W胚衣贴图失败: {dx} ({msg})"
-    return True, f"W胚衣贴图完成: {out_path.name}"
+    - dx: 款号，如 ``DX0001``
+    - base_dir: 项目根目录（其下有 ``<dx>/02_REM_BG``、``<dx>/03_UPLOAD``）
+    - role: ``"W"`` 或 ``"B"``
+    - runner: 等价于 check_rem.run_minimized 的可调用对象
+    - cut_path: 指定用哪张去背图（默认 ``<base_dir>/<dx>/02_REM_BG/<dx>_<role>_cut.png``）
+    - only_color: ``"白"`` 只贴白T 胚衣、``"黑"`` 只贴黑T 胚衣、``None`` 两色都贴
+
+    W 款出 4 张：固定 白W11/黑W11 + 各随机 1 其它。B 款出 2 张：各随机 1。
+    某颜色无候选则跳过该颜色（记入返回 msg），不报错。
+    失败返回 ``(False, 错误信息)``；任一颜色成功则 ok=True，逐张结果都写入 msg。
+    """
+    try:
+        if role not in ("W", "B"):
+            return False, f"不支持的单面角色: {role}"
+        if only_color not in (None, "白", "黑"):
+            return False, f"不支持的 only_color: {only_color}"
+        rem_dir = Path(base_dir) / dx / "02_REM_BG"
+        up_dir = Path(base_dir) / dx / "03_UPLOAD"
+        cut = Path(cut_path) if cut_path is not None else rem_dir / f"{dx}_{role}_cut.png"
+        if not cut.exists():
+            return False, f"缺少 {cut.name}"
+
+        if not W_MOCKUP_PY.exists():
+            return False, f"模特图贴图解释器不存在: {W_MOCKUP_PY}"
+
+        # 按颜色列出素材库胚衣
+        colors_to_do = []
+        if only_color is None or only_color == "白":
+            colors_to_do.append("白")
+        if only_color is None or only_color == "黑":
+            colors_to_do.append("黑")
+
+        selected: list[tuple[dict, str]] = []  # (embryo_info, color)
+        notes: list[str] = []
+        for color in colors_to_do:
+            pool = _list_material_embryos(role, color)
+            if not pool:
+                notes.append(f"{color}T 跳过：素材库无可用 {role}{color} 胚衣（或 meta.json 缺失/损坏）")
+                continue
+            if role == "W":
+                # W 款：固定正面胚衣 + 随机 1 张其它
+                mandatory = _W_MANDATORY_WHITE if color == "白" else _W_MANDATORY_BLACK
+                fixed = [e for e in pool if e["stem"] == mandatory]
+                others = [e for e in pool if e["stem"] != mandatory]
+                if fixed:
+                    selected.append((fixed[0], color))
+                if others:
+                    selected.append((random.choice(others), color))
+                if not fixed and not others:
+                    notes.append(f"{color}T 跳过：无可用胚衣")
+            else:
+                # B 款：随机 1 张
+                selected.append((random.choice(pool), color))
+
+        if not selected:
+            return False, f"无可用 {role} 模特图胚衣（素材库白/黑候选均为空或 meta.json 缺失）"
+
+        up_dir.mkdir(parents=True, exist_ok=True)
+
+        results: list[tuple[str, bool, str]] = []
+        for embryo, color in selected:
+            stem = embryo["stem"]
+            meta = embryo["meta"]
+            version = _version_from_stem(stem)
+            out = up_dir / f"{dx}_{version}_{color}T.jpg"
+
+            cmd = [
+                str(W_MOCKUP_PY), "-m", "white_t_mockup",
+                str(cut), str(out),
+                "--template", str(embryo["path"]),
+                "--final-w", str(meta["final_w"]),
+                "--final-h", str(meta["final_h"]),
+                "--rotate", str(meta["rotation"]),
+                "--effective-top-y", str(meta["effective_top_y"]),
+                "--effective-center-x", str(meta["effective_center_x"]),
+                "--disp-strength", "18",
+            ]
+            if embryo["tpl_dir"]:
+                cmd += ["--tpl-dir", embryo["tpl_dir"]]
+            if color == "黑":
+                cmd += ["--preserve-color"]
+            if embryo["occluder"]:
+                cmd += ["--occluder", embryo["occluder"]]
+
+            proc = runner(cmd, cwd=str(W_MOCKUP_ROOT), capture_output=True, text=True)
+            tag = f"{role}/{color}T/{stem}"
+            if getattr(proc, "returncode", 1) != 0:
+                tail = (getattr(proc, "stderr", "") or getattr(proc, "stdout", "") or "")[-400:]
+                results.append((stem, False, f"{tag} 失败: {tail}"))
+            else:
+                results.append((stem, True, f"{tag} 完成: {out.name}"))
+
+        ok = any(ok for _, ok, _ in results)
+        msg = "; ".join(notes + [text for _, _, text in results])
+        return ok, msg
+    except Exception as e:
+        return False, f"{role} 模特图贴图异常: {e}"
