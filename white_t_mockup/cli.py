@@ -215,6 +215,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="褶皱折入隐藏强度（读 _tpl/occlusion.png，1.0=完全按遮挡隐藏，0=关闭）",
     )
+    parser.add_argument(
+        "--occlusion-min-vis",
+        type=float,
+        default=0.0,
+        help="褶皱折入区域最低可见度（0=可完全隐藏；黑衫建议 0.25，防止露出黑底形成黑斑）",
+    )
     # ---- 布料同步明度（印花与布料同光同暗，H/S 零偏差）----
     parser.add_argument(
         "--no-fabric-shading",
@@ -367,6 +373,7 @@ def main() -> None:
             highlight_opacity=highlight_opacity,
             occluder=args.occluder,
             occlusion_strength=args.occlusion_strength,
+            occlusion_min_visibility=args.occlusion_min_vis,
             fabric_shading=not args.no_fabric_shading,
             shading_blur=args.shading_blur,
         )
@@ -409,6 +416,7 @@ def main() -> None:
             highlight_opacity=highlight_opacity,
             occluder=args.occluder,
             occlusion_strength=args.occlusion_strength,
+            occlusion_min_visibility=args.occlusion_min_vis,
             fabric_shading=not args.no_fabric_shading,
             shading_blur=args.shading_blur,
         )

@@ -229,7 +229,10 @@ def _harden_occluder_alpha(occ: Image.Image) -> Image.Image:
     r, g, b, a = occ.split()
     a_arr = np.array(a, dtype=np.uint16)
     if a_arr.max() > 0:
-        a_arr = (a_arr * 255 // a_arr.max()).clip(0, 255).astype(np.uint8)
+        a_arr = (a_arr * 255 // a_arr.max()).clip(0, 255)
+    # 始终归一成 uint8(L 模式)：全透明遮挡物(alpha 最大值=0)若不转换会保留
+    # uint16(I;16)，与 r/g/b 的 L 模式不符导致 Image.merge 报 mode mismatch 崩溃。
+    a_arr = a_arr.astype(np.uint8)
     a = Image.fromarray(a_arr)
     return Image.merge("RGBA", (r, g, b, a))
 
