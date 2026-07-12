@@ -351,6 +351,28 @@ def build_preview(img_bgr: np.ndarray, mask: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
+# 黑衫遮挡强度推荐（按衣服亮度，生成遮罩时一次性算好）
+# ---------------------------------------------------------------------------
+def recommend_occlusion_strength(shirt_luma: float) -> float:
+    """按黑衫整体亮度推荐遮挡强度（越黑→越弱，避免露出黑底形成黑斑）。
+
+    依据：黑衫上任何「把字藏淡」的操作都会露出底下黑布；衣服越黑，露出的黑底
+    越像黑洞/黑斑，因此越黑的胚衣遮挡强度应越低。实测锚点（用户目检确认）：
+      - 黑W2 衣服亮度≈32.8（最黑）→ 0.3（弱遮挡，字基本不藏）
+      - 黑W10 衣服亮度≈43.2（偏灰黑）→ 1.0（强遮挡，褶皱处自然隐没）
+    亮度区间 35~43 线性插值，<=35 取 0.3、>=43 取 1.0，整体夹在 [0.3, 1.0]。
+    仅用于黑衫（白衫/平铺不遮挡，强度恒 0）；该值存于 _tpl/<款>/occlusion_strength.txt，
+    贴图时直接读取，无需逐张手调。
+    """
+    lo, hi = 35.0, 43.0
+    if shirt_luma <= lo:
+        return 0.3
+    if shirt_luma >= hi:
+        return 1.0
+    return 0.3 + (1.0 - 0.3) * (shirt_luma - lo) / (hi - lo)
+
+
+# ---------------------------------------------------------------------------
 # 主生成函数
 # ---------------------------------------------------------------------------
 def generate_for_source(
@@ -378,6 +400,12 @@ def generate_for_source(
     coverage = float(mask[mask > 128].size) / float(mask.size)
     m_bool = mask > 128
     occ_hidden = float(((occlusion < 200) & m_bool).sum()) / float(max(m_bool.sum(), 1))
+    # 按衣服整体亮度推荐黑衫遮挡强度（生成遮罩时一次算好，贴图直接读，免逐张调）
+    shirt_luma = float(np.mean(shadow[m_bool]))
+    occ_strength = recommend_occlusion_strength(shirt_luma)
+    (out_dir / "occlusion_strength.txt").write_text(
+        f"{occ_strength:.3f}", encoding="utf-8"
+    )
     meta = {
         "source": str(raster_path.resolve()),
         "size": [int(img.shape[1]), int(img.shape[0])],
@@ -385,6 +413,8 @@ def generate_for_source(
         "color_hint": color_hint,
         "mask_coverage": round(coverage, 3),
         "occlusion_fold_ratio": round(occ_hidden, 3),
+        "shirt_luma": round(shirt_luma, 1),
+        "recommended_occlusion_strength": round(occ_strength, 3),
         "needs_manual_fix": coverage < 0.1 or coverage > 0.8,
         "note": "自动分割，请按 _preview/mask_overlay.jpg 检查；如有背景渗入或 T 恤缺失，用 PS 修正 mask.png 后重新运行脚本。",
     }
