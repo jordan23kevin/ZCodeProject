@@ -247,6 +247,7 @@ def compute_occlusion_map(
     img_bgr: np.ndarray,
     mask: np.ndarray,
     hide_strength: float = 0.85,
+    mode: str = "normal",
 ) -> np.ndarray:
     """生成褶皱可见性/遮挡图 occlusion.png（L 模式，255=完全可见，0=折入隐藏）。
 
@@ -259,6 +260,12 @@ def compute_occlusion_map(
 
     与 disp 的区别：disp 只「挪动」图案（亮度位移），从不隐藏；本图专门负责
     「褶皱折入处图案消失」，两者互补。
+
+    安全加强（mode="strong"）：仅基于照片真实亮度暗谷信号加深（t_lo 放宽到 70、
+    hide_strength 提到 0.95，并用 gamma=1.7 把「已部分隐藏」像素的可见度继续向
+    隐藏端推）。**不引入 disp 位移场**——旧 `strengthen_occlusion` 用位移场当深度
+    信号，在模特图大尺度光影下误判→大块消失（黑W2/白W3 曾出事），故禁用。
+    strong 模式只把「照片里本就最暗的窄缝」藏得更彻底，不会凭空制造新暗区。
     """
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
     gray = cv2.bilateralFilter(gray.astype(np.uint8), 9, 50, 50).astype(np.float32)
@@ -277,13 +284,22 @@ def compute_occlusion_map(
     groove = local - gray  # >0：比局部基准暗 = 处于凹谷/褶皱折入
     groove[m <= 0] = 0.0
 
+    if mode == "strong":
+        t_lo_pct, t_hi_pct, hide_strength, gamma = 70.0, 93.0, 0.95, 1.7
+    else:
+        t_lo_pct, t_hi_pct, gamma = 80.0, 98.0, 1.0
+
     inside = groove[m > 0]
-    t_lo = float(np.percentile(inside, 80))   # 仅最深 ~20% 的暗谷开始淡出
-    t_hi = float(np.percentile(inside, 98))   # 最深 ~2% 淡到最透明
+    t_lo = float(np.percentile(inside, t_lo_pct))   # 仅最深的一部分暗谷开始淡出
+    t_hi = float(np.percentile(inside, t_hi_pct))   # 最深的淡到最透明
     t_hi = max(t_hi, t_lo + 1.0)
 
     gn = np.clip((groove - t_lo) / (t_hi - t_lo), 0.0, 1.0)
     occ = 1.0 - gn * float(hide_strength)     # 谷越深，可见度越低
+    if gamma != 1.0:
+        # 加深：把「已部分隐藏」像素的可见度向隐藏端推；1.0(完全可见)保持不变，
+        # 因此平整/浅褶皱区域不会被连带压暗，只让深褶缝藏得更彻底。
+        occ = np.power(np.clip(occ, 0.0, 1.0), gamma)
     occ = occ * m + 1.0 * (1.0 - m)           # mask 外恒为完全可见（该处本无图案）
     occ = cv2.GaussianBlur(occ, (0, 0), sigmaX=2.0)  # 柔化边缘，淡出自然
     return np.clip(occ * 255.0, 0, 255).astype(np.uint8)
@@ -343,7 +359,7 @@ def generate_for_source(
     img, raster_path = load_source_image(source_path)
     mask, color_hint = segment_shirt(img)
     disp, shadow, highlight = compute_shading_maps(img, mask)
-    occlusion = compute_occlusion_map(img, mask)
+    occlusion = compute_occlusion_map(img, mask, mode="strong")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     preview_dir = out_dir / "_preview"
