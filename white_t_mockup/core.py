@@ -357,7 +357,8 @@ def apply_displacement(
 
     smooth: 对 disp 做大尺度高斯平滑（sigma 像素）后再取偏移——只保留大褶皱形变，
             抹掉小褶皱/布纹等高频分量，消除印花"水波纹"抖动。0=不平滑（旧行为）。
-    dead_zone: 灰度死区。|g-128| < dead_zone 的区域偏移强制为 0——小起伏区域完全不扭曲。
+    dead_zone: 灰度死区。|g-128| < dead_zone 的区域 off 平滑趋零（软斜坡），
+            小起伏区域几乎不扭曲；边界为平滑过渡，避免硬台阶导致重映射折叠/撕裂。
     """
     dw, dh = design.size
     arr = np.array(design).astype(np.float32)
@@ -375,9 +376,14 @@ def apply_displacement(
     cy = np.clip(paste_y + yy, 0, H - 1).astype(np.int32)
     g = disp_arr[cy, cx]
     m = mask_arr[cy, cx]
-    # 死区：小起伏不扭曲
+    # 软死区：|g-128| 在 dead_zone 内时 off 随距离平滑趋零（不再硬置 0）。
+    # 旧版硬死区在 |g-128|=dead_zone 处从 0 突跳到 (dead_zone/128)*strength（strength=30 时
+    # 约 3.5px/像素），使重映射 d(off)/dx>1 发生折叠(fold-over)，文字在 128±dead_zone
+    # 轮廓线上被对折/重影，表现为「上下撕裂」。软斜坡彻底消除该台阶，褶皱位移量不变。
     if dead_zone and dead_zone > 0:
-        g = np.where(np.abs(g - 128.0) < float(dead_zone), 128.0, g)
+        d = np.abs(g - 128.0)
+        ramp = np.clip(d / float(dead_zone), 0.0, 1.0)
+        g = 128.0 + (g - 128.0) * ramp
     off = (g - 128.0) / 128.0 * strength * m
     map_x = xx - off
     map_y = yy - off
