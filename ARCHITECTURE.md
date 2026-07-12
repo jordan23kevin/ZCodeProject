@@ -10,7 +10,7 @@
 本次版本将贴图流水线从 Photoshop 依赖全面转为纯软件实现，并记录两个新增代码仓库：
 
 - **贴图流水线去 PS 化**
-  - `E:\Claude code\ps` 下的 `ps_batch.py`（v2.0）、`wb_sticker_ps.py`（v2.4）、`process_black.py` / `process_white.py`（v2.5）全部改为纯 PIL 实现，不再依赖 win32com / Photoshop COM；`ps_batch.py` 的 BW 合成改用 `compose_bw_pil`（底图 1340×1785、圆直径 595、正面图宽度贴合圆圈 ≈44.4%、圆心 (1014,1449)、白边 5px、无阴影）。
+  - `E:\Claude code\ps` 下的 `ps_batch.py`（v2.0）、`wb_sticker_ps.py`（v2.4.1，新增通用黑衫自动优化）、`process_black.py` / `process_white.py`（v2.5）全部改为纯 PIL 实现，不再依赖 win32com / Photoshop COM；`ps_batch.py` 的 BW 合成改用 `compose_bw_pil`（底图 1340×1785、圆直径 595、正面图宽度贴合圆圈 ≈44.4%、圆心 (1014,1449)、白边 5px、无阴影）。
   - 平铺图贴花由 `StickerSession.place_design` 纯 PIL 仿射复刻旧 `place_design.jsx`（trim + 缩放 + 平移 + 绕中心旋转 + normal 合成），与 PS 版像素差 0.3–0.9（JPEG 重编码级）。
   - 模特图贴图由 `E:\Kimi Code\white_t_mockup`（v1.8.0）负责，gradient 位移 + 布料同步明度（仅缩放 HSV 的 V，H/S 零偏差），纯软件不依赖 PS。
   - 命名规则统一由 `D:\Semems WB\04_OS\engine\wb_naming.py`（唯一出处）生成与解析。
@@ -171,7 +171,7 @@
          │                 │  │    黑T专用贴图 + BW合成              │  │
          │                 │  ├────────────────────────────────────┤  │
          │                 │  │ 2. ps_sticker_one.py →             │  │
-         │                 │  │    wb_sticker_ps.py v2.4 通用贴花│  │
+         │                 │  │    wb_sticker_ps.py v2.4.1 通用贴花│  │
          │                 │  │    （检测到黑B/W/BW 时跳过黑T输出） │  │
          │                 │  ├────────────────────────────────────┤  │
          │                 │  │ 3. ps_batch_one.py →               │  │
