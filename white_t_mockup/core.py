@@ -752,7 +752,7 @@ def apply_mockup_transform(
     blend_mode: str | None = DEFAULT_BLEND_MODE,
     quality: int = 95,
     shirt_color: Literal["black", "white"] | None = None,
-    prepare_method: Literal["value_invert", "silhouette", "none", "dark_boost", "white_underbase"] = "white_underbase",
+    prepare_method: Literal["value_invert", "silhouette", "none", "dark_boost", "white_underbase", "matting", "unpremultiply"] = "white_underbase",
     realism: bool = True,
     saturation: float = 0.97,
     brightness: float = 1.0,
@@ -896,7 +896,7 @@ def apply_mockup(
     blend_mode: str | None = DEFAULT_BLEND_MODE,
     quality: int = 95,
     shirt_color: Literal["black", "white"] | None = None,
-    prepare_method: Literal["value_invert", "silhouette", "none", "dark_boost", "white_underbase"] = "white_underbase",
+    prepare_method: Literal["value_invert", "silhouette", "none", "dark_boost", "white_underbase", "matting", "unpremultiply"] = "white_underbase",
     tpl_dir: str | Path | None = None,
     disp_strength: float = 8.0,
     disp_smooth: float = 80.0,
@@ -1196,11 +1196,32 @@ def black_shirt_print_optimize(design: Image.Image) -> Image.Image:
     )
     return step2
 
+def _unpremultiply_rgba(design: Image.Image) -> Image.Image:
+    """去预乘：修复黑底/透明底导出 PNG 的暗色羽化边缘光晕。
+
+    半透明像素的 RGB ≈ 真色×alpha + 背景×(1-alpha)。当 PNG 在黑/透明底导出时，
+    背景为暗色，边缘会被污染成暗色；除以 alpha 即可还原出真正的设计颜色，
+    让边缘在任意颜色胚衣上都是干净真色，不再泛白或泛黑。
+    不透明像素保留原值，alpha 通道完全不变。
+    """
+    arr = np.array(design.convert("RGBA")).astype(np.float32)
+    rgb = arr[:, :, :3]
+    a_01 = arr[:, :, 3:4] / 255.0
+    # 极小 alpha 防除 0；这些像素权重极低，即使放大也不影响合成结果。
+    safe_a = np.clip(a_01, 1e-3, 1.0)
+    recovered = rgb / safe_a
+    # 不透明区域（>=0.999）保留原值，避免浮点误差。
+    solid = a_01 >= 0.999
+    out_rgb = np.where(solid, rgb, np.clip(recovered, 0, 255))
+    out = arr.copy()
+    out[:, :, :3] = out_rgb
+    return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), "RGBA")
+
 
 def prepare_design_for_shirt(
     design: Image.Image,
     shirt_color: Literal["black", "white"],
-    method: Literal["value_invert", "silhouette", "none", "dark_boost", "white_underbase"] = "white_underbase",
+    method: Literal["value_invert", "silhouette", "none", "dark_boost", "white_underbase", "matting", "unpremultiply"] = "white_underbase",
 ) -> Image.Image:
     """
     在贴图前对设计图做预处理，使其更适合目标 T 恤颜色。
@@ -1208,13 +1229,29 @@ def prepare_design_for_shirt(
     Args:
         design: 透明底 RGBA 设计图。
         shirt_color: 目标 T 恤颜色，"black" 或 "white"。
-        method: 预处理方法，默认 "value_invert"。
+        method: 预处理方法，默认 "white_underbase"。
 
     Returns:
         预处理后的 RGBA 图像。
     """
     if method == "none":
         return design.copy()
+
+    # matting：按目标布料色填充透明区 RGB，消除黑底/白底 PNG 在不同颜色胚衣上的边缘偏色。
+    # 仅改半透明像素的 RGB，不透明区域与 alpha 不变，颜色完全保留。
+    if method == "matting":
+        arr = np.array(design.convert("RGBA")).astype(np.float32)
+        alpha = arr[:, :, 3:4] / 255.0
+        if shirt_color == "black":
+            c = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        else:  # white or unknown
+            c = np.array([255.0, 255.0, 255.0], dtype=np.float32)
+        arr[:, :, :3] = arr[:, :, :3] * alpha + c * (1.0 - alpha)
+        return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
+
+    if method == "unpremultiply":
+        # 去预乘去光晕：还原半透明边缘被黑/透明底污染的真实颜色
+        return _unpremultiply_rgba(design)
 
     if method == "dark_boost":
         if shirt_color == "white":

@@ -111,9 +111,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--prepare-method",
-        choices=["value_invert", "silhouette", "none", "dark_boost", "white_underbase"],
+        choices=["value_invert", "silhouette", "none", "dark_boost", "white_underbase", "matting", "unpremultiply"],
         default="white_underbase",
-        help="预处理方法（默认: white_underbase 黑衫白墨打底显色；dark_boost 仅提亮；value_invert/silhouette 为旧反相逻辑）",
+        help="预处理方法（默认: white_underbase 黑衫白墨打底显色；dark_boost 仅提亮；"
+             "matting 按目标布料色填充透明区（旧版）; "
+             "unpremultiply 去预乘去光晕（保色模式默认）;"
+             "value_invert/silhouette 为旧反相逻辑）",
     )
     shirt_group = parser.add_mutually_exclusive_group()
     shirt_group.add_argument(
@@ -293,13 +296,20 @@ def main() -> None:
     shadow_opacity = args.shadow_opacity
     highlight_opacity = args.highlight_opacity
 
-    # ---- 原样保色模式：只做几何，颜色/亮度完全不变 ----
+    # ---- 原样保色模式：几何贴合 + 布料 matting，颜色/亮度完全不变 ----
     if args.preserve_color:
-        prepare_method = "none"      # 不反色、不显色，保留原始 RGB
+        prepare_method = "unpremultiply"  # 去预乘去光晕，消除黑底/白底 PNG 边缘偏色
         saturation = 1.0             # 不降饱和
         brightness = 1.0             # 不改亮度
         shadow_opacity = 0.0         # 关阴影正片叠底（不压暗）
         highlight_opacity = 0.0      # 关高光叠加（不提亮）
+        # 若未显式指定 shirt_color，从模板路径推断（白/黑），便于生产流水线自动适配
+        if shirt_color is None and template_path:
+            p = str(template_path).lower()
+            if "white" in p or "白" in p:
+                shirt_color = "white"
+            elif "black" in p or "黑" in p:
+                shirt_color = "black"
 
     # 混合模式：显式 --blend-mode > 保色(normal) > 按衫色默认（黑T screen / 白T multiply）> preset 默认
     if args.blend_mode:
