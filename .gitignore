@@ -29,3 +29,8 @@ Thumbs.db
 nul
 bridge.pid
 bridge.log.*.bak
+
+# 测试/临时产物(下划线前缀)
+_*.jpg
+_*.png
+_mockup_output/
