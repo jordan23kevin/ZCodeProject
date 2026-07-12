@@ -35,3 +35,10 @@ _*.jpg
 _*.png
 _*.py
 _mockup_output/
+mockup_output/
+out_*.jpg
+out_*.png
+demo_result_*.jpg
+test_design.png
+*.py.bak
+skill-dist/

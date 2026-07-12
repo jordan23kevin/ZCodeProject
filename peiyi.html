@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>胚衣制作 · 素材库</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:28px;min-height:100vh}
+  h1{text-align:center;font-size:32px;margin:0 0 8px}
+  .sub{text-align:center;color:#9aa0a6;font-size:15px;margin-bottom:20px}
+  .toolbar{text-align:center;margin-bottom:20px;position:sticky;top:0;background:#1a1a1a;padding:14px 0;z-index:20;border-bottom:1px solid #333}
+  .toolbar button{padding:14px 22px;font-size:17px;border-radius:6px;border:1px solid #555;background:#2a2a2a;color:#eee;margin:0 8px;cursor:pointer;font-weight:600}
+  .toolbar button:hover{background:#333}
+  .btn-blue{background:#2196F3!important;color:#fff!important;border:none!important}
+  .btn-blue:hover{background:#1976D2!important}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:20px;max-width:2500px;margin:0 auto 28px}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+  .card{background:#252525;border:1px solid #444;border-radius:10px;padding:18px 20px}
+  .card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .card-title{font-size:22px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .dot{width:16px;height:16px;border-radius:50%;display:inline-block}
+  .dot.white{background:#fff;border:1px solid #888}
+  .dot.black{background:#111;border:1px solid #666}
+  .count{font-size:15px;color:#9aa0a6}
+  .mini{font-size:13px;padding:6px 12px;border-radius:5px;border:1px solid #555;background:#2a2a2a;color:#ccc;cursor:pointer}
+  .mini:hover{background:#333}
+  .drop{border:2px dashed #555;border-radius:8px;padding:24px 12px;text-align:center;cursor:pointer;transition:.15s;background:#1f1f1f}
+  .drop:hover{border-color:#2196F3;background:#20283a}
+  .drop.drag{border-color:#4CAF50;background:#1c2a1c}
+  .drop .hint{font-size:15px;color:#aaa;line-height:1.6}
+  .drop .big{font-size:18px;color:#ddd;font-weight:600;margin-bottom:4px}
+  .progress{height:10px;background:#333;border-radius:5px;overflow:hidden;margin-top:14px;display:none}
+  .progress > i{display:block;height:100%;width:0;background:#2196F3;transition:width .2s}
+  .msg{font-size:14px;margin-top:12px;min-height:18px;white-space:pre-wrap;line-height:1.5}
+  .msg.ok{color:#7ee787}
+  .msg.err{color:#f87171}
+  .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;margin-top:16px}
+  .thumb{position:relative;border:1px solid #3a3a3a;border-radius:8px;overflow:hidden;background:#111}
+  .thumb img{width:100%;height:220px;object-fit:contain;display:block;cursor:pointer;background:#0a0a0a}
+  .thumb .nm{font-size:13px;color:#bbb;padding:6px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+  .thumb .del{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:4px;width:26px;height:26px;cursor:pointer;font-size:15px;line-height:1}
+  .thumb .del:hover{background:#e53935}
+  /* 未填写五项数据的素材角标（排序时默认排最前） */
+  .thumb .badge{position:absolute;top:6px;left:6px;background:#e67e22;color:#fff;border-radius:4px;font-size:11px;font-weight:700;padding:2px 7px;pointer-events:none;z-index:5}
+  .empty{color:#666;font-size:13px;padding:10px 2px}
+  /* 每张素材下方的贴图参数输入区（与 胚衣参数表_模板.csv 第5-9列一致） */
+  .thumb .meta{display:grid;grid-template-columns:1fr 1fr;gap:7px 8px;padding:10px 8px 6px;border-top:1px solid #333}
+  .thumb .mf{display:flex;flex-direction:column;min-width:0}
+  .thumb .mf.full{grid-column:1/-1}
+  .thumb .mf label{font-size:12px;color:#9aa0a6;margin-bottom:3px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .thumb .mf input{width:100%;font-size:15px;padding:6px 8px;border:1px solid #4a4a4a;border-radius:4px;background:#151515;color:#eee}
+  .thumb .mf input:focus{outline:none;border-color:#2196F3}
+  .thumb .mstatus{grid-column:1/-1;font-size:12px;min-height:14px;text-align:right;color:#7ee787}
+  .thumb .mstatus.saving{color:#9aa0a6}
+  .thumb .mstatus.saved{color:#7ee787}
+  .thumb .mstatus.err{color:#f87171}
+  .log{background:#0d0d0d;border:1px solid #333;border-radius:8px;padding:12px 14px;max-width:2500px;margin:0 auto;font-family:"Cascadia Code",Consolas,monospace;font-size:13px;line-height:1.6;white-space:pre-wrap;max-height:200px;overflow-y:auto;color:#8b949e}
+  /* 遮罩（Mask）相关 UI */
+  .thumb .mask-actions{display:flex;gap:6px;padding:8px 8px 2px;align-items:center}
+  .thumb .genmask,.thumb .prevmask{font-size:13px;padding:7px 10px;border-radius:5px;border:1px solid #555;background:#2a2a2a;color:#eee;cursor:pointer;flex:1}
+  .thumb .genmask{background:#7b3ff2;border:none;color:#fff;font-weight:600}
+  .thumb .genmask:hover{background:#6933d6}
+  .thumb .genmask:disabled{background:#444;color:#999;cursor:default}
+  .thumb .prevmask{background:#16324a;border-color:#1f4b6e;color:#9fd0ff}
+  .thumb .prevmask:hover{background:#1d4566}
+  .thumb .regen{font-size:12px;color:#9aa0a6;background:none;border:none;cursor:pointer;text-decoration:underline;padding:4px 2px}
+  .thumb .regen:hover{color:#ccc}
+  /* 遮罩预览弹窗 */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.82);display:none;align-items:center;justify-content:center;z-index:100;padding:24px}
+  .modal.show{display:flex}
+  .modal-box{background:#1e1e1e;border:1px solid #444;border-radius:12px;max-width:1100px;width:100%;max-height:92vh;overflow:auto;padding:20px 22px}
+  .modal-box h3{font-size:20px;margin:0 0 6px;color:#fff}
+  .modal-box .desc{font-size:14px;color:#bbb;margin-bottom:14px;line-height:1.6}
+  .modal-close{float:right;background:#333;border:none;color:#eee;width:34px;height:34px;border-radius:6px;cursor:pointer;font-size:18px}
+  .modal-close:hover{background:#444}
+  .modal-imgs{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+  .modal-imgs figure{margin:0;background:#111;border:1px solid #333;border-radius:8px;padding:10px}
+  .modal-imgs img{width:100%;border-radius:5px;background:#0a0a0a;display:block}
+  .modal-imgs figcaption{font-size:13px;color:#bbb;text-align:center;margin-top:8px;line-height:1.4}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin:0 0 14px;font-size:13px;color:#ccc}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .sw{width:14px;height:14px;border-radius:3px;display:inline-block}
+</style>
+</head>
+<body>
+<h1>🧵 胚衣制作 · 素材库</h1>
+<div class="sub">分类上传素材 → 自动处理为 1340×1785 @ 72 DPI（白胚衣白底 / 黑胚衣黑底 JPG）· 点击图片可在文件夹中打开</div>
+
+<div class="toolbar">
+  <button class="btn-blue" onclick="refreshAll()">🔄 刷新全部</button>
+  <button onclick="location.href='/'" title="返回主面板">🏠 主面板</button>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<div class="log" id="logBox"></div>
+
+<!-- 遮罩预览弹窗 -->
+<div class="modal" id="maskModal">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h3 id="modalTitle">遮罩预览</h3>
+    <div class="desc">胚衣三层贴图结构：<b>最底层</b>为 T 恤主体（放置印花图案）、<b>中间层</b>为图案、<b>最上层</b>为遮挡物（手、头发、配饰等，会自动盖在图案之上，呈现真实穿着效果）。</div>
+    <div class="legend">
+      <span><i class="sw" style="background:#00ff00"></i> 绿色 = T 恤主体区域</span>
+      <span><i class="sw" style="background:#ff0000"></i> 红色 = 遮挡物区域</span>
+    </div>
+    <div class="modal-imgs" id="modalImgs"></div>
+  </div>
+</div>
+
+<script>
+var CATS = [
+  {key:'W白', label:'W白（白·正面）', dot:'white'},
+  {key:'B白', label:'B白（白·背面）', dot:'white'},
+  {key:'W黑', label:'W黑（黑·正面）', dot:'black'},
+  {key:'B黑', label:'B黑（黑·背面）', dot:'black'},
+];
+
+// 每张素材下方的贴图参数输入区，字段顺序与 胚衣参数表_模板.csv 第5-9列一致
+// width=缩放后宽px / height=缩放后高px / rotation=旋转角度(负=逆时针,正=顺时针)
+// highest_y=最高像素点y / center_x=中心点x（画布宽 1340，默认中点 670）
+var META_FIELDS = [
+  {k:'width',     label:'缩放后宽(px)'},
+  {k:'height',    label:'缩放后高(px)'},
+  {k:'rotation',  label:'旋转角度(负逆/正顺)'},
+  {k:'highest_y', label:'最高像素点y'},
+  {k:'center_x',  label:'中心点x (画布宽1340)', full:true},
+];
+// 与后端 PEIYI_META_FIELDS 默认值保持一致：中心点x 默认 670（画布中点）
+var META_DEFAULTS = {width:0, height:0, rotation:0, highest_y:0, center_x:670};
+
+function log(s){
+  var b=document.getElementById('logBox');
+  var t=new Date().toLocaleTimeString('zh-CN');
+  b.textContent += '['+t+'] '+s+'\n';
+  b.scrollTop=b.scrollHeight;
+}
+
+function buildCards(){
+  var grid=document.getElementById('grid');
+  grid.innerHTML='';
+  CATS.forEach(function(c){
+    var card=document.createElement('div');
+    card.className='card';
+    card.innerHTML =
+      '<div class="card-head">'+
+        '<div class="card-title"><span class="dot '+c.dot+'"></span>'+c.label+'</div>'+
+        '<div class="count" id="cnt-'+c.key+'">0 张</div>'+
+        '<button class="mini" onclick="reindex(\''+c.key+'\')" title="把本文件夹内所有图片按进入顺序重新编号为 '+c.label.replace(/[（(].*$/,'')+'1、'+c.label.replace(/[（(].*$/,'')+'2 …">重新编号</button>'+
+      '</div>'+
+      '<div class="drop" id="drop-'+c.key+'">'+
+        '<div class="big">点击或拖拽上传</div>'+
+        '<div class="hint">支持批量多选（PNG/JPG/WEBP 等）<br>自动处理为 1340×1785 @ 72DPI</div>'+
+        '<input type="file" id="file-'+c.key+'" accept="image/*" multiple hidden>'+
+      '</div>'+
+      '<div class="progress" id="prog-'+c.key+'"><i></i></div>'+
+      '<div class="msg" id="msg-'+c.key+'"></div>'+
+      '<div class="gallery" id="gal-'+c.key+'"></div>';
+    grid.appendChild(card);
+
+    var drop=document.getElementById('drop-'+c.key);
+    var input=document.getElementById('file-'+c.key);
+    drop.onclick=function(){ input.click(); };
+    input.onchange=function(){ if(input.files.length) upload(c.key, input.files); input.value=''; };
+    ['dragenter','dragover'].forEach(function(ev){
+      drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.add('drag'); });
+    });
+    ['dragleave','drop'].forEach(function(ev){
+      drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.remove('drag'); });
+    });
+    drop.addEventListener('drop', function(e){
+      e.preventDefault();
+      if(e.dataTransfer.files.length) upload(c.key, e.dataTransfer.files);
+    });
+  });
+}
+
+function upload(key, fileList){
+  var prog=document.getElementById('prog-'+key);
+  var bar=prog.querySelector('i');
+  var msg=document.getElementById('msg-'+key);
+  prog.style.display='block'; bar.style.width='0%';
+  msg.className='msg'; msg.textContent='上传中…';
+
+  var fd=new FormData();
+  fd.append('category', key);
+  for(var i=0;i<fileList.length;i++){ fd.append('files', fileList[i]); }
+
+  var xhr=new XMLHttpRequest();
+  xhr.open('POST','/api/peiyi/upload', true);
+  xhr.upload.onprogress=function(e){ if(e.lengthComputable){ bar.style.width=Math.round(e.loaded/e.total*100)+'%'; } };
+  xhr.onload=function(){
+    prog.style.display='none';
+    try{
+      var d=JSON.parse(xhr.responseText);
+      if(!d.ok){ msg.className='msg err'; msg.textContent='失败：'+(d.error||'未知错误'); log('['+key+'] 上传失败：'+(d.error||'')); return; }
+      var ok=d.saved||0;
+      var fail=(d.results||[]).filter(function(r){return !r.ok;}).length;
+      msg.className='msg ok';
+      msg.textContent='✅ 已处理 '+ok+' 张'+(fail?('，失败 '+fail+' 张'):'');
+      log('['+key+'] 处理完成：成功 '+ok+' / 失败 '+fail);
+      (d.results||[]).forEach(function(r){
+        if(!r.ok) log('   ✗ '+r.file+'：'+r.error);
+      });
+      refreshGallery(key);
+    }catch(e){
+      msg.className='msg err'; msg.textContent='返回解析失败';
+      log('['+key+'] 返回解析失败：'+e);
+    }
+  };
+  xhr.onerror=function(){ prog.style.display='none'; msg.className='msg err'; msg.textContent='网络错误'; log('['+key+'] 网络错误'); };
+  xhr.send(fd);
+}
+
+function refreshGallery(key){
+  fetch('/api/peiyi/list?category='+encodeURIComponent(key))
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(!d.ok){ galMsg(key,'加载失败：'+(d.error||'未知错误')); return; }
+      var items=(d.categories&&d.categories[key])||[];
+      document.getElementById('cnt-'+key).textContent=items.length+' 张';
+      var gal=document.getElementById('gal-'+key);
+      if(!items.length){ gal.innerHTML='<div class="empty">暂无素材</div>'; return; }
+      gal.innerHTML='';
+      items.forEach(function(it){
+        var meta = it.meta || {};
+        for(var mk in META_DEFAULTS){ if(!(mk in meta) || meta[mk]==null) meta[mk]=META_DEFAULTS[mk]; }
+
+        var metaHtml='<div class="meta">';
+        META_FIELDS.forEach(function(f){
+          var cls = f.full ? 'mf full' : 'mf';
+          metaHtml+='<div class="'+cls+'"><label title="'+f.label+'">'+f.label+'</label>'+
+            '<input type="number" step="any" data-k="'+f.k+'" value="'+meta[f.k]+'"></div>';
+        });
+        metaHtml+='<div class="mstatus"></div></div>';
+
+        // 未填写五项数据 → 橙色「待填」角标（排序时已默认排最前）
+        var badge = it.unfilled ? '<div class="badge">待填</div>' : '';
+
+        // 遮罩状态：未生成 → 「生成遮罩」按钮；已生成 → 预览 + 重新生成
+        var maskActions = '<div class="mask-actions">';
+        if(it.has_mask){
+          maskActions += '<button class="prevmask" data-cat="'+key+'" data-name="'+it.name+'">👁 预览遮罩</button>'+
+                         '<button class="regen" data-cat="'+key+'" data-name="'+it.name+'">重新生成</button>';
+        } else {
+          maskActions += '<button class="genmask" data-cat="'+key+'" data-name="'+it.name+'">🎭 生成遮罩</button>';
+        }
+        maskActions += '</div>';
+
+        var t=document.createElement('div');
+        t.className='thumb';
+        t.innerHTML= badge +
+          '<button class="del" title="删除">×</button>'+
+          '<img src="'+it.url+'" loading="lazy" title="点击在文件夹中打开">'+
+          '<div class="nm" title="'+it.name+'">'+it.name+'</div>'+
+          maskActions +
+          metaHtml;
+
+        // 点击图片/文件名 → 在资源管理器打开所在文件夹（删除按钮、参数区、遮罩按钮不触发）
+        t.addEventListener('click', function(e){
+          if(e.target.closest('.del') || e.target.closest('.meta') || e.target.closest('.mask-actions')) return;
+          openFolder(key, it.name);
+        });
+        t.querySelector('.del').onclick=function(){
+          if(!confirm('确定删除 '+it.name+' ？')) return;
+          fetch('/api/peiyi/delete',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({category:key,name:it.name})})
+            .then(function(r){return r.json();})
+            .then(function(d2){
+              if(d2.ok){ log('['+key+'] 已删除 '+it.name); refreshGallery(key); }
+              else { alert('删除失败：'+(d2.error||'')); }
+            });
+        };
+        // 任一参数改动即自动保存到同名 .meta.json 侧车
+        var inputs=t.querySelectorAll('.meta input');
+        inputs.forEach(function(inp){
+          inp.addEventListener('change', function(){
+            var payload={category:key, name:it.name};
+            inputs.forEach(function(mi){ payload[mi.getAttribute('data-k')]=mi.value; });
+            saveMeta(payload, key, it.name, t);
+          });
+        });
+        // 遮罩按钮：生成 / 预览 / 重新生成
+        var genBtn = t.querySelector('.genmask');
+        if(genBtn) genBtn.onclick = function(){ genMask(key, it.name, genBtn); };
+        var prevBtn = t.querySelector('.prevmask');
+        if(prevBtn) prevBtn.onclick = function(){ previewMask(it); };
+        var regenBtn = t.querySelector('.regen');
+        if(regenBtn) regenBtn.onclick = function(){ genMask(key, it.name, regenBtn); };
+
+        gal.appendChild(t);
+      });
+    })
+    .catch(function(e){ galMsg(key,'网络错误：'+e); });
+}
+
+// 画廊内错误/空状态提示
+function galMsg(key, s){
+  var gal=document.getElementById('gal-'+key);
+  if(gal) gal.innerHTML='<div class="empty">'+s+'</div>';
+}
+
+// 点击素材图片 → 后端在资源管理器打开该文件所在文件夹并选中
+function openFolder(key, name){
+  fetch('/api/peiyi/open',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({category:key, name:name})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.ok){ log('['+key+'] 已打开文件夹：'+d.path); }
+      else { alert('打开文件夹失败：'+(d.error||'')); }
+    })
+    .catch(function(e){ alert('网络错误：'+e); });
+}
+
+// 保存单张素材的5个贴图参数到后端 /api/peiyi/meta（写入 .meta.json 侧车）
+function saveMeta(payload, key, name, thumbEl){
+  var st=thumbEl.querySelector('.mstatus');
+  st.textContent='保存中…'; st.className='mstatus saving';
+  fetch('/api/peiyi/meta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.ok){ st.textContent='✓ 已保存'; st.className='mstatus saved';
+        setTimeout(function(){ st.textContent=''; st.className='mstatus'; }, 1500);
+        log('['+key+'] '+name+' 参数已保存'); }
+      else { st.textContent='✗ '+(d.error||'失败'); st.className='mstatus err'; }
+    })
+    .catch(function(e){ st.textContent='✗ 网络错误'; st.className='mstatus err'; });
+}
+
+function refreshAll(){
+  CATS.forEach(function(c){ refreshGallery(c.key); });
+  log('已刷新所有分类');
+}
+
+function reindex(key){
+  if(!confirm('将把「'+key+'」文件夹内所有图片按进入顺序重新编号为 '+key.replace(/[（(].*$/,'')+'1、'+key.replace(/[（(].*$/,'')+'2 …（原有文件名会被覆盖）？')) return;
+  fetch('/api/peiyi/reindex',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({category:key})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.ok){ log('['+key+'] '+d.msg); refreshGallery(key); }
+      else { alert('重新编号失败：'+(d.error||'')); }
+    })
+    .catch(function(e){ alert('网络错误：'+e); });
+}
+
+// 为单张素材生成三层遮罩（最上层遮挡物 / 中间层图案 / 底层 T 恤主体）
+// 注意：首次生成约需 1 分钟（需加载模型），之后复用内存模型会快很多
+function genMask(key, name, btn){
+  var orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '生成中…约1分钟';
+  log('['+key+'] 开始生成遮罩：'+name+'（首次约1分钟，请稍候，勿关闭页面）');
+  fetch('/api/peiyi/mask',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({category:key, name:name})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.ok){
+        log('['+key+'] ✅ 遮罩已生成：'+name+'（主体 '+d.body_px+' px / 遮挡物 '+d.occluder_px+' px，用时 '+d.elapsed+'s）');
+        refreshGallery(key);   // 重新渲染：显示「预览遮罩 / 重新生成」
+      } else {
+        log('['+key+'] ✗ 遮罩生成失败：'+(d.error||''));
+        alert('遮罩生成失败：'+(d.error||''));
+        btn.disabled = false; btn.textContent = orig;
+      }
+    })
+    .catch(function(e){
+      alert('网络错误：'+e);
+      btn.disabled = false; btn.textContent = orig;
+    });
+}
+
+// 弹窗预览该素材的遮罩分层结果
+function previewMask(it){
+  var mu = it.mask_urls || {};
+  // 防缓存：每次预览都追加时间戳，强制浏览器拉取【最新生成】的遮罩文件，
+  // 避免“文件已在文件夹更新、但预览仍显示旧图”的问题。
+  var bust = '?t=' + Date.now();
+  var figs = '';
+  if(it.url)        figs += '<figure><img src="'+it.url+bust+'"><figcaption>① 原图</figcaption></figure>';
+  if(mu.parse)      figs += '<figure><img src="'+mu.parse+bust+'"><figcaption>② 分层预览（绿=主体 / 红=遮挡物）</figcaption></figure>';
+  if(mu.occluder)   figs += '<figure><img src="'+mu.occluder+bust+'"><figcaption>③ 遮挡物抠图（透明背景，作为最上层）</figcaption></figure>';
+  if(mu.body_mask)  figs += '<figure><img src="'+mu.body_mask+bust+'"><figcaption>④ 主体蒙版（贴图案的区域）</figcaption></figure>';
+  if(mu.occluder_mask) figs += '<figure><img src="'+mu.occluder_mask+bust+'"><figcaption>⑤ 遮挡物蒙版（清理后的最终遮罩）</figcaption></figure>';
+  if(!figs) figs = '<div class="empty">暂无遮罩图片</div>';
+  document.getElementById('modalImgs').innerHTML = figs;
+  document.getElementById('modalTitle').textContent = '遮罩预览 · ' + it.name;
+  document.getElementById('maskModal').classList.add('show');
+}
+function closeModal(){
+  document.getElementById('maskModal').classList.remove('show');
+}
+// 点击弹窗空白处关闭
+window.addEventListener('click', function(e){
+  var m=document.getElementById('maskModal');
+  if(e.target===m) closeModal();
+});
+
+buildCards();
+refreshAll();
+</script>
+</body>
+</html>

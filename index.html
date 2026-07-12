@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>自动化遮罩 &amp; 贴图系统</title>
+<style>
+  :root{ --bg:#15161a; --card:#1f2128; --line:#333; --txt:#e6e6e6; --sub:#9aa0aa;
+         --p:#7b3ff2; --p2:#6933d6; --ok:#3ecf8e; --err:#ff6b6b; --acc:#4ea1ff; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 system-ui,'Microsoft YaHei',sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:24px}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--sub);margin:0 0 20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:20px}
+  .card h2{font-size:16px;margin:0 0 12px;display:flex;align-items:center;gap:8px}
+  .badge{font-size:11px;background:#16324a;color:#9fd0ff;border:1px solid #1f4b6e;padding:2px 8px;border-radius:20px}
+  label{display:block;color:var(--sub);margin:10px 0 4px}
+  select,input[type=file]{width:100%;padding:9px 10px;border-radius:6px;border:1px solid var(--line);
+         background:#15161a;color:var(--txt);font-size:14px}
+  .chk{display:flex;align-items:center;gap:8px;margin-top:10px;color:var(--sub)}
+  .chk input{width:auto}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .row>*{flex:1;min-width:200px}
+  button{margin-top:12px;padding:10px 16px;border-radius:7px;border:none;font-size:14px;font-weight:600;
+         cursor:pointer;background:var(--p);color:#fff}
+  button:hover{background:var(--p2)}
+  button:disabled{background:#444;color:#999;cursor:default}
+  .action{background:var(--acc)}
+  .action:hover{background:#3b8de0}
+  .status{margin-top:10px;font-size:13px;padding:8px 10px;border-radius:6px;background:#0f1115}
+  .status.run{color:#ffd479}.status.ok{color:var(--ok)}.status.err{color:var(--err)}
+  .embryo-list{max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px;margin-top:8px}
+  .embryo-list label{display:flex;align-items:center;gap:8px;margin:0;padding:5px 4px;color:var(--txt);cursor:pointer}
+  .embryo-list input{width:auto}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;margin-top:14px}
+  .shot{width:100%;border-radius:8px;border:1px solid var(--line);background:#0f1115;display:block}
+  figure{margin:0}
+  figcaption{font-size:12px;color:var(--sub);margin-top:4px;text-align:center}
+  .preview img{max-width:260px;border:1px solid var(--line);border-radius:6px;margin:6px 6px 0 0}
+  .muted{color:var(--sub);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>自动化遮罩 &amp; 贴图系统</h1>
+  <div class="sub">① 在「胚衣制作·素材库」给每件胚衣填好 <b>缩放后宽/高、旋转、最高点y、中心点x</b> → 点「生成遮罩」自动产出遮罩与扭曲(_tpl)素材 → ② 上传贴图点「贴图」，系统自动按胚衣数据+遮罩+褶皱扭曲精准贴入。两步数据自动衔接，无需手动干预。</div>
+
+  <!-- 步骤一：生成遮罩 -->
+  <div class="card">
+    <h2>① 生成遮罩 <span class="badge">遮罩 + _tpl 扭曲素材</span></h2>
+    <label>选择胚衣（来自素材库）</label>
+    <select id="maskSel"><option>加载中…</option></select>
+    <button id="btnMask">🎭 生成遮罩</button>
+    <div class="status" id="maskStatus">就绪</div>
+    <div class="preview" id="maskPreview"></div>
+  </div>
+
+  <!-- 步骤二：AI去背贴图 -->
+  <div class="card">
+    <h2>② AI去背贴图 <span class="badge">自动读取遮罩+扭曲</span></h2>
+    <label>上传贴图素材（建议透明底 PNG；白底图勾选自动去背）</label>
+    <input type="file" id="design" accept="image/*">
+    <div class="chk"><input type="checkbox" id="autoRemove"><label style="margin:0">上传图自动去背（适用于白底/纯色底图）</label></div>
+    <label>选择要贴的胚衣（可多选 = 批量贴图）</label>
+    <div class="embryo-list" id="embryoList"><div class="muted">加载中…</div></div>
+    <button class="action" id="btnApply">🖨️ 贴图</button>
+    <div class="status" id="applyStatus">就绪</div>
+    <div class="grid" id="resultGrid"></div>
+    <p class="muted">提示：贴图时会自动读取「生成遮罩」步骤产出的遮罩与扭曲数据；若该款尚未生成，系统会自动补生成，保证一次点击即可完成。黑T自动反相、白T用正片叠底，并开启布纹透出+边缘模糊+光影转移，效果自然如实拍。</p>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const embMap = {};  // "cat/name" -> {category,name,url,...}
+
+async function loadEmbryos(){
+  const r = await fetch('/api/peiyi/list');
+  const j = await r.json();
+  const cats = j.categories || {};
+  const maskSel = $('#maskSel'); maskSel.innerHTML='';
+  const list = $('#embryoList'); list.innerHTML='';
+  let n=0;
+  for(const cat of Object.keys(cats)){
+    for(const it of (cats[cat]||[])){
+      const key = cat+'/'+it.name;
+      embMap[key] = it; it.category=cat;
+      n++;
+      const o=document.createElement('option'); o.value=key; o.textContent=`${it.name}（${cat}）`; maskSel.appendChild(o);
+      const lab=document.createElement('label');
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.value=key;
+      lab.appendChild(cb); lab.appendChild(document.createTextNode(` ${it.name}（${cat}）`));
+      list.appendChild(lab);
+    }
+  }
+  if(n===0){ maskSel.innerHTML='<option>素材库为空</option>'; list.innerHTML='<div class="muted">素材库为空，请先到「胚衣制作·素材库」上传</div>'; }
+}
+
+// ① 生成遮罩
+$('#btnMask').onclick = async ()=>{
+  const key = $('#maskSel').value; if(!key) return;
+  const [category,name] = key.split('/');
+  const st=$('#maskStatus'); st.className='status run'; st.textContent=`正在为 ${name} 生成遮罩 + _tpl 扭曲素材（首次约1分钟）…`;
+  $('#maskPreview').innerHTML='';
+  try{
+    const r = await fetch('/api/peiyi/mask',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({category,name})});
+    const j = await r.json();
+    if(!j.ok){ st.className='status err'; st.textContent='❌ 生成失败：'+ (j.error||''); return; }
+    let html = `<div class="muted">遮罩：${j.is_person?'已识别模特/遮挡物':'平铺图(无遮挡物)'}，body像素=${j.body_px}，occluder像素=${j.occluder_px}</div>`;
+    const t = j.tpl||{};
+    if(t.ok){
+      html += `<div class="muted" style="color:var(--ok)">✅ _tpl 扭曲素材已生成：coverage=${t.coverage}，色系=${t.color_hint}</div>`;
+    } else {
+      html += `<div class="muted" style="color:var(--err)">⚠️ _tpl 生成：${t.error||'skipped'}</div>`;
+    }
+    const mu = j.mask_urls||{};
+    if(mu.body_mask) html += `<img src="${mu.body_mask}" title="主体蒙版"><img src="${mu.parse}" title="可视化">`;
+    st.className='status ok'; st.textContent='✅ 生成遮罩 + _tpl 完成';
+    $('#maskPreview').innerHTML=html;
+  }catch(e){ st.className='status err'; st.textContent='❌ '+e; }
+};
+
+// ② 贴图
+$('#btnApply').onclick = async ()=>{
+  const file = $('#design').files[0];
+  if(!file){ alert('请先上传贴图素材'); return; }
+  const cbs=[...document.querySelectorAll('#embryoList input:checked')];
+  if(cbs.length===0){ alert('请至少选择一个胚衣'); return; }
+  const templates = cbs.map(c=>c.value).join(',');
+  const st=$('#applyStatus'); st.className='status run'; st.textContent=`正在贴图到 ${cbs.length} 件胚衣（自动读取遮罩+扭曲）…`;
+  $('#resultGrid').innerHTML='';
+  try{
+    const fd=new FormData(); fd.append('design',file); fd.append('template',templates);
+    fd.append('auto_remove_bg', $('#autoRemove').checked?'1':'0');
+    const r=await fetch('/api/mockup',{method:'POST',body:fd});
+    const j=await r.json();
+    let okN=0, lines='';
+    for(const res of (j.results||[])){
+      if(!res.ok){ lines+=`<div class="muted" style="color:var(--err)">❌ ${res.template}: ${res.error||''}</div>`; continue; }
+      okN++;
+      const f=res.fields||{};
+      lines += `<figure><img class="shot" src="${res.url}"><figcaption>${res.template}｜${res.color==='black'?'黑T':'白T'}｜${Math.round(f.final_w)}×${Math.round(f.final_h)}px 旋转${f.rotation}°｜${res.used_tpl?'已扭曲':'无扭曲'}${res.used_occluder?'+遮挡物':''}</figcaption></figure>`;
+    }
+    st.className = okN? 'status ok':'status err';
+    st.textContent = okN? `✅ 贴图完成 ${okN}/${cbs.length} 件`:'❌ 全部失败';
+    $('#resultGrid').innerHTML=lines;
+  }catch(e){ st.className='status err'; st.textContent='❌ '+e; }
+};
+
+loadEmbryos();
+</script>
+</body>
+</html>
