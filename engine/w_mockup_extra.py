@@ -1,5 +1,13 @@
 # -*- coding: utf-8 -*-
-"""单面贴图新流程 v2.0（模特图贴图）：02_REM_BG 里只有 W 或只有 B 时，用 white_t_mockup 胚衣出图。
+"""单面贴图新流程 v2.1（模特图+平铺图贴图）：02_REM_BG 里只有 W 或只有 B 时，用 white_t_mockup 胚衣出图。
+
+变更 v2.1（命名规则 + 平铺/模特分类）：
+  - 胚衣按是否平铺分类：平铺胚衣 = 白W11/黑W11(正面)/白B12/黑B7(背面)，其余为模特图。
+  - 输出命名（用户规则 2026-07-12）：
+      平铺图 ``{dx}_{role}{color}T.jpg``（例 DX0650_W白T.jpg / DX0650_B黑T.jpg）；
+      模特图 ``{dx}_{color}{role}.jpg`` （例 DX0650_白W.jpg  / DX0650_黑B.jpg）。
+  - 每色固定出 2 张：固定平铺胚衣 1 张 + 随机模特胚衣 1 张（W/B 统一）。
+  - B 款从"随机 1 张"改为与 W 款一致的"固定平铺 + 随机模特"。
 
 变更 v2.0（架构重构）：
   - 胚衣来源从 presets.json/CSV 改为素材库（D:\\Semems WB\\03_MATERIAL\\）。
@@ -12,8 +20,7 @@
   - 黑衫从 `--blend-mode screen` 改为 `--preserve-color`。
 
 胚衣选择规则：
-- W 款出 4 张：随机 2 白胚衣 + 随机 2 黑胚衣（不足则有多少出多少）。
-- B 款出 2 张：随机 1 白胚衣 + 随机 1 黑胚衣。
+- 每色出 2 张：固定平铺胚衣（W=白W11/黑W11，B=白B12/黑B7）+ 随机 1 张模特胚衣。
 - 某颜色无候选则跳过该颜色（记入返回 msg），不报错。
 
 去背图颜色路由（check_rem 调用时传入）：
@@ -25,7 +32,6 @@ from __future__ import annotations
 
 import json
 import random
-import re
 from pathlib import Path
 
 # white_t_mockup 工程根目录与专用解释器（psd_tools/PIL 都装在这个 venv 里）
@@ -45,9 +51,33 @@ _CATEGORY_MAP = {
     ("B", "黑"): MATERIAL_DIR / "B黑",
 }
 
-# W 款各颜色固定使用的正面胚衣（素材库中的 stem 名）
-_W_MANDATORY_WHITE = "白W11"
-_W_MANDATORY_BLACK = "黑W11"
+# 平铺图胚衣（T 恤平铺在场景里，非人穿）：其余胚衣一律视为模特图。
+# 用户指定（2026-07-12）：白W11 / 黑W11（正面平铺）、白B12 / 黑B7（背面平铺）。
+_FLAT_STEMS = {"白W11", "黑W11", "白B12", "黑B7"}
+
+# 各 (role, color) 固定使用的平铺胚衣（素材库 stem 名）
+_FLAT_MANDATORY = {
+    ("W", "白"): "白W11",
+    ("W", "黑"): "黑W11",
+    ("B", "白"): "白B12",
+    ("B", "黑"): "黑B7",
+}
+
+
+def _is_flat(stem: str) -> bool:
+    """该胚衣是否平铺图（决定输出命名：平铺 vs 模特）。"""
+    return stem in _FLAT_STEMS
+
+
+def _output_name(dx: str, role: str, color: str, stem: str) -> str:
+    """按平铺/模特规则生成输出文件名。
+
+    - 平铺图：``{dx}_{role}{color}T.jpg``  例：DX0650_W白T.jpg / DX0650_B黑T.jpg
+    - 模特图：``{dx}_{color}{role}.jpg``   例：DX0650_白W.jpg / DX0650_黑B.jpg
+    """
+    if _is_flat(stem):
+        return f"{dx}_{role}{color}T.jpg"
+    return f"{dx}_{color}{role}.jpg"
 
 
 def _read_meta(embryo_path: Path) -> dict | None:
@@ -119,11 +149,6 @@ def _list_material_embryos(role: str, color: str) -> list[dict]:
     return results
 
 
-def _version_from_stem(stem: str) -> str:
-    """从胚衣文件名提取版本号：黑W4 → W4, 白B3 → B3。"""
-    return re.sub(r"^[黑白]", "", stem) or stem
-
-
 def generate_single_side_mockup(
     dx: str,
     base_dir: Path,
@@ -141,7 +166,8 @@ def generate_single_side_mockup(
     - cut_path: 指定用哪张去背图（默认 ``<base_dir>/<dx>/02_REM_BG/<dx>_<role>_cut.png``）
     - only_color: ``"白"`` 只贴白T 胚衣、``"黑"`` 只贴黑T 胚衣、``None`` 两色都贴
 
-    W 款出 4 张：固定 白W11/黑W11 + 各随机 1 其它。B 款出 2 张：各随机 1。
+    每色出 2 张：固定平铺胚衣（W=白W11/黑W11，B=白B12/黑B7）+ 随机 1 张模特胚衣。
+    平铺图命名为 ``{dx}_{role}{color}T.jpg``，模特图为 ``{dx}_{color}{role}.jpg``。
     某颜色无候选则跳过该颜色（记入返回 msg），不报错。
     失败返回 ``(False, 错误信息)``；任一颜色成功则 ok=True，逐张结果都写入 msg。
     """
@@ -173,20 +199,18 @@ def generate_single_side_mockup(
             if not pool:
                 notes.append(f"{color}T 跳过：素材库无可用 {role}{color} 胚衣（或 meta.json 缺失/损坏）")
                 continue
-            if role == "W":
-                # W 款：固定正面胚衣 + 随机 1 张其它
-                mandatory = _W_MANDATORY_WHITE if color == "白" else _W_MANDATORY_BLACK
-                fixed = [e for e in pool if e["stem"] == mandatory]
-                others = [e for e in pool if e["stem"] != mandatory]
-                if fixed:
-                    selected.append((fixed[0], color))
-                if others:
-                    selected.append((random.choice(others), color))
-                if not fixed and not others:
-                    notes.append(f"{color}T 跳过：无可用胚衣")
+            # 每色出 2 张：固定平铺胚衣 1 张 + 随机模特胚衣 1 张
+            mandatory = _FLAT_MANDATORY.get((role, color))
+            fixed = [e for e in pool if e["stem"] == mandatory]
+            models = [e for e in pool if not _is_flat(e["stem"])]
+            if fixed:
+                selected.append((fixed[0], color))
             else:
-                # B 款：随机 1 张
-                selected.append((random.choice(pool), color))
+                notes.append(f"{color}T 平铺胚衣 {mandatory} 不可用（meta 缺失/损坏），仅出模特图")
+            if models:
+                selected.append((random.choice(models), color))
+            if not fixed and not models:
+                notes.append(f"{color}T 跳过：无可用胚衣")
 
         if not selected:
             return False, f"无可用 {role} 模特图胚衣（素材库白/黑候选均为空或 meta.json 缺失）"
@@ -197,8 +221,7 @@ def generate_single_side_mockup(
         for embryo, color in selected:
             stem = embryo["stem"]
             meta = embryo["meta"]
-            version = _version_from_stem(stem)
-            out = up_dir / f"{dx}_{version}_{color}T.jpg"
+            out = up_dir / _output_name(dx, role, color, stem)
 
             cmd = [
                 str(W_MOCKUP_PY), "-m", "white_t_mockup",
@@ -209,7 +232,12 @@ def generate_single_side_mockup(
                 "--rotate", str(meta["rotation"]),
                 "--effective-top-y", str(meta["effective_top_y"]),
                 "--effective-center-x", str(meta["effective_center_x"]),
-                "--disp-strength", "18",
+                # 位移强度：v2.1 由 18 调回 30（大褶皱恢复旧版扭曲水平；
+                # 小褶皱水波纹由 core.py 的 --disp-smooth 80 + --disp-dead-zone 15 抑制，
+                # 平滑只去高频小褶，强度再高也不会出现水波纹）
+                "--disp-strength", "30",
+                "--disp-smooth", "80",
+                "--disp-dead-zone", "15",
             ]
             if embryo["tpl_dir"]:
                 cmd += ["--tpl-dir", embryo["tpl_dir"]]
