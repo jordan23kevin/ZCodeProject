@@ -289,6 +289,37 @@ def compute_occlusion_map(
     return np.clip(occ * 255.0, 0, 255).astype(np.uint8)
 
 
+def strengthen_occlusion(
+    disp: np.ndarray,
+    occ: np.ndarray,
+    threshold: float = 0.30,
+    disp_scale: float = 1.6,
+    occ_scale: float = 2.0,
+    smooth: float = 80.0,
+) -> np.ndarray:
+    """深褶隐藏加强（2026-07-12 方案2·全隐藏，黑W10 实测拍板）。
+
+    基础 occlusion 偏保守（印花区内深隐藏常 <2%），大褶皱折入处贴图仍可见、
+    不真实。本函数在生成阶段自动加强：
+        褶皱深度 = max(|平滑80后的disp − 128| / 128 × disp_scale,
+                       (255 − occ) / 255 × occ_scale)
+        深度 > threshold 处贴图完全隐藏，边缘高斯羽化 8（不生硬）；
+        浅褶/布纹（高频）被 sigma80 平滑滤除，不参与隐藏也不扭曲。
+    同款离线脚本：~/.workbuddy/skills/white-t-mockup-tpl-gen/scripts/
+    strengthen_occlusion.py（用于给存量 _tpl 补加强，参数须与此处一致）。
+    """
+    disp_f = disp.astype(np.float32)
+    occ_f = occ.astype(np.float32)
+    disp_s = cv2.GaussianBlur(disp_f, (0, 0), smooth)
+    depth_disp = np.abs(disp_s - 128.0) / 128.0 * disp_scale
+    depth_occ = np.clip((255.0 - occ_f) / 255.0 * occ_scale, 0, 1)
+    depth = np.clip(np.maximum(depth_disp, depth_occ), 0, 1)
+    depth = cv2.GaussianBlur(depth, (0, 0), 6)
+    hard = (depth < threshold).astype(np.float32)
+    vis = cv2.GaussianBlur(hard, (0, 0), 8)
+    return np.clip(vis * 255.0, 0, 255).astype(np.uint8)
+
+
 # ---------------------------------------------------------------------------
 # 预览
 # ---------------------------------------------------------------------------
@@ -312,7 +343,7 @@ def generate_for_source(
     img, raster_path = load_source_image(source_path)
     mask, color_hint = segment_shirt(img)
     disp, shadow, highlight = compute_shading_maps(img, mask)
-    occlusion = compute_occlusion_map(img, mask)
+    occlusion = strengthen_occlusion(disp, compute_occlusion_map(img, mask))
 
     out_dir.mkdir(parents=True, exist_ok=True)
     preview_dir = out_dir / "_preview"
