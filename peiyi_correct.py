@@ -375,12 +375,11 @@ def import_manual_mask(image_path: str | Path) -> dict:
             else:
                 return {"ok": False, "error": f"未找到手动遮罩文件，请保存为 {stem}_manual.png 到素材目录"}
 
-    # 2. 读取用户画的像素（任何非透明 = 用户要加的修正）
+    # 2. 读取用户画的像素（alpha>30 的非透明区域 = 用户要加的修正）
     manual_img = Image.open(manual_path).convert("RGBA")
     manual_arr = np.array(manual_img)
-    # 用户画的区域：alpha>0 或 RGB 平均值 > 100（非黑色）
-    r, g, b, a = manual_arr[:,:,0].astype(float), manual_arr[:,:,1].astype(float), manual_arr[:,:,2].astype(float), manual_arr[:,:,3].astype(float)
-    user_paint = (a > 30) | ((r + g + b) / 3 > 100)
+    # ⚠️ 只用 alpha 通道判断，不能用 RGB（透明部分会透出背景白色）
+    user_paint = manual_arr[:,:,3].astype(float) > 30
 
     # 3. 加载 AI 遮罩
     image = np.array(Image.open(image_path).convert("RGB"))
