@@ -46,8 +46,8 @@ from transformers import AutoModelForImageSegmentation
 # ---------------------------------------------------------------------------
 # 配置常量
 # ---------------------------------------------------------------------------
-VERSION = "1.5.1"              # 2026-07-13：收窄 FG_DILATE 25→3/FG_CLOSE 8→5，杜绝遮罩外扩 25px 问题;
-                             # 遮挡物∪FASHN(戒指/手/头发/首饰)根治"印花盖戒指"。v1.4 版本归档+评分
+VERSION = "1.5.2"              # 2026-07-13：最终衣身边缘收缩 2px，解决自动生成遮罩比真实衣服轮廓外扩问题；
+                             # 此前 v1.5.1 收窄 FG_DILATE 25->3 / FG_CLOSE 8->5；v1.5.0 接入 FASHN 遮挡物识别。
 MODEL_NAME = "ZhengPeng7/BiRefNet"
 BIR_NET_INPUT_SIZE = (1024, 1024)
 NORMALIZE_MEAN = [0.485, 0.456, 0.406]
@@ -59,6 +59,7 @@ ALPHA_THRESHOLD = 64
 K_AB_CLUSTERS = 2              # 在 (a*,b*) 色度空间聚类数（用于找衣服色度中心）
 BODY_CLOSE_ITERS = 2
 BODY_OPEN_ITERS = 1
+BODY_SHRINK_ITERS = 2          # v1.5.2：最终对衣身遮罩做 2px 收缩，抵消前面膨胀/闭运算造成的边缘外扩，使边界更贴合真实衣服轮廓
 # v1.3：开运算关掉，避免把戒指/细手指/发丝等细遮挡物侵蚀掉
 OCC_OPEN_ITERS = 0
 
@@ -712,6 +713,15 @@ def generate_masks(
                 info["fashn_occ_px"] = int(f_occ.sum())
             else:
                 info["fashn"] = False
+
+        # v1.5.2：最终衣身边缘收缩，让 body 边界更贴合真实衣服轮廓。
+        # 前面 FG_DILATE/BODY_CLOSE 等形态学会让衣身向外膨胀 2-5px；
+        # 这里统一做 2px 腐蚀收缩补偿，并把被移出的像素合并到 occluder，
+        # 保证 body 与 occluder 仍完整覆盖整个人像、不留缝隙。
+        if BODY_SHRINK_ITERS > 0:
+            body_before_shrink = body_mask.copy()
+            body_mask = ndi.binary_erosion(body_mask, iterations=BODY_SHRINK_ITERS)
+            occluder_mask = occluder_mask | (body_before_shrink & (~body_mask))
 
         # 用清洗后的 occluder 重画可视化（绿=衣服 红=遮挡物）
         parse_vis = arr.copy()

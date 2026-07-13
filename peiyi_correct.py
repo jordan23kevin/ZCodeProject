@@ -406,12 +406,25 @@ def import_manual_mask(image_path: str | Path) -> dict:
         ai_here = set(int(x) for x in np.unique(lab_a[u_comp]) if x > 0)
         touched.update(ai_here)
 
-    # 重建：用户画的原样保留；AI 没被碰到的保留；被碰到的整块换成用户画的
+    # 修复：用户只画了杯子/手等局部，如果整片 AI 遮挡物（头发+手臂+杯子）
+    # 是连通的，"整块替换"会把头发/手臂也误删。因此只替换用户画笔附近的 AI 像素，
+    # 远处的头发/手臂等仍然保留。
+    USER_REMOVE_DILATE_ITERS = 20
+    user_dil = ndi.binary_dilation(user_paint, iterations=USER_REMOVE_DILATE_ITERS)
+
+    # 重建：用户画的原样保留；AI 没被碰到的保留；
+    # 被碰到的只保留用户画笔膨胀区外的部分（避免远处头发/手臂被误删）
     final_occ = user_paint.copy()
     for label in range(1, na + 1):
-        if label not in touched:
-            final_occ = final_occ | (lab_a == label)
+        comp = lab_a == label
+        if label in touched:
+            final_occ = final_occ | (comp & (~user_dil))
+        else:
+            final_occ = final_occ | comp
     final_body = person_mask & (~final_occ)
+    # 关键约束：用户导入的是遮挡物，衣身区域不应因此扩大。
+    # 被替换下来的 AI 遮挡像素如果不加约束会回到衣身，导致衣身比 AI 原衣身还大。
+    final_body = final_body & ai_body
 
     # 5. 保存
     h, w = img_h, img_w
