@@ -332,7 +332,7 @@ def _scan_projects_impl():
     """实际全量扫描：返回项目列表。"""
     projects = []
     for d in sorted(BASE.iterdir()):
-        if not d.is_dir() or not re.match(r"^DX\d+$", d.name):
+        if not d.is_dir() or not re.match(r"^DX\d+(?:BW|B|W)?$", d.name):
             continue
         dx = d.name
         ai_dir = d / "01_AI"
@@ -1605,7 +1605,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
     # 缩略图
     def _serve_thumb(self, dx, kind, file):
         # 防目录穿越
-        if "/" in file or "\\" in file or "/" in dx or "\\" in dx or not re.match(r"^DX\d+$", dx):
+        if "/" in file or "\\" in file or "/" in dx or "\\" in dx or not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
             self._send(400, b"bad"); return
         thumb = get_thumb(dx, kind, file)
         if not thumb:
@@ -1619,7 +1619,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
     # 原始图（全分辨率，供悬停预览用）
     def _serve_original(self, dx, kind, file):
-        if "/" in file or "\\" in file or "/" in dx or "\\" in dx or not re.match(r"^DX\d+$", dx):
+        if "/" in file or "\\" in file or "/" in dx or "\\" in dx or not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
             self._send(400, b"bad"); return
         sub = "01_AI" if kind == "ai" else "02_REM_BG" if kind == "rem" else "03_UPLOAD"
         src = BASE / dx / sub / file
@@ -1635,7 +1635,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
     # 打开文件夹
     def _open_folder(self, dx, which):
-        if not re.match(r"^DX\d+$", dx):
+        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
             self._send(400, b"bad dx"); return
         sub = "01_AI" if which == "ai" else "02_REM_BG" if which == "rem" else "03_UPLOAD"
         folder = BASE / dx / sub
@@ -1701,7 +1701,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
     # 删除单文件（送回收站）
     def _del_file(self, dx, which, file):
-        if not re.match(r"^DX\d+$", dx) or "/" in file or "\\" in file:
+        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or "/" in file or "\\" in file:
             self._send_json({"ok": False, "msg": "参数非法"}); return
         sub = "01_AI" if which == "ai" else "02_REM_BG" if which == "rem" else "03_UPLOAD"
         target = BASE / dx / sub / file
@@ -1720,7 +1720,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
     # 重新去背（针对单张 AI 图）
     # HTTP 立即返回，美图在新控制台窗口异步跑；worker 负责同步逻辑 + 释放锁。
     def _rembg(self, dx, file):
-        if not re.match(r"^DX\d+$", dx):
+        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
             self._send_json({"ok": False, "msg": "DX号非法"}); return
         if not file or "/" in file or "\\" in file:
             self._send_json({"ok": False, "msg": "图片文件参数非法"}); return
@@ -2101,7 +2101,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
     def _ps_sticker(self, dx):
         if not dx:
             self._send_json({"ok": False, "msg": "DX号非法"}); return
-        dx_list = [d.strip() for d in dx.split(",") if re.match(r"^DX\d+$", d.strip())]
+        dx_list = [d.strip() for d in dx.split(",") if re.match(r"^DX\d+(?:BW|B|W)?$", d.strip())]
         if not dx_list:
             self._send_json({"ok": False, "msg": "DX号非法"}); return
         # 批量贴图默认跳过黑T专用贴图（避免处理已有的黑版文件），单款贴图保留黑T
@@ -2114,7 +2114,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
     # BW合成（独立入口：仅用已贴好的 B/W 合成 BW）
     def _ps_batch(self, dx):
-        if not re.match(r"^DX\d+$", dx):
+        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
             self._send_json({"ok": False, "msg": "DX号非法"}); return
         ps_script = Path(r"E:\\Claude code\\ps\\ps_batch_one.py")
         quit_ps_script = Path(r"E:\\Claude code\\ps\\quit_ps.py")
@@ -2232,7 +2232,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
     # \u653e\u5927\u53bb\u80cc\u56fe\u52302046x2046
     def _upscale_rem(self, dx, file):
-        if not re.match(r"^DX\d+$", dx) or "/" in file or "\\" in file:
+        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or "/" in file or "\\" in file:
             self._send_json({"ok": False, "msg": "\u53c2\u6570\u975e\u6cd5"}); return
         path = BASE / dx / "02_REM_BG" / file
         if not path.exists():
@@ -2255,7 +2255,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
     # 反相去背图并自动跑贴图流水线
     def _invert_rem(self, dx, file):
         from urllib.parse import parse_qs
-        if not re.match(r"^DX\d+$", dx) or "/" in file or "\\" in file:
+        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or "/" in file or "\\" in file:
             self._send_json({"ok": False, "msg": "参数非法"}); return
         if not file.lower().endswith("_cut.png"):
             self._send_json({"ok": False, "msg": "仅支持 _cut.png 去背图"}); return
@@ -2383,7 +2383,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             self._send_json({"done": True, "ok": True, "msg": "无结果", "results": []})
 
     def _refresh_thumb(self, dx, stem):
-        if not re.match(r"^DX\d+$", dx) or not stem or "/" in stem or "\\" in stem:
+        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not stem or "/" in stem or "\\" in stem:
             self._send_json({"ok": False, "msg": "参数非法"}); return
         rem_dir = BASE / dx / "02_REM_BG"
         cut_name = f"{stem}_cut.png"
@@ -2418,7 +2418,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
     # 改名：任意后缀转换（如 DX0264_B → DX0264_BW / DX0264_RED1，对应 _cut 也改名）
     def _rename_stem(self, dx, stem, target=""):
-        if not re.match(r"^DX\d+$", dx) or not stem or "/" in stem or "\\" in stem:
+        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not stem or "/" in stem or "\\" in stem:
             self._send_json({"ok": False, "msg": "参数非法"}); return
         target = (target or "").strip()
         # 兼容旧逻辑：未传 target 且 stem 以 _B/_W 结尾时默认改为 _BW
@@ -2484,7 +2484,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         """
         fixed = []
         for d in sorted(BASE.iterdir()):
-            if not d.is_dir() or not re.match(r"^DX\d+$", d.name):
+            if not d.is_dir() or not re.match(r"^DX\d+(?:BW|B|W)?$", d.name):
                 continue
             dx = d.name
             ai_dir = d / "01_AI"
