@@ -1110,7 +1110,7 @@ def _ai_trash_meta_path(dx: str) -> Path:
 
 def move_ai_to_trash(dx: str, filename: str) -> tuple:
     """将 AI 图从 01_AI 移到回收站。返回 (ok, msg)"""
-    if not re.match(r"^DX\d+$", dx):
+    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
         return False, "无效的 DX 编号"
     safe = os.path.basename(filename)
     src = PROJECTS_DIR / dx / "01_AI" / safe
@@ -1163,7 +1163,7 @@ def move_ai_to_trash(dx: str, filename: str) -> tuple:
 
 def restore_ai_from_trash(dx: str, filename: str) -> tuple:
     """从回收站还原 AI 图到 01_AI。返回 (ok, msg)"""
-    if not re.match(r"^DX\d+$", dx):
+    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
         return False, "无效的 DX 编号"
     safe = os.path.basename(filename)
     src = AI_TRASH_DIR / dx / safe
@@ -1203,7 +1203,7 @@ def list_ai_trash() -> list:
     if not AI_TRASH_DIR.exists():
         return items
     for dx_dir in sorted(AI_TRASH_DIR.iterdir()):
-        if not dx_dir.is_dir() or not re.match(r"^DX\d+$", dx_dir.name):
+        if not dx_dir.is_dir() or not re.match(r"^DX\d+(?:BW|B|W)?$", dx_dir.name):
             continue
         dx = dx_dir.name
         meta = {}
@@ -1276,7 +1276,7 @@ def _scan_upload_projects():
     if not PROJECTS_DIR.exists():
         return projects
     for d in sorted(PROJECTS_DIR.iterdir()):
-        if not d.is_dir() or not re.match(r"^DX\d+$", d.name):
+        if not d.is_dir() or not re.match(r"^DX\d+(?:BW|B|W)?$", d.name):
             continue
         up_dir = d / "03_UPLOAD"
         if not up_dir.is_dir():
@@ -1335,7 +1335,7 @@ def _scan_ai_review_projects():
     INBOX_NAME_RE = re.compile(r'^(\d+)(B|W|BW|WB)\.(png|jpg|jpeg|webp)$', re.IGNORECASE)
 
     for d in sorted(PROJECTS_DIR.iterdir()):
-        if not d.is_dir() or not re.match(r"^DX\d+$", d.name):
+        if not d.is_dir() or not re.match(r"^DX\d+(?:BW|B|W)?$", d.name):
             continue
         dx = d.name
         ai_dir = d / "01_AI"
@@ -1582,7 +1582,7 @@ def _upload_thumb_path(dx: str, filename: str) -> Path:
 def _get_upload_thumb(dx: str, filename: str):
     """返回 03_UPLOAD 缩略图路径（不存在或源文件已更新则重新生成 220px 高）。
     优先使用已缓存缩略图；透明 PNG 则合成白底。"""
-    if "/" in filename or "\\" in filename or not re.match(r"^DX\d+$", dx):
+    if "/" in filename or "\\" in filename or not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
         return None
     src = PROJECTS_DIR / dx / "03_UPLOAD" / filename
     if not src.exists():
@@ -1628,7 +1628,7 @@ def _get_upload_thumb(dx: str, filename: str):
 def _get_ai_thumb(dx: str, filename: str, source: str = "01_AI"):
     """返回 01_AI 或回收站中 AI 图的缩略图路径（不存在则生成 300px 高）。
     source: '01_AI' 或 'trash'"""
-    if "/" in filename or "\\" in filename or not re.match(r"^DX\d+$", dx):
+    if "/" in filename or "\\" in filename or not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
         return None
     if source == "trash":
         src = AI_TRASH_DIR / dx / filename
@@ -1670,7 +1670,7 @@ def _get_ai_thumb(dx: str, filename: str, source: str = "01_AI"):
 
 def _get_ai_original(dx: str, filename: str):
     """返回 01_AI 中 AI 图的原图路径"""
-    if "/" in filename or "\\" in filename or not re.match(r"^DX\d+$", dx):
+    if "/" in filename or "\\" in filename or not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
         return None
     src = PROJECTS_DIR / dx / "01_AI" / filename
     if not src.exists():
@@ -1969,11 +1969,11 @@ def api_status():
         if m:
             current_key = f"Key#{m.group(1)}"
         # 当前 DX：从输出路径或任务进度里找
-        m = re.search(r'输出到\s+(DX\d+)/01_AI', line)
+        m = re.search(r'输出到\s+(DX\d+(?:BW|B|W)?)/01_AI', line)
         if m:
             current_dx = m.group(1)
         # Lovart 输出日志：name -> DXxxx/01_AI/name.png
-        m = re.search(r'->\s*(DX\d+)/01_AI/', line)
+        m = re.search(r'->\s*(DX\d+(?:BW|B|W)?)/01_AI/', line)
         if m:
             current_dx = m.group(1)
 
@@ -2334,7 +2334,7 @@ def api_ai_review_thumb():
     """返回 01_AI 中 AI 图的缩略图"""
     dx = request.args.get("dx", "").strip()
     filename = request.args.get("file", "").strip()
-    if not re.match(r"^DX\d+$", dx) or not filename:
+    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not filename:
         return "bad params", 400
     thumb = _get_ai_thumb(dx, filename, source="01_AI")
     if not thumb:
@@ -2349,7 +2349,7 @@ def api_ai_review_original():
     """返回 01_AI 中 AI 图的原图（供悬停放大）"""
     dx = request.args.get("dx", "").strip()
     filename = request.args.get("file", "").strip()
-    if not re.match(r"^DX\d+$", dx) or not filename:
+    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not filename:
         return "bad params", 400
     src = _get_ai_original(dx, filename)
     if not src:
@@ -2365,7 +2365,7 @@ def api_ai_review_trash_thumb():
     """返回回收站中 AI 图的缩略图"""
     dx = request.args.get("dx", "").strip()
     filename = request.args.get("file", "").strip()
-    if not re.match(r"^DX\d+$", dx) or not filename:
+    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not filename:
         return "bad params", 400
     thumb = _get_ai_thumb(dx, filename, source="trash")
     if not thumb:
@@ -2453,7 +2453,7 @@ def api_ai_review_regenerate():
 
     if not dx or not source_file:
         return jsonify({"ok": False, "error": "缺少 dx 或 source_file"}), 400
-    if not re.match(r"^DX\d+$", dx):
+    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
         return jsonify({"ok": False, "error": "无效的 DX 编号"}), 400
 
     source_path = PROJECTS_DIR / dx / "01_AI" / source_file
@@ -2555,7 +2555,7 @@ def api_ai_review_regenerate_batch():
         source_file = str(item.get("source_file", "")).strip()
         if not dx or not source_file:
             continue
-        if not re.match(r"^DX\d+$", dx):
+        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
             return jsonify({"ok": False, "error": f"无效的 DX 编号: {dx}"}), 400
         source_path = PROJECTS_DIR / dx / "01_AI" / source_file
         if not source_path.exists():
@@ -2987,7 +2987,7 @@ def api_upload_thumb():
     """返回 03_UPLOAD 缩略图"""
     dx = request.args.get("dx", "")
     filename = request.args.get("file", "")
-    if not re.match(r"^DX\d+$", dx) or not filename:
+    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not filename:
         return "bad params", 400
     thumb = _get_upload_thumb(dx, filename)
     if not thumb:
@@ -3002,7 +3002,7 @@ def api_upload_original():
     """返回 03_UPLOAD 原图（供悬停放大）"""
     dx = request.args.get("dx", "")
     filename = request.args.get("file", "")
-    if not re.match(r"^DX\d+$", dx) or not filename:
+    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not filename:
         return "bad params", 400
     src = PROJECTS_DIR / dx / "03_UPLOAD" / filename
     if not src.exists():
@@ -3019,7 +3019,7 @@ def api_upload_delete():
     data = request.get_json(force=True, silent=True) or {}
     dx = (data.get("dx") or request.args.get("dx", "")).strip()
     filename = (data.get("file") or request.args.get("file", "")).strip()
-    if not re.match(r"^DX\d+$", dx) or not filename or "/" in filename or "\\" in filename:
+    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not filename or "/" in filename or "\\" in filename:
         return jsonify({"ok": False, "error": "参数非法"}), 400
     target = PROJECTS_DIR / dx / "03_UPLOAD" / filename
     if not target.exists():
@@ -3264,7 +3264,7 @@ def api_open_dx():
     """打开指定 DX 的子文件夹（ai/rem/up）"""
     dx = request.args.get("dx", "")
     which = request.args.get("which", "")
-    if not re.match(r"^DX\d+$", dx) or which not in ("ai", "rem", "up"):
+    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or which not in ("ai", "rem", "up"):
         return jsonify({"ok": False, "error": "参数非法"}), 400
     sub = {"ai": "01_AI", "rem": "02_REM_BG", "up": "03_UPLOAD"}[which]
     folder = PROJECTS_DIR / dx / sub
@@ -3294,7 +3294,7 @@ def api_open_file():
 
     if sub == "INBOX":
         folder = INBOX_DIR
-    elif sub in ("01_AI", "02_REM_BG", "03_UPLOAD") and re.match(r"^DX\d+$", dx):
+    elif sub in ("01_AI", "02_REM_BG", "03_UPLOAD") and re.match(r"^DX\d+(?:BW|B|W)?$", dx):
         folder = PROJECTS_DIR / dx / sub
     else:
         return jsonify({"ok": False, "error": "非法 sub 参数"}), 400
