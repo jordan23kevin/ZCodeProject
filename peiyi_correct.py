@@ -396,9 +396,7 @@ def import_manual_mask(image_path: str | Path) -> dict:
     # 4. 合并：把你画的区域直接加到遮挡物上
     #    不加 person_mask 限制——用户画的就是该加的
     final_occ = ai_occ | user_paint
-    # 用膨胀后的人像范围取 person，确保衣身区域足够大
-    person_dil = ndi.binary_dilation(person_mask, iterations=20)
-    final_body = person_dil & (~final_occ)
+    final_body = person_mask & (~final_occ)
 
     # 5. 保存
     h, w = img_h, img_w
