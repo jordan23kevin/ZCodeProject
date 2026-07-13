@@ -337,31 +337,55 @@ def delete_version(
 # ---------------------------------------------------------------------------
 MANUAL_SUFFIX = "_manual.png"   # 用户手动遮罩文件名后缀
 
-def _read_manual_mask(mask_path: Path) -> np.ndarray:
-    """读取手动遮罩 PNG，返回 bool body_mask（True=衣身）。
+def _read_manual_mask(mask_path: Path, person_mask: np.ndarray):
+    """读取手动遮罩 PNG，返回 (body_mask, occluder_mask) 两个 bool 矩阵。
 
-    支持两种格式：
-        1. RGBA/灰度：白色/不透明 = 衣身
-        2. RGB（parse风格）：绿色(大量G) = 衣身，红色(大量R) = 遮挡物
-           -> 返回 body_mask（绿色区域）
+    自动识别用户遮罩的格式：
+        1. **parse 风格**（绿=衣身/红=遮挡物）：检测绿色像素 >1%
+           → 直接提取绿/红区域
+        2. **遮挡物风格**（大部分透明，小部分画了遮挡物）：
+           透明区域>50% → 用户画的是"非衣身"区域
+           → 白色/不透明 = 遮挡物，透明 = 衣身
+        3. **衣身风格**（大部分不透明，画了衣身轮廓）：
+           透明区域<=50% → 用户画的是衣身
+           → 白色/不透明 = 衣身，透明 = 非衣身
+
+    参数：
+        mask_path: 用户手动遮罩文件路径
+        person_mask: 人像范围（bool），用于约束输出
     """
     img = Image.open(mask_path).convert("RGBA")
-    arr = np.array(img)  # (H,W,4)
+    arr = np.array(img)
     h, w = arr.shape[:2]
-
-    # 检测是否为 parse 风格（有明显绿/红色块）
     r, g, b, a = arr[:,:,0].astype(float), arr[:,:,1].astype(float), arr[:,:,2].astype(float), arr[:,:,3].astype(float)
-    green_px = int(((g > r + 30) & (g > b + 30) & (g > 60)).sum())
-    red_px = int(((r > g + 30) & (r > b + 30) & (r > 60)).sum())
     total = h * w
 
-    if green_px > total * 0.01:  # 有超过 1% 的绿色 → parse 风格
+    # 检测 parse 风格（有明显绿/红色块）
+    green_px = int(((g > r + 30) & (g > b + 30) & (g > 60)).sum())
+    if green_px > total * 0.01:
         body = (g > r + 30) & (g > b + 30) & (g > 60)
-        return body
+        occ  = (r > g + 30) & (r > b + 30) & (r > 60)
+        body = body & person_mask
+        occ  = occ & person_mask & (~body)
+        return body, occ
+
+    # 非 parse 风格 → 看透明度判断是"衣身遮罩"还是"遮挡物遮罩"
+    transparent_ratio = (a < 32).sum() / total  # 完全透明比例
+
+    if transparent_ratio > 0.5:
+        # 【遮挡物风格】用户画了遮挡物（手/头发等），透明=衣身
+        # 白色/不透明区域 = 遮挡物
+        user_occ = (a > 100) | ((r + g + b) / 3 > 180)
+        # 只取在人像范围内的遮挡物
+        user_occ = user_occ & person_mask
+        user_body = person_mask & (~user_occ)
+        return user_body, user_occ
     else:
-        # 灰度/RGBA 风格：不透明或亮色 = 衣身
-        body = (a > 128) | ((r + g + b) / 3 > 128)
-        return body
+        # 【衣身风格】用户画了衣身轮廓，白色/不透明 = 衣身
+        user_body = (a > 100) | ((r + g + b) / 3 > 128)
+        user_body = user_body & person_mask
+        user_occ = person_mask & (~user_body)
+        return user_body, user_occ
 
 
 def import_manual_mask(image_path: str | Path) -> dict:
@@ -402,43 +426,41 @@ def import_manual_mask(image_path: str | Path) -> dict:
             else:
                 return {"ok": False, "error": f"未找到手动遮罩文件，请保存为 {stem}_manual.png 到同级目录"}
 
-    # 2. 读取手动 body_mask
-    manual_body = _read_manual_mask(manual_path)
-    m_h, m_w = manual_body.shape
-
-    # 3. 加载当前 AI 遮罩
+    # 2. 加载原图 + AI 遮罩 → 计算 person_mask
     image = np.array(Image.open(image_path).convert("RGB"))
     img_h, img_w = image.shape[:2]
-
-    # 检查尺寸
-    if m_h != img_h or m_w != img_w:
-        return {"ok": False, "error": f"手动遮罩尺寸({m_w}x{m_h})与原图({img_w}x{img_h})不一致"}
 
     ai_body_path = out_dir / f"{stem}_body_mask.png"
     ai_body = np.array(Image.open(ai_body_path)) > 128 if ai_body_path.exists() else None
     ai_occ_path = out_dir / f"{stem}_occluder_mask.png"
     ai_occ = np.array(Image.open(ai_occ_path)) > 128 if ai_occ_path.exists() else None
 
-    # 4. 计算 person_mask（从 body+occluder 还原，或从 alpha 重算）
+    # 计算 person_mask（AI 人像范围）
     if ai_body is not None and ai_occ is not None:
         person_mask = ai_body | ai_occ
     else:
-        # 从原图重新 BiRefNet
         import peiyi_mask as _pm
         alpha_raw = _pm._infer_matte(Image.open(image_path).convert("RGB"))
         person_mask = alpha_raw >= (64 / 255.0)
         import scipy.ndimage as _ndi
         person_mask = _ndi.binary_closing(person_mask, iterations=5)
 
-    # 5. 合并：用户的 body 优先
-    final_body = manual_body & person_mask   # 用户 body 不能超出人像范围
-    final_occ = person_mask & (~final_body)  # 人像内非 body 的部分 = 遮挡物
-    # 如果用户漏掉了 AI 正确识别的 body 区域，补充回来
+    # 3. 读取手动遮罩（自动识别格式，返回 body + occ）
+    manual_body, manual_occ = _read_manual_mask(manual_path, person_mask)
+    m_h, m_w = manual_body.shape
+    if m_h != img_h or m_w != img_w:
+        return {"ok": False, "error": f"手动遮罩尺寸({m_w}x{m_h})与原图({img_w}x{img_h})不一致"}
+
+    # 4. 合并：**用户遮罩优先**
+    #    用户画的遮挡物（白色区域）= 最终遮挡物
+    #    用户没画的地方（透明）= 衣身主体
+    #    再用 AI 补充用户漏掉的衣身部分
+    final_body = manual_body.copy()
+    final_occ = manual_occ.copy()
     if ai_body is not None:
-        # 补充 AI 中属于 body 且在人像范围内的像素
-        ai_body_in_person = ai_body & person_mask
-        # 只要 AI 认为是 body 的，且用户没画为 occluder
-        final_body = final_body | (ai_body_in_person & (~final_occ))
+        # AI 识别的 body 中，用户没画遮挡的部分 → 补进 body
+        ai_body_extra = ai_body & person_mask & (~final_occ)
+        final_body = final_body | ai_body_extra
 
     # 6. 保存
     h, w = img_h, img_w
