@@ -41,8 +41,15 @@
   .thumb .nm{font-size:13px;color:#bbb;padding:6px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
   .thumb .del{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:4px;width:26px;height:26px;cursor:pointer;font-size:15px;line-height:1}
   .thumb .del:hover{background:#e53935}
-  /* 未填写五项数据的素材角标（排序时默认排最前） */
-  .thumb .badge{position:absolute;top:6px;left:6px;background:#e67e22;color:#fff;border-radius:4px;font-size:11px;font-weight:700;padding:2px 7px;pointer-events:none;z-index:5}
+  /* 未填写五项数据的素材角标（排序时默认排最前）；下移避免与评分角标重叠 */
+  .thumb .badge{position:absolute;top:34px;left:6px;background:#e67e22;color:#fff;border-radius:4px;font-size:11px;font-weight:700;padding:2px 7px;pointer-events:none;z-index:5}
+  /* 遮罩评分角标：直接叠在每张胚衣图左上角，一眼看图知分，点击打开版本抽屉 */
+  .thumb .sbadge{position:absolute;top:6px;left:6px;min-width:32px;text-align:center;border-radius:5px;font-size:13px;font-weight:700;padding:2px 8px;cursor:pointer;z-index:6;color:#fff;border:1px solid rgba(255,255,255,.3)}
+  .thumb .sbadge.s-good{background:#2e7d32}
+  .thumb .sbadge.s-warn{background:#b8860b}
+  .thumb .sbadge.s-bad{background:#c62828}
+  .thumb .sbadge.s-none{background:#555;color:#cfcfcf}
+  .thumb .sbadge:hover{filter:brightness(1.15)}
   .empty{color:#666;font-size:13px;padding:10px 2px}
   /* 每张素材下方的贴图参数输入区（与 胚衣参数表_模板.csv 第5-9列一致） */
   .thumb .meta{display:grid;grid-template-columns:1fr 1fr;gap:7px 8px;padding:10px 8px 6px;border-top:1px solid #333}
@@ -81,29 +88,42 @@
   .legend{display:flex;gap:18px;flex-wrap:wrap;margin:0 0 14px;font-size:13px;color:#ccc}
   .legend span{display:inline-flex;align-items:center;gap:6px}
   .sw{width:14px;height:14px;border-radius:3px;display:inline-block}
-  /* 评分总表 */
-  .scorecard{background:#252525;border:1px solid #444;border-radius:10px;padding:16px 20px;max-width:2500px;margin:0 auto 28px}
-  .scorecard .sc-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px}
-  .scorecard .sc-title{font-size:20px;font-weight:700;color:#fff}
-  .scorecard .sc-sub{font-size:13px;color:#9aa0a6}
-  .scorecard .sc-legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:#bbb}
-  .scorecard .sc-legend i{width:12px;height:12px;border-radius:3px;display:inline-block;margin-right:5px;vertical-align:-1px}
-  .scoretable-wrap{max-height:340px;overflow-y:auto;border:1px solid #333;border-radius:8px}
-  table.scoretable{width:100%;border-collapse:collapse;font-size:14px}
-  table.scoretable th,table.scoretable td{padding:9px 12px;text-align:left;border-bottom:1px solid #2e2e2e;white-space:nowrap}
-  table.scoretable th{position:sticky;top:0;background:#1f1f1f;color:#bbb;font-weight:600;z-index:2}
-  table.scoretable tbody tr:hover{background:#2a2a2a}
-  table.scoretable td.cat{color:#9aa0a6;font-size:12px}
-  table.scoretable td.name{font-weight:600;color:#eee}
-  table.scoretable .score{font-weight:700;text-align:center}
-  table.scoretable tr.s-good .score{color:#7ee787}
-  table.scoretable tr.s-warn .score{color:#ffd866}
-  table.scoretable tr.s-bad{background:#3a1414}
-  table.scoretable tr.s-bad .score{color:#ff6b6b}
-  table.scoretable tr.s-none .score{color:#666}
-  table.scoretable .flag{display:inline-block;background:#5a2a2a;color:#ffb3b3;font-size:11px;border-radius:4px;padding:1px 6px;margin-left:4px}
-  table.scoretable .ver{color:#888;font-size:12px}
   .score-empty{color:#666;font-size:14px;padding:16px;text-align:center}
+  /* 评分概览条（替代原大表格）：一行看全好/一般/差/未生成 + 低分排前开关 */
+  .overview{background:#252525;border:1px solid #444;border-radius:10px;padding:12px 18px;max-width:2500px;margin:0 auto 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+  .overview .ov-left{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .overview .ov-title{font-size:18px;font-weight:700;color:#fff}
+  .overview .ov-counts{font-size:14px;color:#bbb}
+  .overview .ov-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .overview .ov-legend{font-size:12px;color:#bbb}
+  .overview .ov-legend i{width:11px;height:11px;border-radius:3px;display:inline-block;margin:0 4px 0 10px;vertical-align:-1px}
+  .toggle-btn{padding:8px 14px;font-size:14px;border-radius:6px;border:1px solid #555;background:#2a2a2a;color:#ccc;cursor:pointer}
+  .toggle-btn:hover{background:#333}
+  .toggle-btn.on{background:#2196F3;color:#fff;border-color:#2196F3}
+  /* 侧边版本抽屉 */
+  .drawer{position:fixed;top:0;right:0;height:100vh;width:450px;max-width:95vw;background:#1c1c1c;border-left:1px solid #444;z-index:200;transform:translateX(102%);transition:transform .25s ease;display:flex;flex-direction:column;box-shadow:-6px 0 24px rgba(0,0,0,.5)}
+  .drawer.show{transform:translateX(0)}
+  .drawer-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid #333;flex:0 0 auto}
+  .drawer-head h3{font-size:19px;color:#fff;margin:0}
+  .drawer-body{padding:16px 18px;overflow-y:auto;flex:1}
+  .ver-row{display:flex;gap:8px;overflow-x:auto;padding-bottom:12px;margin-bottom:8px}
+  .ver-chip{flex:0 0 auto;border:1px solid #555;background:#2a2a2a;border-radius:8px;padding:8px 12px;cursor:pointer;min-width:74px;text-align:center}
+  .ver-chip:hover{background:#333}
+  .ver-chip.sel{border-color:#2196F3;box-shadow:0 0 0 1px #2196F3}
+  .ver-chip.cur{background:#16324a}
+  .ver-chip .v{font-size:15px;font-weight:700;color:#eee}
+  .ver-chip .s{font-size:12px;margin-top:3px}
+  .ver-chip .s.s-good{color:#7ee787}
+  .ver-chip .s.s-warn{color:#ffd866}
+  .ver-chip .s.s-bad{color:#ff6b6b}
+  .ver-chip .s.s-none{color:#888}
+  .ver-chip .curtag{font-size:10px;color:#9fd0ff;margin-top:2px}
+  .drawer-preview figure{margin:0 0 14px;background:#111;border:1px solid #333;border-radius:8px;padding:10px}
+  .drawer-preview img{width:100%;border-radius:5px;background:#0a0a0a;display:block}
+  .drawer-preview figcaption{font-size:13px;color:#bbb;text-align:center;margin-top:8px;line-height:1.4}
+  .use-btn{width:100%;padding:13px;font-size:16px;border-radius:6px;border:none;background:#2196F3;color:#fff;font-weight:700;cursor:pointer;margin-top:6px}
+  .use-btn:hover{background:#1976D2}
+  .use-btn:disabled{background:#2e3a2e;color:#7ee787;cursor:default}
 </style>
 </head>
 <body>
@@ -115,30 +135,16 @@
   <button onclick="location.href='/'" title="返回主面板">🏠 主面板</button>
 </div>
 
-<!-- 评分总表：一眼看清所有胚衣最新遮罩评分，低分标红 -->
-<div class="scorecard">
-  <div class="sc-head">
-    <div>
-      <div class="sc-title">📊 遮罩评分总表</div>
-      <div class="sc-sub">每次「生成遮罩」自动打分 · 低分=可能有遮挡问题 · 点行可预览遮罩</div>
-    </div>
-    <div class="sc-legend">
-      <span><i style="background:#7ee787"></i>好 ≥90</span>
-      <span><i style="background:#ffd866"></i>一般 70-89</span>
-      <span><i style="background:#ff6b6b"></i>差 &lt;70</span>
-      <span><i style="background:#666"></i>未生成</span>
-      <button class="mini" onclick="refreshScores()">🔄 刷新评分</button>
-    </div>
+<!-- 评分概览条：评分已叠到每张胚衣图上，这里只留汇总 + 低分排前开关 -->
+<div class="overview">
+  <div class="ov-left">
+    <span class="ov-title">📊 遮罩评分</span>
+    <span class="ov-counts" id="ovCounts">加载中…</span>
   </div>
-  <div class="scoretable-wrap">
-    <table class="scoretable">
-      <thead>
-        <tr><th>分类</th><th>胚衣</th><th>评分</th><th>遮挡占比</th><th>衣服覆盖</th><th>版本</th><th>更新时间</th><th>提示</th></tr>
-      </thead>
-      <tbody id="scoreBody">
-        <tr><td colspan="8" class="score-empty">加载中…</td></tr>
-      </tbody>
-    </table>
+  <div class="ov-right">
+    <span class="ov-legend"><i style="background:#7ee787"></i>好<i style="background:#ffd866"></i>一般<i style="background:#ff6b6b"></i>差<i style="background:#666"></i>未生成</span>
+    <button class="toggle-btn" id="lowFirstBtn" onclick="toggleLowFirst()">低分排前：关</button>
+    <button class="mini" onclick="refreshAll()">🔄 刷新</button>
   </div>
 </div>
 
@@ -157,6 +163,24 @@
       <span><i class="sw" style="background:#ff0000"></i> 红色 = 遮挡物区域</span>
     </div>
     <div class="modal-imgs" id="modalImgs"></div>
+  </div>
+</div>
+
+<!-- 侧边版本抽屉：点胚衣图/评分角标打开，横排比各版本分层预览，选定即切换 -->
+<div class="drawer" id="drawer">
+  <div class="drawer-head">
+    <h3 id="drawerTitle">遮罩版本</h3>
+    <button class="modal-close" onclick="closeDrawer()">×</button>
+  </div>
+  <div class="drawer-body">
+    <div class="ver-row" id="drawerVers"></div>
+    <div id="drawerMeta" style="font-size:13px;color:#9aa0a6;margin:0 0 12px"></div>
+    <div class="legend" style="margin-bottom:12px">
+      <span><i class="sw" style="background:#00ff00"></i> 绿=T恤主体</span>
+      <span><i class="sw" style="background:#ff0000"></i> 红=遮挡物</span>
+    </div>
+    <div class="drawer-preview" id="drawerPreview"></div>
+    <button class="use-btn" id="useBtn" onclick="useCurrentVersion()" disabled>设为当前版本</button>
   </div>
 </div>
 
@@ -180,6 +204,11 @@ var META_FIELDS = [
 ];
 // 与后端 PEIYI_META_FIELDS 默认值保持一致：中心点x 默认 670（画布中点）
 var META_DEFAULTS = {width:0, height:0, rotation:0, highest_y:0, center_x:670};
+
+// 图片墙数据缓存 + 低分排前开关 + 抽屉当前状态
+var GALLERY_DATA = {};   // category -> items[]
+var LOW_FIRST = false;   // 低分排前开关
+var DRAWER = {category:null, name:null, stem:null, url:null, versions:[], current:null, sel:null};
 
 function log(s){
   var b=document.getElementById('logBox');
@@ -269,81 +298,113 @@ function refreshGallery(key){
     .then(function(r){return r.json();})
     .then(function(d){
       if(!d.ok){ galMsg(key,'加载失败：'+(d.error||'未知错误')); return; }
-      var items=(d.categories&&d.categories[key])||[];
-      document.getElementById('cnt-'+key).textContent=items.length+' 张';
-      var gal=document.getElementById('gal-'+key);
-      if(!items.length){ gal.innerHTML='<div class="empty">暂无素材</div>'; return; }
-      gal.innerHTML='';
-      items.forEach(function(it){
-        var meta = it.meta || {};
-        for(var mk in META_DEFAULTS){ if(!(mk in meta) || meta[mk]==null) meta[mk]=META_DEFAULTS[mk]; }
-
-        var metaHtml='<div class="meta">';
-        META_FIELDS.forEach(function(f){
-          var cls = f.full ? 'mf full' : 'mf';
-          metaHtml+='<div class="'+cls+'"><label title="'+f.label+'">'+f.label+'</label>'+
-            '<input type="number" step="any" data-k="'+f.k+'" value="'+meta[f.k]+'"></div>';
-        });
-        metaHtml+='<div class="mstatus"></div></div>';
-
-        // 未填写五项数据 → 橙色「待填」角标（排序时已默认排最前）
-        var badge = it.unfilled ? '<div class="badge">待填</div>' : '';
-
-        // 遮罩状态：未生成 → 「生成遮罩」按钮；已生成 → 预览 + 重新生成
-        var maskActions = '<div class="mask-actions">';
-        if(it.has_mask){
-          maskActions += '<button class="prevmask" data-cat="'+key+'" data-name="'+it.name+'">👁 预览遮罩</button>'+
-                         '<button class="regen" data-cat="'+key+'" data-name="'+it.name+'">重新生成</button>';
-        } else {
-          maskActions += '<button class="genmask" data-cat="'+key+'" data-name="'+it.name+'">🎭 生成遮罩</button>';
-        }
-        maskActions += '</div>';
-
-        var t=document.createElement('div');
-        t.className='thumb';
-        t.innerHTML= badge +
-          '<button class="del" title="删除">×</button>'+
-          '<img src="'+it.url+'" loading="lazy" title="点击在文件夹中打开">'+
-          '<div class="nm" title="'+it.name+'">'+it.name+'</div>'+
-          maskActions +
-          metaHtml;
-
-        // 点击图片/文件名 → 在资源管理器打开所在文件夹（删除按钮、参数区、遮罩按钮不触发）
-        t.addEventListener('click', function(e){
-          if(e.target.closest('.del') || e.target.closest('.meta') || e.target.closest('.mask-actions')) return;
-          openFolder(key, it.name);
-        });
-        t.querySelector('.del').onclick=function(){
-          if(!confirm('确定删除 '+it.name+' ？')) return;
-          fetch('/api/peiyi/delete',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({category:key,name:it.name})})
-            .then(function(r){return r.json();})
-            .then(function(d2){
-              if(d2.ok){ log('['+key+'] 已删除 '+it.name); refreshGallery(key); }
-              else { alert('删除失败：'+(d2.error||'')); }
-            });
-        };
-        // 任一参数改动即自动保存到同名 .meta.json 侧车
-        var inputs=t.querySelectorAll('.meta input');
-        inputs.forEach(function(inp){
-          inp.addEventListener('change', function(){
-            var payload={category:key, name:it.name};
-            inputs.forEach(function(mi){ payload[mi.getAttribute('data-k')]=mi.value; });
-            saveMeta(payload, key, it.name, t);
-          });
-        });
-        // 遮罩按钮：生成 / 预览 / 重新生成
-        var genBtn = t.querySelector('.genmask');
-        if(genBtn) genBtn.onclick = function(){ genMask(key, it.name, genBtn); };
-        var prevBtn = t.querySelector('.prevmask');
-        if(prevBtn) prevBtn.onclick = function(){ previewMask(it); };
-        var regenBtn = t.querySelector('.regen');
-        if(regenBtn) regenBtn.onclick = function(){ genMask(key, it.name, regenBtn); };
-
-        gal.appendChild(t);
-      });
+      GALLERY_DATA[key]=(d.categories&&d.categories[key])||[];
+      renderGallery(key);
     })
     .catch(function(e){ galMsg(key,'网络错误：'+e); });
+}
+
+// 渲染图片墙：按当前排序（默认 / 低分排前）画每张胚衣卡片
+function renderGallery(key){
+  var items=GALLERY_DATA[key]||[];
+  document.getElementById('cnt-'+key).textContent=items.length+' 张';
+  var gal=document.getElementById('gal-'+key);
+  if(!items.length){ gal.innerHTML='<div class="empty">暂无素材</div>'; return; }
+  var arr=items.slice();
+  if(LOW_FIRST){
+    arr.sort(function(a,b){
+      var ua=a.unfilled?0:1, ub=b.unfilled?0:1;   // 待填仍排最前
+      if(ua!==ub) return ua-ub;
+      var sa=(a.score&&typeof a.score.score==='number')?a.score.score:1e9;
+      var sb=(b.score&&typeof b.score.score==='number')?b.score.score:1e9;
+      return sa-sb;   // 低分在前，未生成(score缺失)排最后
+    });
+  }
+  gal.innerHTML='';
+  arr.forEach(function(it){ gal.appendChild(buildThumb(key,it)); });
+}
+
+// 评分角标（叠在每张图左上角）
+function scoreBadge(it){
+  var s=it.score;
+  if(!s||s.score==null) return '<div class="sbadge s-none" title="尚未生成遮罩评分">—</div>';
+  var sc=s.score;
+  var cls=sc>=90?'s-good':(sc>=70?'s-warn':'s-bad');
+  var flag=(s.flags&&s.flags.length)?(' · '+s.flags.join(',')):'';
+  return '<div class="sbadge '+cls+'" title="遮罩评分 '+sc+flag+' · 点击查看各版本">'+sc+'</div>';
+}
+
+// 构建单张胚衣卡片
+function buildThumb(key, it){
+  var meta = it.meta || {};
+  for(var mk in META_DEFAULTS){ if(!(mk in meta) || meta[mk]==null) meta[mk]=META_DEFAULTS[mk]; }
+
+  var metaHtml='<div class="meta">';
+  META_FIELDS.forEach(function(f){
+    var cls = f.full ? 'mf full' : 'mf';
+    metaHtml+='<div class="'+cls+'"><label title="'+f.label+'">'+f.label+'</label>'+
+      '<input type="number" step="any" data-k="'+f.k+'" value="'+meta[f.k]+'"></div>';
+  });
+  metaHtml+='<div class="mstatus"></div></div>';
+
+  // 未填写五项数据 → 橙色「待填」角标（排序时已默认排最前）
+  var badge = it.unfilled ? '<div class="badge">待填</div>' : '';
+
+  // 遮罩状态：未生成 → 「生成遮罩」；已生成 → 「遮罩版本」(打开抽屉) + 重新生成
+  var maskActions = '<div class="mask-actions">';
+  if(it.has_mask){
+    maskActions += '<button class="prevmask">👁 遮罩版本</button>'+
+                   '<button class="regen">重新生成</button>';
+  } else {
+    maskActions += '<button class="genmask">🎭 生成遮罩</button>';
+  }
+  maskActions += '</div>';
+
+  var t=document.createElement('div');
+  t.className='thumb';
+  t.innerHTML= scoreBadge(it) + badge +
+    '<button class="del" title="删除">×</button>'+
+    '<img src="'+it.url+'" loading="lazy" title="点击在文件夹中打开">'+
+    '<div class="nm" title="'+it.name+'">'+it.name+'</div>'+
+    maskActions +
+    metaHtml;
+
+  // 评分角标 → 打开版本抽屉（阻止冒泡，不触发"打开文件夹"）
+  t.querySelector('.sbadge').onclick=function(e){ e.stopPropagation(); openDrawer(key, it.name, it.url); };
+
+  // 点击图片/文件名 → 在资源管理器打开所在文件夹（删除/参数区/遮罩按钮/评分角标不触发）
+  t.addEventListener('click', function(e){
+    if(e.target.closest('.del') || e.target.closest('.meta') || e.target.closest('.mask-actions') || e.target.closest('.sbadge')) return;
+    openFolder(key, it.name);
+  });
+  t.querySelector('.del').onclick=function(){
+    if(!confirm('确定删除 '+it.name+' ？')) return;
+    fetch('/api/peiyi/delete',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({category:key,name:it.name})})
+      .then(function(r){return r.json();})
+      .then(function(d2){
+        if(d2.ok){ log('['+key+'] 已删除 '+it.name); refreshGallery(key); }
+        else { alert('删除失败：'+(d2.error||'')); }
+      });
+  };
+  // 任一参数改动即自动保存到同名 .meta.json 侧车
+  var inputs=t.querySelectorAll('.meta input');
+  inputs.forEach(function(inp){
+    inp.addEventListener('change', function(){
+      var payload={category:key, name:it.name};
+      inputs.forEach(function(mi){ payload[mi.getAttribute('data-k')]=mi.value; });
+      saveMeta(payload, key, it.name, t);
+    });
+  });
+  // 遮罩按钮：生成 / 遮罩版本(抽屉) / 重新生成
+  var genBtn = t.querySelector('.genmask');
+  if(genBtn) genBtn.onclick = function(){ genMask(key, it.name, genBtn); };
+  var prevBtn = t.querySelector('.prevmask');
+  if(prevBtn) prevBtn.onclick = function(){ openDrawer(key, it.name, it.url); };
+  var regenBtn = t.querySelector('.regen');
+  if(regenBtn) regenBtn.onclick = function(){ genMask(key, it.name, regenBtn); };
+
+  return t;
 }
 
 // 画廊内错误/空状态提示
@@ -448,73 +509,129 @@ window.addEventListener('click', function(e){
   if(e.target===m) closeModal();
 });
 
-// ============ 遮罩评分总表 ============
-function scoreClass(r){
-  if(!r.has_score || r.score==null) return 's-none';
-  if(r.score >= 90) return 's-good';
-  if(r.score >= 70) return 's-warn';
-  return 's-bad';
-}
-function fmtPct(v){ return (v==null)?'—':(Math.round(v*1000)/10)+'%'; }
-function fmtTime(t){ return t ? String(t).replace('T',' ').slice(0,16) : '—'; }
-
+// ============ 评分概览（汇总计数） ============
 function refreshScores(){
-  var body=document.getElementById('scoreBody');
-  body.innerHTML='<tr><td colspan="8" class="score-empty">加载中…</td></tr>';
   fetch('/api/peiyi/scores')
     .then(function(r){return r.json();})
     .then(function(d){
-      if(!d.ok){ body.innerHTML='<tr><td colspan="8" class="score-empty">加载失败：'+(d.error||'')+'</td></tr>'; return; }
+      if(!d.ok){ document.getElementById('ovCounts').textContent='加载失败'; return; }
       var rows=d.rows||[];
-      if(!rows.length){ body.innerHTML='<tr><td colspan="8" class="score-empty">暂无胚衣</td></tr>'; return; }
-      body.innerHTML='';
-      rows.forEach(function(r){
-        var cls=scoreClass(r);
-        var scoreTxt = (r.has_score && r.score!=null) ? r.score : '未生成';
-        var flagsHtml = (r.flags||[]).map(function(f){return '<span class="flag">'+f+'</span>';}).join('');
-        var tr=document.createElement('tr');
-        tr.className=cls;
-        tr.innerHTML =
-          '<td class="cat">'+r.category+'</td>'+
-          '<td class="name">'+r.stem+'</td>'+
-          '<td class="score">'+scoreTxt+'</td>'+
-          '<td>'+fmtPct(r.occ_ratio)+'</td>'+
-          '<td>'+fmtPct(r.body_coverage)+'</td>'+
-          '<td class="ver">'+(r.version||'—')+(r.algorithm_version?(' · v'+r.algorithm_version):'')+'</td>'+
-          '<td>'+fmtTime(r.timestamp)+'</td>'+
-          '<td>'+flagsHtml+'</td>';
-        // 点行 → 预览该胚衣遮罩
-        tr.style.cursor = r.has_score ? 'pointer' : 'default';
-        if(r.has_score){
-          tr.title='点击预览 '+r.stem+' 的遮罩';
-          tr.onclick=function(){ openMaskByStem(r.category, r.name); };
-        }
-        body.appendChild(tr);
-      });
-      // 统计一行：好/一般/差/未生成 各几个
       var g=0,w=0,b=0,n=0;
-      rows.forEach(function(r){ var c=scoreClass(r); if(c==='s-good')g++; else if(c==='s-warn')w++; else if(c==='s-bad')b++; else n++; });
-      var sum=document.createElement('tr');
-      sum.style.background='#1b1b1b';
-      sum.innerHTML='<td colspan="8" style="color:#9aa0a6;font-size:13px">合计 '+rows.length+
-        ' 个胚衣：<span style="color:#7ee787">好 '+g+'</span> · <span style="color:#ffd866">一般 '+w+'</span> · <span style="color:#ff6b6b">差 '+b+'</span> · <span style="color:#888">未生成 '+n+'</span></td>';
-      body.appendChild(sum);
+      rows.forEach(function(r){
+        if(!r.has_score||r.score==null){ n++; return; }
+        if(r.score>=90) g++; else if(r.score>=70) w++; else b++;
+      });
+      var html='<span style="color:#7ee787">好 '+g+'</span> · '+
+               '<span style="color:#ffd866">一般 '+w+'</span> · '+
+               '<span style="color:#ff6b6b">差 '+b+'</span> · '+
+               '<span style="color:#888">未生成 '+n+'</span>';
+      var bad=rows.filter(function(r){return r.has_score&&typeof r.score==='number'&&r.score<70;});
+      if(bad.length){ html+='　<span style="color:#ff6b6b">⚠ '+bad.map(function(r){return r.category+'/'+r.stem;}).join('、')+'</span>'; }
+      document.getElementById('ovCounts').innerHTML=html;
     })
-    .catch(function(e){ body.innerHTML='<tr><td colspan="8" class="score-empty">网络错误：'+e+'</td></tr>'; });
+    .catch(function(e){ document.getElementById('ovCounts').textContent='网络错误'; });
 }
 
-// 按胚衣名打开遮罩预览：先从列表接口取该胚衣的 mask_urls，再复用 previewMask
-function openMaskByStem(category, name){
-  fetch('/api/peiyi/list?category='+encodeURIComponent(category))
+// ============ 低分排前开关 ============
+function toggleLowFirst(){
+  LOW_FIRST=!LOW_FIRST;
+  var btn=document.getElementById('lowFirstBtn');
+  btn.textContent='低分排前：'+(LOW_FIRST?'开':'关');
+  btn.classList.toggle('on',LOW_FIRST);
+  CATS.forEach(function(c){ if(GALLERY_DATA[c.key]) renderGallery(c.key); });
+}
+
+// ============ 侧边版本抽屉 ============
+function openDrawer(category, name, url){
+  var stem=name.replace(/\.[^.]+$/,'');
+  DRAWER={category:category,name:name,stem:stem,url:url,versions:[],current:null,sel:null};
+  document.getElementById('drawerTitle').textContent='遮罩版本 · '+stem;
+  document.getElementById('drawerVers').innerHTML='<div style="color:#888;font-size:13px;padding:6px">加载中…</div>';
+  document.getElementById('drawerMeta').textContent='';
+  document.getElementById('drawerPreview').innerHTML='';
+  document.getElementById('useBtn').disabled=true;
+  document.getElementById('useBtn').textContent='设为当前版本';
+  document.getElementById('drawer').classList.add('show');
+  fetch('/api/peiyi/versions/'+encodeURIComponent(category)+'/'+encodeURIComponent(stem))
     .then(function(r){return r.json();})
     .then(function(d){
-      var items=(d.categories&&d.categories[category])||[];
-      var it=items.find(function(x){return x.name===name;});
-      if(it && it.has_mask){ previewMask(it); }
-      else { log('['+category+'] '+name+' 暂无可预览的遮罩'); }
+      if(!d.ok){ document.getElementById('drawerVers').innerHTML='<div style="color:#f87171">加载失败：'+(d.error||'')+'</div>'; return; }
+      DRAWER.versions=d.versions||[];
+      DRAWER.current=d.current;
+      if(!DRAWER.versions.length){
+        document.getElementById('drawerVers').innerHTML='<div style="color:#888;font-size:13px;padding:6px">暂无版本（点「生成遮罩」后会产生）</div>';
+        return;
+      }
+      var cur=DRAWER.versions.find(function(v){return v.is_current;})||DRAWER.versions[DRAWER.versions.length-1];
+      renderVerChips();
+      selectVersion(cur.version);
     })
-    .catch(function(e){ log('打开遮罩预览失败：'+e); });
+    .catch(function(e){ document.getElementById('drawerVers').innerHTML='<div style="color:#f87171">网络错误</div>'; });
 }
+
+function renderVerChips(){
+  var row=document.getElementById('drawerVers');
+  row.innerHTML='';
+  DRAWER.versions.forEach(function(v){
+    var sc=(v.score!=null)?v.score:'—';
+    var cls=(typeof v.score==='number')?(v.score>=90?'s-good':(v.score>=70?'s-warn':'s-bad')):'s-none';
+    var chip=document.createElement('div');
+    chip.className='ver-chip'+(v.version===DRAWER.sel?' sel':'')+(v.is_current?' cur':'');
+    chip.innerHTML='<div class="v">'+v.version+'</div>'+
+      '<div class="s '+cls+'">'+(sc==='—'?'—':(sc+'分'))+'</div>'+
+      (v.is_current?'<div class="curtag">当前</div>':'')+
+      (v.algorithm_version?'<div class="curtag">算法 v'+v.algorithm_version+'</div>':'');
+    chip.onclick=function(){ selectVersion(v.version); };
+    row.appendChild(chip);
+  });
+}
+
+function selectVersion(ver){
+  DRAWER.sel=ver;
+  renderVerChips();
+  var v=DRAWER.versions.find(function(x){return x.version===ver;});
+  if(!v) return;
+  var m=v.metrics||{};
+  document.getElementById('drawerMeta').innerHTML=
+    '遮挡占比 '+(m.occ_ratio!=null?(m.occ_ratio*100).toFixed(1)+'%':'—')+
+    ' · 衣服覆盖 '+(m.body_coverage!=null?(m.body_coverage*100).toFixed(1)+'%':'—')+
+    (v.timestamp?(' · '+String(v.timestamp).replace('T',' ').slice(0,16)):'');
+  var bust='?t='+Date.now();
+  var u=v.urls||{};
+  var figs='';
+  if(DRAWER.url) figs+='<figure><img src="'+DRAWER.url+bust+'"><figcaption>① 原图</figcaption></figure>';
+  if(u.parse) figs+='<figure><img src="'+u.parse+bust+'"><figcaption>② 分层预览（绿=主体 / 红=遮挡物）</figcaption></figure>';
+  if(u.occluder) figs+='<figure><img src="'+u.occluder+bust+'"><figcaption>③ 遮挡物抠图（最上层）</figcaption></figure>';
+  if(u.body_mask) figs+='<figure><img src="'+u.body_mask+bust+'"><figcaption>④ 主体蒙版（贴图案区域）</figcaption></figure>';
+  if(u.occluder_mask) figs+='<figure><img src="'+u.occluder_mask+bust+'"><figcaption>⑤ 最终遮罩</figcaption></figure>';
+  if(!figs) figs='<div class="empty">该版本无预览图</div>';
+  document.getElementById('drawerPreview').innerHTML=figs;
+  var useBtn=document.getElementById('useBtn');
+  useBtn.disabled=v.is_current;
+  useBtn.textContent=v.is_current?('✓ 当前正在使用 '+ver):('设为当前版本（'+ver+'）');
+}
+
+function useCurrentVersion(){
+  if(!DRAWER.sel) return;
+  var v=DRAWER.versions.find(function(x){return x.version===DRAWER.sel;});
+  if(!v||v.is_current) return;
+  if(!confirm('把 '+DRAWER.stem+' 的遮罩切换为 '+DRAWER.sel+' ？\n\n以后贴图将使用这一版。')) return;
+  var useBtn=document.getElementById('useBtn');
+  useBtn.disabled=true; useBtn.textContent='切换中…';
+  fetch('/api/peiyi/use_version',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({category:DRAWER.category,stem:DRAWER.stem,version:DRAWER.sel})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(!d.ok){ alert('切换失败：'+(d.error||'')); selectVersion(DRAWER.sel); return; }
+      log('['+DRAWER.category+'] '+DRAWER.stem+' 遮罩已切换为 '+DRAWER.sel);
+      openDrawer(DRAWER.category, DRAWER.name, DRAWER.url);   // 重开抽屉刷新"当前"标记
+      refreshGallery(DRAWER.category);                        // 刷新图片墙角标
+      refreshScores();                                        // 刷新概览计数
+    })
+    .catch(function(e){ alert('网络错误：'+e); selectVersion(DRAWER.sel); });
+}
+
+function closeDrawer(){ document.getElementById('drawer').classList.remove('show'); }
 
 buildCards();
 refreshAll();

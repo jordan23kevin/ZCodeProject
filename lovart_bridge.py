@@ -4229,6 +4229,8 @@ def api_peiyi_list():
                         mp = d / (stem + suffix)
                         if mp.exists():
                             mask_urls[key] = f'/api/peiyi/material/{urllib.parse.quote(c)}/{urllib.parse.quote(mp.name)}'
+                    # 最新一版遮罩评分（用于图片墙角标），读不到则 None
+                    score_info = _peiyi_latest_score(d, stem)
                     items.append({
                         'name': fn,
                         'size': st.st_size,
@@ -4240,6 +4242,7 @@ def api_peiyi_list():
                         'has_mask': has_mask,
                         'occluder_px': occ_px,
                         'mask_urls': mask_urls,
+                        'score': score_info,
                         '_mtime': st.st_mtime,
                     })
                 except OSError:
@@ -4341,6 +4344,119 @@ def api_peiyi_material(category, filename):
     resp.headers['Pragma'] = 'no-cache'
     resp.headers['Expires'] = '0'
     return resp
+
+
+# 版本文件名后缀 → 预览键（与 _mask_versions/<stem>/vNNN/ 内的侧车一致）
+_PEIYI_VERSION_FILE_KEYS = [
+    ('_occluder.png', 'occluder'),
+    ('_occluder_mask.png', 'occluder_mask'),
+    ('_body_mask.png', 'body_mask'),
+    ('_parse.png', 'parse'),
+    ('_alpha.png', 'alpha'),
+]
+
+
+@app.route('/api/peiyi/versions/<category>/<stem>')
+def api_peiyi_versions(category, stem):
+    """列出某胚衣的所有遮罩版本（每个版本的分数/时间/指标/各层遮罩图URL/是否当前）。
+    数据来自 _mask_versions/<stem>/vNNN/ + latest.txt。"""
+    if category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    stem = os.path.basename(stem)
+    d = PEIYI_CATEGORIES[category]
+    vroot = d / "_mask_versions" / stem
+    current = None
+    versions = []
+    if vroot.exists():
+        latest_f = vroot / "latest.txt"
+        if latest_f.exists():
+            try:
+                current = latest_f.read_text(encoding="utf-8").strip()
+            except Exception:
+                current = None
+        for vd in sorted(vroot.iterdir()):
+            if not (vd.is_dir() and vd.name.startswith('v')):
+                continue
+            info = {}
+            sf = vd / "score.json"
+            if sf.exists():
+                try:
+                    info = json.loads(sf.read_text(encoding="utf-8"))
+                except Exception:
+                    info = {}
+            urls = {}
+            for suffix, key in _PEIYI_VERSION_FILE_KEYS:
+                if (vd / (stem + suffix)).exists():
+                    urls[key] = (f'/api/peiyi/version_file/{urllib.parse.quote(category)}'
+                                 f'/{urllib.parse.quote(stem)}/{urllib.parse.quote(vd.name)}'
+                                 f'/{urllib.parse.quote(stem + suffix)}')
+            versions.append({
+                'version': vd.name,
+                'score': info.get('score'),
+                'timestamp': info.get('timestamp', ''),
+                'algorithm_version': info.get('algorithm_version', ''),
+                'flags': info.get('flags', []) or [],
+                'metrics': info.get('metrics', {}) or {},
+                'is_current': (vd.name == current),
+                'urls': urls,
+            })
+    return jsonify({'ok': True, 'category': category, 'stem': stem,
+                    'current': current, 'versions': versions})
+
+
+@app.route('/api/peiyi/version_file/<category>/<stem>/<version>/<path:filename>')
+def api_peiyi_version_file(category, stem, version, filename):
+    """返回某胚衣某版本目录里的遮罩图片（禁用缓存，按真实扩展名给 MIME）。"""
+    if category not in PEIYI_CATEGORIES:
+        abort(404)
+    stem = os.path.basename(stem)
+    version = os.path.basename(version)
+    safe = os.path.basename(filename)
+    fp = PEIYI_CATEGORIES[category] / "_mask_versions" / stem / version / safe
+    if not fp.exists():
+        abort(404)
+    ext = os.path.splitext(safe)[1].lower().lstrip('.')
+    mime_map = {'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+                'png': 'image/png', 'webp': 'image/webp', 'bmp': 'image/bmp'}
+    mime = mime_map.get(ext, 'image/png')
+    resp = send_file(str(fp), mimetype=mime, max_age=0)
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+
+@app.route('/api/peiyi/use_version', methods=['POST'])
+def api_peiyi_use_version():
+    """把选中版本的遮罩文件复制回素材库标准路径（=退回/切换到该版本），并更新 latest.txt。
+    生产贴图读的是标准路径，因此这一步立即决定以后用哪一版。"""
+    data = request.get_json(force=True, silent=True) or {}
+    category = data.get('category', '')
+    stem = os.path.basename(data.get('stem', ''))
+    version = os.path.basename(data.get('version', ''))
+    if category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    if not stem or not version:
+        return jsonify({'ok': False, 'error': '缺少 stem/version'}), 400
+    d = PEIYI_CATEGORIES[category]
+    vdir = d / "_mask_versions" / stem / version
+    if not vdir.exists():
+        return jsonify({'ok': False, 'error': '版本不存在'}), 404
+    copied = []
+    for suffix, _ in _PEIYI_VERSION_FILE_KEYS:
+        src = vdir / (stem + suffix)
+        if src.exists():
+            try:
+                shutil.copy2(str(src), str(d / (stem + suffix)))
+                copied.append(suffix)
+            except Exception as e:
+                return jsonify({'ok': False, 'error': f'复制失败 {suffix}: {e}'}), 500
+    try:
+        (d / "_mask_versions" / stem / "latest.txt").write_text(version, encoding="utf-8")
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'更新 latest.txt 失败: {e}'}), 500
+    return jsonify({'ok': True, 'category': category, 'stem': stem,
+                    'version': version, 'copied': copied})
 
 
 def _explorer_select_file(path):
