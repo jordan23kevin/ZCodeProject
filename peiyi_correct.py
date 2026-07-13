@@ -393,10 +393,12 @@ def import_manual_mask(image_path: str | Path) -> dict:
     ai_body = np.array(Image.open(ai_body_path)) > 128 if ai_body_path.exists() else np.zeros((img_h, img_w), dtype=bool)
     person_mask = ai_body | ai_occ
 
-    # 4. 合并：把你画的区域加到遮挡物上（只取人像范围内的）
-    added = user_paint & person_mask
-    final_occ = ai_occ | added
-    final_body = person_mask & (~final_occ)
+    # 4. 合并：把你画的区域直接加到遮挡物上
+    #    不加 person_mask 限制——用户画的就是该加的
+    final_occ = ai_occ | user_paint
+    # 用膨胀后的人像范围取 person，确保衣身区域足够大
+    person_dil = ndi.binary_dilation(person_mask, iterations=20)
+    final_body = person_dil & (~final_occ)
 
     # 5. 保存
     h, w = img_h, img_w
@@ -413,7 +415,7 @@ def import_manual_mask(image_path: str | Path) -> dict:
     Image.fromarray(parse_vis).save(out_dir / f"{stem}_parse.png", "PNG")
 
     # 6. 归档
-    added_px = int(added.sum())
+    added_px = int(user_paint.sum())
     version = _archive_manual_version(out_dir, stem, manual_path.name, added_px)
     return {
         "ok": True,
