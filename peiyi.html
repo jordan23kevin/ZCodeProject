@@ -124,6 +124,24 @@
   .use-btn{width:100%;padding:13px;font-size:16px;border-radius:6px;border:none;background:#2196F3;color:#fff;font-weight:700;cursor:pointer;margin-top:6px}
   .use-btn:hover{background:#1976D2}
   .use-btn:disabled{background:#2e3a2e;color:#7ee787;cursor:default}
+
+  /* ---- 手动校正工具 ---- */
+  .correct-bar{display:flex;gap:6px;margin:10px 0;flex-wrap:wrap}
+  .correct-btn{padding:8px 14px;border:2px solid #555;border-radius:6px;background:#222;color:#ccc;font-size:13px;cursor:pointer;transition:all .15s}
+  .correct-btn:hover{background:#333}
+  .correct-btn.active{border-color:#fff;color:#fff;background:#444}
+  .correct-btn.occ{border-color:#ff4444;color:#ff6666}
+  .correct-btn.occ.active{background:#662222;border-color:#ff4444;color:#ff8888}
+  .correct-btn.body{border-color:#44ff44;color:#66ff66}
+  .correct-btn.body.active{background:#226622;border-color:#44ff44;color:#88ff88}
+  .correct-btn.remove{border-color:#ffaa00;color:#ffbb33}
+  .correct-btn.remove.active{background:#664400;border-color:#ffaa00;color:#ffcc55}
+  .correct-status{font-size:12px;color:#bbb;margin:6px 0 10px;min-height:18px;padding:6px 10px;background:#222;border-radius:5px}
+  .correct-status.ok{color:#7ee787;background:#1a3a1a}
+  .correct-status.err{color:#ff6b6b;background:#3a1a1a}
+  .drawer-preview img.clickable{cursor:crosshair}
+  .drawer-preview img.clickable:hover{outline:2px solid #ffcc00}
+  .correct-hint{font-size:12px;color:#888;margin-top:4px;text-align:center}
 </style>
 </head>
 <body>
@@ -180,6 +198,20 @@
       <span><i class="sw" style="background:#ff0000"></i> 红=遮挡物</span>
     </div>
     <div class="drawer-preview" id="drawerPreview"></div>
+
+    <!-- ✏️ 手动校正工具 -->
+    <div style="border-top:1px solid #333;padding-top:12px;margin-top:12px">
+      <div style="font-size:14px;color:#ccc;margin-bottom:8px">✏️ 手动校正</div>
+      <div style="font-size:12px;color:#999;margin-bottom:8px">在图片上点一下漏掉/多算的区域，自动圈出整块</div>
+      <div class="correct-bar">
+        <button class="correct-btn occ" id="cbAddOcc" onclick="setCorrMode('add_occ')">➕加遮挡</button>
+        <button class="correct-btn body" id="cbAddBody" onclick="setCorrMode('add_body')">➕加衣身</button>
+        <button class="correct-btn remove" id="cbRemove" onclick="setCorrMode('remove_occ')">➖减遮挡</button>
+        <button class="correct-btn" onclick="setCorrMode(null)" id="cbCancel" style="display:none">✕ 取消</button>
+      </div>
+      <div class="correct-status" id="corrStatus">点「加遮挡」→ 再在图上点击要加的区域</div>
+    </div>
+
     <button class="use-btn" id="useBtn" onclick="useCurrentVersion()" disabled>设为当前版本</button>
   </div>
 </div>
@@ -609,6 +641,94 @@ function selectVersion(ver){
   var useBtn=document.getElementById('useBtn');
   useBtn.disabled=v.is_current;
   useBtn.textContent=v.is_current?('✓ 当前正在使用 '+ver):('设为当前版本（'+ver+'）');
+
+  // 如果处于校正模式，给图片加点击事件
+  if(window._corrMode){
+    enableClickPreview();
+  }
+}
+
+// ---- 手动校正（点选扩散） ----
+var _corrMode = null;  // null | 'add_occ' | 'remove_occ' | 'add_body'
+
+function setCorrMode(mode){
+  _corrMode = mode;
+  // 切换按钮高亮
+  document.querySelectorAll('.correct-btn').forEach(function(b){ b.classList.remove('active'); });
+  document.getElementById('cbCancel').style.display = mode ? 'inline-block' : 'none';
+  if(mode){
+    var btnMap={add_occ:'AddOcc', add_body:'AddBody', remove_occ:'Remove'};
+    var hintMap={add_occ:'加到遮挡物', add_body:'加到衣身', remove_occ:'从遮挡物移除'};
+    document.getElementById('cb'+btnMap[mode]).classList.add('active');
+    setStatus('在图片上点击要'+hintMap[mode]+'的位置', '');
+    enableClickPreview();
+  } else {
+    setStatus('点击「加遮挡」开始手动校正', '');
+    disableClickPreview();
+  }
+}
+
+function enableClickPreview(){
+  document.querySelectorAll('#drawerPreview img').forEach(function(img){
+    img.classList.add('clickable');
+    img.onclick = function(e){ onImageClick(e, img); };
+  });
+}
+
+function disableClickPreview(){
+  document.querySelectorAll('#drawerPreview img').forEach(function(img){
+    img.classList.remove('clickable');
+    img.onclick = null;
+  });
+}
+
+function onImageClick(event, img){
+  if(!_corrMode || !DRAWER) return;
+  var rect = img.getBoundingClientRect();
+  var clickX = event.clientX - rect.left;
+  var clickY = event.clientY - rect.top;
+  // 换算到原图坐标
+  var nw = img.naturalWidth, nh = img.naturalHeight;
+  var dw = rect.width, dh = rect.height;
+  var ox = Math.round(clickX * nw / dw);
+  var oy = Math.round(clickY * nh / dh);
+  setStatus('正在校正…', '');
+  doCorrection(ox, oy, _corrMode);
+}
+
+function doCorrection(x, y, mode){
+  var btnIdMap={add_occ:'cbAddOcc', add_body:'cbAddBody', remove_occ:'cbRemove'};
+  var btn=document.getElementById(btnIdMap[mode]);
+  if(btn) btn.disabled = true;
+  fetch('/api/peiyi/correct', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({category: DRAWER.category, name: DRAWER.name, x: x, y: y, mode: mode})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if(btn) btn.disabled = false;
+    if(d.ok){
+      setStatus('✅ 校正成功！生长了 '+d.region_px+' 像素，新版本 '+d.new_version, 'ok');
+      log('['+DRAWER.category+'] '+DRAWER.stem+' 手动校正('+mode+') → '+d.new_version);
+      // 刷新抽屉
+      openDrawer(DRAWER.category, DRAWER.name, DRAWER.url);
+      refreshGallery(DRAWER.category);
+      refreshScores();
+    } else {
+      setStatus('❌ 校正失败：'+(d.error||'未知错误'), 'err');
+    }
+  })
+  .catch(function(e){
+    if(btn) btn.disabled = false;
+    setStatus('❌ 网络错误：'+e, 'err');
+  });
+}
+
+function setStatus(msg, cls){
+  var el=document.getElementById('corrStatus');
+  if(!el) return;
+  el.textContent=msg; el.className='correct-status'+(cls?' '+cls:'');
 }
 
 function useCurrentVersion(){

@@ -4686,6 +4686,62 @@ def api_peiyi_mask():
         return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}', 'trace': _tb.format_exc()[-1500:]}), 500
 
 
+@app.route('/api/peiyi/correct', methods=['POST'])
+def api_peiyi_correct():
+    """手动校正遮罩：点一下，算法自动圈出整块区域并合并到遮罩中。
+
+    POST JSON:
+        {
+            "category": "W白",
+            "name": "白W3.jpg",
+            "x": 450,        # 点击坐标（原图像素）
+            "y": 320,
+            "mode": "add_occ"   # add_occ | remove_occ | add_body
+        }
+
+    返回:
+        {
+            "ok": True,
+            "region_px": 12345,     生长出的区域像素数
+            "new_version": "v003",   新版本号
+            "mode": "add_occ"
+        }
+    """
+    data = request.get_json(silent=True) or {}
+    category = data.get('category', '')
+    name = data.get('name', '')
+    click_x = data.get('x')
+    click_y = data.get('y')
+    mode = data.get('mode', 'add_occ')
+
+    if category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    if click_x is None or click_y is None:
+        return jsonify({'ok': False, 'error': '缺少点击坐标 x, y'}), 400
+    if mode not in ('add_occ', 'remove_occ', 'add_body'):
+        return jsonify({'ok': False, 'error': f'未知模式: {mode}'}), 400
+
+    safe = os.path.basename(name)
+    d = PEIYI_CATEGORIES[category]
+    fp = d / safe
+    if not fp.exists():
+        return jsonify({'ok': False, 'error': '文件不存在'}), 404
+
+    try:
+        import peiyi_correct
+        result = peiyi_correct.correct_mask(
+            str(fp), click_x, click_y, mode=mode
+        )
+        if result.get('ok'):
+            return jsonify(result)
+        else:
+            return jsonify(result), 400
+    except Exception as e:
+        import traceback as _tb
+        _tb.print_exc()
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
+
+
 # ============================================================================
 # 贴图（AI 去背贴图）：自动按胚衣数据 + 遮罩 + 扭曲精准贴入
 # ============================================================================
