@@ -46,8 +46,8 @@ from transformers import AutoModelForImageSegmentation
 # ---------------------------------------------------------------------------
 # 配置常量
 # ---------------------------------------------------------------------------
-VERSION = "1.4.0"              # 2026-07-13：接入「版本归档 + 评分」(score.json)，每次生成自动存 vNNN，
-                             # 可对比改好/改坏、一键退回。v1.3.1 前景扩展包住手持物+放宽refine防误伤
+VERSION = "1.5.0"              # 2026-07-13：接入 FASHN 语义分割(可选,失败回退)——衣服主体用top更贴合,
+                             # 遮挡物∪FASHN(戒指/手/头发/首饰)根治"印花盖戒指"。v1.4 版本归档+评分
 MODEL_NAME = "ZhengPeng7/BiRefNet"
 BIR_NET_INPUT_SIZE = (1024, 1024)
 NORMALIZE_MEAN = [0.485, 0.456, 0.406]
@@ -104,6 +104,16 @@ SUFFIX_ALPHA = "alpha.png"
 # 版本归档：每次生成把结果复制到 <素材目录>/<该目录名>/<stem>/vNNN/，并写 score.json。
 # 标准路径(*_occluder.png 等)始终是最新版，生产贴图不受影响。
 VERSION_DIRNAME = "_mask_versions"
+
+# ---------------------------------------------------------------------------
+# FASHN 语义分割增强（可选）：直接识别 衣服/手/头发/戒指/包 等部位，比
+# BiRefNet+颜色聚类更准。加载失败(模型未下载/无网络)自动回退到原方法，绝不出错。
+# ---------------------------------------------------------------------------
+USE_FASHN = True
+FASHN_MODEL = "fashn-ai/fashn-human-parser"
+# FASHN 18 类标签：top=衣服主体；face/hair/bag/hat/scarf/glasses/arms/hands/torso/jewelry=遮挡物
+FASHN_BODY_LABELS = {3}
+FASHN_OCC_LABELS = {1, 2, 8, 9, 10, 11, 12, 13, 16, 17}
 
 # ---------------------------------------------------------------------------
 # 模型单例（bridge 进程内只加载一次）
@@ -566,6 +576,52 @@ def _archive_mask_version(out_dir, stem, saved_files, score, metrics, flags):
 
 
 # ---------------------------------------------------------------------------
+# FASHN 语义分割（懒加载 + 失败回退）
+# ---------------------------------------------------------------------------
+_fashn = {"proc": None, "model": None, "tried": False}
+
+
+def _get_fashn():
+    """懒加载 FASHN。优先离线缓存(local_files_only)避免生产环境联网卡住；
+    缓存没有再尝试在线下载。任何失败返回 None(回退到 BiRefNet+聚类)。"""
+    if _fashn["tried"]:
+        return (_fashn["proc"], _fashn["model"]) if _fashn["model"] is not None else None
+    _fashn["tried"] = True
+    try:
+        from transformers import SegformerImageProcessor, SegformerForSemanticSegmentation
+        try:
+            proc = SegformerImageProcessor.from_pretrained(FASHN_MODEL, local_files_only=True)
+            model = SegformerForSemanticSegmentation.from_pretrained(FASHN_MODEL, local_files_only=True).eval()
+        except Exception:
+            proc = SegformerImageProcessor.from_pretrained(FASHN_MODEL)
+            model = SegformerForSemanticSegmentation.from_pretrained(FASHN_MODEL).eval()
+        _fashn["proc"] = proc
+        _fashn["model"] = model
+        return proc, model
+    except Exception:
+        return None
+
+
+def _fashn_segment(image):
+    """返回 FASHN 18 类分割图(np.uint8, 同原图尺寸)；失败返回 None。"""
+    got = _get_fashn()
+    if got is None:
+        return None
+    proc, model = got
+    try:
+        inp = proc(images=image, return_tensors="pt")
+        with torch.no_grad():
+            out = model(**inp)
+        up = torch.nn.functional.interpolate(
+            out.logits, size=(image.size[1], image.size[0]),
+            mode="bilinear", align_corners=False,
+        )
+        return up.argmax(dim=1)[0].numpy().astype(np.uint8)
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # 对外主入口
 # ---------------------------------------------------------------------------
 def generate_masks(
@@ -637,6 +693,25 @@ def generate_masks(
             info["occluder_px_after_refine"] = int(occluder_mask.sum())
         except Exception as _e:
             info["refine_error"] = f"{type(_e).__name__}: {_e}"
+
+        # ---- FASHN 语义增强（可选；失败自动跳过，不影响原方法结果）----
+        # 衣服主体用 FASHN 的 top(更贴合，治 15px 外扩)；遮挡物 = 现在的(杯子)
+        # ∪ FASHN 的(戒指/手/头发/首饰)。FASHN 把戒指识别为 jewelry，从根上解决
+        # "印花盖到戒指"问题。body 不进最终合成，改动零风险。
+        if USE_FASHN:
+            seg = _fashn_segment(image)
+            if seg is not None:
+                f_body = np.isin(seg, list(FASHN_BODY_LABELS))
+                f_occ = np.isin(seg, list(FASHN_OCC_LABELS))
+                if int(f_body.sum()) > 1000:
+                    body_mask = f_body
+                else:
+                    body_mask = body_mask & (~f_occ)
+                occluder_mask = (occluder_mask | f_occ) & (~body_mask)
+                info["fashn"] = True
+                info["fashn_occ_px"] = int(f_occ.sum())
+            else:
+                info["fashn"] = False
 
         # 用清洗后的 occluder 重画可视化（绿=衣服 红=遮挡物）
         parse_vis = arr.copy()
