@@ -1,8 +1,9 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.3.23` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.2` + `check_online_listed.py v1.3.20` + `temu-hengjia-engine v5.2.1` + `temu-activity-engine v4.1.3` + 贴图流水线 `ps v2.0/v2.4/v2.5` + `white_t_mockup v1.8.0` + `04_OS wb_naming v2.3.0`
-> 最后更新: 2026-07-12
+> 对应版本: `lovart_bridge.py v2.4.2` + `peiyi_mask.py v1.5.2` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.2` + `check_online_listed.py v1.3.20` + `temu-hengjia-engine v5.2.1` + `temu-activity-engine v4.1.3` + 贴图流水线 `ps v2.0/v2.4/v2.5` + `white_t_mockup v1.8.0` + `04_OS wb_naming v2.3.0`
+> 最后更新: 2026-07-13
 > 贴图流水线已从 Photoshop 依赖全面转为纯软件（PIL），详见 `E:\Claude code\ps\PIPELINE.md`
+> 遮罩生成子系统（peiyi_mask / peiyi_correct）新增 torch/transformers/scipy/skimage 依赖，详见第 12 节
 
 ---
 
@@ -69,9 +70,16 @@ pip install flask Pillow requests pywin32 pythoncom numpy
 # 注意：本机 cv2 来自 E:/python_packages（系统包目录），运行时需注入：
 #   set PYTHONPATH=E:/python_packages;E:/Kimi Code
 pip install opencv-python
+
+# 遮罩生成子系统（peiyi_mask / peiyi_correct）额外依赖
+# torch / torchvision / transformers / scipy / scikit-image
+# 注意：cv2 在本机来自 E:/python_packages；运行时必须注入 PYTHONPATH=E:/python_packages
+pip install torch torchvision transformers scipy scikit-image opencv-python
 ```
 > 贴图流水线（ps / white_t_mockup / 04_OS）已不再依赖 `pywin32` / `pythoncom` / Photoshop；
 > `pywin32` / `pythoncom` 仅 Bridge 的窗口操作（夸克/Edge 误触防护）与美图去背流程使用。
+> 遮罩生成涉及深度学习推理，首次运行需联网拉取 BiRefNet / fashn-human-parser 权重到 `~/.cache/huggingface`；
+> 之后可离线（`local_files_only=True` 优先缓存）。GPU 可选，CPU 推理白W2 等单张约数秒。
 
 ### 2.3 配置检查
 
@@ -235,7 +243,10 @@ git checkout v2.2.1
 
 - **Lovart API Key**: `E:\Claude code\lovart-official\config\keys.json`
 - **提示词文件**: `E:\Claude code\lovart-official\config\POD AI VIRAL FACTORY v3.md`
-- **Python 依赖**: `flask`, `Pillow`, `requests`, `pywin32`, `pythoncom`, `numpy`（Bridge / 去背用）；`opencv-python`（white_t_mockup 用，cv2 来自 `E:/python_packages`）
+- **Python 依赖**: `flask`, `Pillow`, `requests`, `pywin32`, `pythoncom`, `numpy`（Bridge / 去背用）；`opencv-python`（white_t_mockup / 遮罩生成用，cv2 来自 `E:/python_packages`）
+- **遮罩生成额外依赖**: `torch`, `torchvision`, `transformers`, `scipy`, `scikit-image`
+- **HuggingFace 模型缓存**: `~/.cache/huggingface`（BiRefNet 人像分割权重、`fashn-ai/fashn-human-parser` SegFormer 权重）。首次运行自动下载；之后离线（`local_files_only=True`）可用。重装系统后需重新下载或备份此目录。
+- **胚衣素材库**: `D:\Semems WB\03_MATERIAL\<分类>\`（W白 / W黑 / B白 / B黑），遮罩生成输出到同目录 `_mask_versions/<stem>/vNNN/`
 - **Photoshop**: 贴图流水线已不再依赖；新装 / 迁移 Photoshop 不影响贴图。仅旧版脚本（`pipeline-2026-07-12` Tag 之前的提交）需要。
 - **美图秀秀**: 去背流程需要，运行期间会接管屏幕（与贴图无关）
 
@@ -293,6 +304,75 @@ git checkout v2.2.1
 
 > 复现验证：纯软件重构后，`tasklist` 确认无 Photoshop 进程；DX0641 贴花 + BW 合计 <2 秒；BW 合成单张 0.3 秒。
 > 详见 `E:\Claude code\ps\PIPELINE.md`（系统总览、环境依赖、十项问题方案表、100% 复现步骤、回滚）。
+
+---
+
+## 12. 遮罩生成子系统 — 复现与回滚（2026-07-13）
+
+遮罩生成子系统全部位于 `ZCodeProject` 仓库内（`peiyi_mask.py` / `peiyi_correct.py` / `lovart_bridge.py` / `peiyi.html`），与贴图/上款流程共享同一 Bridge，无独立仓库。
+
+### 12.1 一键复现遮罩
+
+```bash
+# 1. 确保依赖与模型已就位（见第 2.2 / 第 7 节）
+# 2. 启动 Bridge（遮罩页面与 API 随 Bridge 一起生效）
+双击 D:\Semems WB\01_INBOX\lovart_bridge.bat
+# 3. 浏览器打开 http://127.0.0.1:8765/peiyi → 上传胚衣图 → 点「生成遮罩」
+
+# 命令行独立生成（调试用，需 Python 3.11 + PYTHONPATH）
+PY="C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe"
+PYTHONPATH=E:/python_packages "$PY" - <<'PY'
+import peiyi_mask
+res = peiyi_mask.generate_masks(r'D:\Semems WB\03_MATERIAL\W白\白W2.jpg', category='W白')
+print(res.get('version'), res.get('body_px'), res.get('occluder_px'))
+PY
+```
+
+> 改 `peiyi_mask.py` / `peiyi_correct.py` 后由 `_peiyi_worker` 子进程每次新导入，**无需重启 Bridge**；改 `tpl_generator` 内联路径才需重启。
+
+### 12.2 版本级回滚（遮罩本身）
+
+每张胚衣的遮罩都有完整版本链，回滚不影响生产：
+
+- **前端切换**：`peiyi.html` 打开某胚衣 → 版本列表选目标 `vNNN` → 点「使用此版本」(`/api/peiyi/use_version`)，仅更新 `latest.txt` 与生产路径文件。
+- **删除废版**：非当前版本可点 🗑 删除 (`/api/peiyi/delete_version`)。
+- **物理备份**：`_mask_versions/<stem>/vNNN/` 目录永不自动删除，必要时可手动复制还原。
+
+### 12.3 代码级回滚（整个子系统）
+
+遮罩子系统随 `ZCodeProject` 仓库演进，回滚到任意历史提交即可：
+
+```bash
+cd C:\Users/Administrator\ZCodeProject
+git log --oneline -- peiyi_mask.py peiyi_correct.py | head -20   # 查看遮罩相关提交
+git checkout <commit> -- peiyi_mask.py peiyi_correct.py           # 仅回滚遮罩脚本
+# 或整体回退
+git reset --hard <commit>                                         # 谨慎：丢弃后续全部改动
+```
+
+关键提交（按时间，最新在前）：
+
+| 提交 | 内容 |
+|------|------|
+| `ac44677` | fix(mask): body shrink 2px + manual import preserve large occluders（v1.5.2） |
+| `7d75c71` | fix(import_manual): 用户碰过的 AI 连通域整块替换为用户精确轮廓 |
+| `4305247` | fix(peiyi_mask): v1.5.1 收窄 FG_DILATE 25→3/FG_CLOSE 8→5，杜绝遮罩外扩 |
+| `7bea79a` | feat(peiyi_mask): v1.5.0 接入 FASHN 语义分割增强（可选，失败回退） |
+| `c1ddeee` | feat(peiyi): 导入手动 PS 遮罩合并功能 |
+| `df418db` | fix(correct): 预览→确认才存版本 + 删除版本功能 |
+| `5eb2e67` | feat(peiyi): 方案B 点选扩散手动校正遮罩 |
+| `1a0b13b` | feat(peiyi): 素材库页面新增「遮罩评分总表」+ /api/peiyi/scores |
+
+### 12.4 模型权重备份（迁移/重装必做）
+
+遮罩生成依赖 `~/.cache/huggingface` 下的 BiRefNet 与 fashn-human-parser 权重。重装系统或换机前请备份该目录，否则首次运行需联网重新下载：
+
+```bash
+# 备份
+robocopy /E "%USERPROFILE%\.cache\huggingface" "D:\Semems WB\_backup_hf_cache"
+# 恢复（到新机同名用户目录下）
+robocopy /E "D:\Semems WB\_backup_hf_cache" "%USERPROFILE%\.cache\huggingface"
+```
 
 ---
 

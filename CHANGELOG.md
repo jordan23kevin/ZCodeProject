@@ -1,5 +1,50 @@
 # Y2 一体化控制系统 — 更新日志
 
+## v2.4.2 (2026-07-13) — 遮罩生成子系统（自动 + 手动校正 + PS 遮罩合并）
+
+> 本版本在「胚衣制作」页新增完整的**人物前景遮挡遮罩生成**能力：自动识别衣服主体（body）与遮挡物（手/戒指/头发/手持物等 occluder），供贴图时把印花藏到这些前景后面，避免「印花盖在手上/戒指/头发上」。
+> 涉及文件：`peiyi_mask.py`（v1.5.0→v1.5.2）、`peiyi_correct.py`（新增）、`lovart_bridge.py`（新增 /api/peiyi/* 共 19 个端点）、`peiyi.html`（新增「胚衣制作」页 + 校正抽屉 + 评分总表）、`tpl_generator.py`（`generate_tpl_for_material` 接遮罩生成 _tpl）。
+> 接入链路：「生成遮罩」按钮 → `bridge /api/peiyi/mask` → `_peiyi_worker.py mask` → `tpl_generator.generate_tpl_for_material` 生成 `_tpl` 扭曲素材；贴图时 `white_t_mockup` 自动传入 `--occluder`（即 `*_occluder.png`）盖到最上层。
+
+### ✨ 新功能
+
+- **自动遮罩生成（peiyi_mask.py v1.5.2）** — 三阶段流水线：
+  1. **BiRefNet 人像分割**（`transformers.AutoModelForImageSegmentation`，人像 matte）→ `person_mask`
+  2. **LAB 色度聚类拆分**（`_color_cluster_split`）：把人物区域按 a/b 色度 KMeans 聚类，区分「衣服主体(body)」与「手/头发/首饰/手持物(occluder)」；前景扩展（闭运算+膨胀）包住紧贴人体的杯子/手持物（BiRefNet 常把手持物当非人排除→洞，印花会透杯）
+  3. **FASHN 语义分割增强（v1.5.0 可选，失败自动回退）**：`fashn-ai/fashn-human-parser`（SegFormer 18 类）补强——`top`(3)=衣身（更贴合、治 15px 外扩、body 不进最终合成零风险）；`hands/arms/hair/face/jewelry/bag`(戒指)/帽子/围巾=遮挡物。懒加载 + `local_files_only=True` 优先离线缓存，断网/无代理实测 2s 成功；失败自动回退原 BiRefNet+聚类方法，绝不影响遮罩生成。
+  - 模型已缓存 `~/.cache/huggingface`，离线可用。
+- **版本归档（v1.4）**：每次生成存 `<素材目录>/_mask_versions/<stem>/vNNN/`（5 文件 + `score.json`），`history.json` + `latest.txt`；标准路径始终指向最新，生产不受影响。
+  - 5 文件：`*_occluder.png` / `*_occluder_mask.png` / `*_body_mask.png` / `*_parse.png`（绿=衣身 红=遮挡物 可视化）/ `*_alpha.png`
+- **评分总表**：`peiyi.html` 顶部「📊 遮罩评分总表」+ 后端 `/api/peiyi/scores`（读 `latest.txt→vNNN/score.json` 汇总，低分排最前标红）。
+- **手动校正（peiyi_correct.py，方案 B 点选扩散）**：LAB 色度 + 边缘约束的连通域生长（flood fill），点「② 分层预览」图自动换算到原图坐标，支持「加遮挡 / 加衣身 / 减遮挡」。
+- **预览→确认才存版本**：改三步流程——`correct_preview`(不存) → `correct_confirm`(归档) → `correct_cancel`(删临时)；`_working` 临时目录承载预览图，避免点一下就生成废版。
+- **版本删除**：`delete_version`（非当前版本可删）。
+- **导入手动 PS 遮罩合并（import_manual_mask）**：读取用户保存的 PS 遮罩 PNG（alpha>30 即判定为用户画笔），与 AI 遮罩结合。最终逻辑：找用户画笔**触碰过的 AI 连通域标签 → 整块替换为用户精确轮廓**；AI 没碰的区域保留；`final_body` 限制在 AI 原衣身范围内，防止手动导入反而把衣身撑大。
+
+### 🐛 开发过程中遇到的问题与解决方案
+
+| # | 问题 | 根因 | 解决方案 | 文件/位置 |
+|---|------|------|----------|-----------|
+| 1 | 自动生成的遮罩比真实物体边缘**粗暴外扩 ~15px**（白W12 手臂、白W11 衣服边界） | `_color_cluster_split` 中 `FG_DILATE_ITERS=25` 把边缘外推过多 | v1.5.1 收窄 `FG_DILATE_ITERS 25→3`、`FG_CLOSE_ITERS 8→5` | `peiyi_mask.py` |
+| 2 | 衣身区域整体仍比真实衣服轮廓胖一圈（v024） | 前面一系列膨胀/闭运算累积把边界外推 2–5px | v1.5.2 新增 `BODY_SHRINK_ITERS=2`，保存前对 body 统一向内腐蚀 2px | `peiyi_mask.py` |
+| 3 | 点选扩散每点都报 `x` | 用户点在原图而非分层预览图；参数太严 | 提示点「② 分层预览」图；`COLOR_TOLERANCE 18→20`、`MIN 200→100`、`MAX 500K→1.2M`、`SOBEL_WEIGHT 0.3→0.2` | `peiyi_correct.py` |
+| 4 | 点一下就生成废版，版本泛滥 | 旧逻辑点选即落盘 | 改预览→确认→放弃三步流程，`_working` 临时区承载 | `peiyi_correct.py` + `lovart_bridge.py` |
+| 5 | 合并用户 PS 遮罩后把 T 恤整片算进遮挡物 | 误把用户白W2.png（89% 透明、画的是手部遮挡物）当「衣身风格」 | 改为**纯叠加**：只认用户画的（alpha>30），不做任何元素分析；用户只需把 AI 漏掉的遮挡物画上去 | `peiyi_correct.py::import_manual_mask` |
+| 6 | 白色背景被误判为用户画笔 | 旧逻辑用 `(r+g+b)/3>100` 把白背景算入 | 只用 `alpha>30` 判定用户画笔，排除背景 | `peiyi_correct.py` |
+| 7 | 用户画的完整杯子只加了边缘，中间被裁掉 | 旧逻辑用 `person_mask` 裁剪用户画笔，杯子等手持物不在人像范围内 | 去掉 `person_mask` 限制，用户画的区域原样保留 | `peiyi_correct.py` |
+| 8 | 合并后边缘又扩大像素 | 旧逻辑对 AI occluder 做 `ndi.binary_dilation(person_mask, 20)` 膨胀 | 去掉该 20px 膨胀 | `peiyi_correct.py` |
+| 9 | AI 粗糙边缘盖过用户精确画笔（杯子轮廓发虚） | AI occluder 自带 3px 膨胀边（~51K px），把用户精确画笔完全覆盖 | AI occluder 缩 3px 去膨胀；用户画笔保持像素精度，空白处再补 AI | `peiyi_correct.py` |
+| 10 | 用户碰过的整块 AI 连通域被删，导致头发/手臂误删 | 旧逻辑把用户画笔触碰的整块 AI 遮挡物（含相连头发）全删 | 改为仅替换用户画笔附近 20px 范围内的 AI 像素，远处头发/手臂保留 | `peiyi_correct.py` |
+| 11 | 手动导入后衣身反而比 AI 原衣身更大 | 被替换下来的像素回到衣身，超出 AI 原范围 | `final_body = final_body & ai_body`，约束在 AI 原衣身内 | `peiyi_correct.py` |
+| 12 | FASHN 在无代理/断网环境加载卡死 | 默认联网拉模型 | 懒加载 + `local_files_only=True` 优先离线缓存；失败回退原方法 | `peiyi_mask.py::_get_fashn` |
+
+### 📚 文档与版本
+
+- 版本号统一：`lovart_bridge.py` → **v2.4.2**；`peiyi_mask.py` → **v1.5.2**；`peiyi_correct.py` 随 v1.5.x 迭代。
+- 本版本**纯新增遮罩子系统 + 前端页面**，未改动原有生图/去背/贴图/上款/Temu 流程；重启 bridge 后 `/peiyi` 页面与全部 `/api/peiyi/*` 端点生效（改 `peiyi_mask.py`/`peiyi_correct.py` 由 `_peiyi_worker` 子进程每次新导入，无需重启；改 `tpl_generator` 内联路径需重启 bridge）。
+
+---
+
 ## v2.4.0 (2026-07-07) — 刷新已上款增量游标 + 轮询修复 + 深度清理
 
 ### ✨ 新功能

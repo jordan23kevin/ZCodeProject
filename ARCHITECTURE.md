@@ -1,7 +1,20 @@
-# Y2 系统架构文档 v2.4.0
+# Y2 系统架构文档 v2.4.2
 
-> 工程类型: 图像生产血缘数据库 + 控制面板 + 纯软件贴图成品流水线 + AI 生图对比复审 + Temu 核价集成 + Temu 报活动集成
+> 工程类型: 图像生产血缘数据库 + 控制面板 + 纯软件贴图成品流水线 + AI 生图对比复审 + Temu 核价集成 + Temu 报活动集成 + 遮罩生成子系统（人物前景遮挡）
 > 遵循: B+ 四层血缘闭环架构
+
+---
+
+## v2.4.2 变更
+
+本次版本新增**遮罩生成子系统（胚衣制作 / 人物前景遮挡）**，与原有生图/去背/贴图/上款/Temu 流程解耦、互不影响：
+
+- **自动遮罩生成**（`peiyi_mask.py` v1.5.2）：BiRefNet 人像分割 + LAB 色度聚类拆分 + FASHN 语义分割增强（可选，失败回退），产出 `body_mask`（衣身）与 `occluder_mask`（手/戒指/头发/手持物等），供贴图时把印花藏到这些前景后面。
+- **版本归档**：每次生成落 `<分类>/_mask_versions/<stem>/vNNN/`（5 文件 + `score.json`），`latest.txt` 指向生产版本。
+- **手动校正 + PS 遮罩合并**（`peiyi_correct.py`）：点选扩散（flood fill）+ 预览→确认三步流程 + 版本删除 + 导入用户 PS 遮罩（整块替换用户触碰的 AI 连通域）。
+- **评分总表**：`peiyi.html` 顶部「📊 遮罩评分总表」+ `/api/peiyi/scores`。
+- **Bridge 集成**：新增 `/peiyi` 页面与 19 个 `/api/peiyi/*` 端点；「生成遮罩」按钮经 `_peiyi_worker.py` → `tpl_generator.generate_tpl_for_material` 生成 `_tpl` 扭曲素材；贴图时 `white_t_mockup` 自动传入 `--occluder`（即 `*_occluder.png`）。
+- 依赖新增：`torch` / `torchvision` / `transformers`（BiRefNet + fashn-human-parser）、`scipy`、`scikit-image`，模型缓存于 `~/.cache/huggingface`；运行需 `PYTHONPATH=E:/python_packages`。
 
 ---
 
@@ -212,6 +225,72 @@
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+## 遮罩生成子系统（v2.4.2 / peiyi_mask v1.5.2）
+
+为模特胚衣图生成**人物前景遮挡遮罩**，贴图时把印花藏到手/戒指/头发/手持物后面，避免「印花盖在手上」。子系统与原有生图/去背/贴图/上款完全解耦。
+
+### 数据流
+
+```
+胚衣原图 (D:\Semems WB\03_MATERIAL\<分类>\<stem>.jpg)
+   │  「生成遮罩」按钮 → bridge /api/peiyi/mask → _peiyi_worker.py mask
+   ▼
+peiyi_mask.generate_masks()
+   ├─ BiRefNet 人像分割 (transformers.AutoModelForImageSegmentation)  → person_mask
+   ├─ LAB 色度 KMeans 聚类 (_color_cluster_split)  → body / occluder 初分
+   │     └─ 前景扩展(闭运算+膨胀) 包住紧贴人体的杯子/手持物
+   ├─ FASHN 语义分割 (_get_fashn, 可选, 失败回退)  → top=衣身, 戒指/手/头发/首饰=遮挡物
+   ├─ 评分 (_compute_mask_score) + 版本归档 (_archive_mask_version)
+   ▼
+<分类>/_mask_versions/<stem>/vNNN/
+   ├─ <stem>_occluder.png          # 最终遮挡物（贴图用，盖在印花上层）
+   ├─ <stem>_occluder_mask.png     # 二值遮挡物
+   ├─ <stem>_body_mask.png         # 二值衣身
+   ├─ <stem>_parse.png             # 可视化（绿=衣身 红=遮挡物）
+   ├─ <stem>_alpha.png             # 人像 alpha
+   └─ score.json                   # 评分（is_person / flat_lay / coverage ...）
+   history.json + latest.txt       # 版本链；latest.txt 指向生产版本
+
+同时触发 tpl_generator.generate_tpl_for_material() → 生成 D:\Semems\1胚衣\_tpl\<款>\ 扭曲素材
+   │
+   ▼  贴图时 white_t_mockup 自动读取 *_occluder.png 并 --occluder 传入，盖到印花最上层
+```
+
+### 关键模块
+
+| 文件 | 版本 | 职责 |
+|------|------|------|
+| `peiyi_mask.py` | v1.5.2 | 自动遮罩生成（BiRefNet + LAB 聚类 + FASHN），版本归档，评分 |
+| `peiyi_correct.py` | — | 手动校正（点选扩散）+ PS 遮罩合并 + 版本删除 |
+| `tpl_generator.py` | — | `generate_tpl_for_material()` 接遮罩生成 `_tpl` 扭曲素材 |
+| `peiyi.html` | — | 「胚衣制作」页 + 校正抽屉 + 评分总表 |
+| `lovart_bridge.py` | v2.4.2 | `/peiyi` 页面 + 19 个 `/api/peiyi/*` 端点 |
+
+### Bridge 端点（/api/peiyi/*）
+
+| 端点 | 作用 |
+|------|------|
+| `/upload` (POST) | 上传胚衣原图到 `03_MATERIAL/<分类>/` |
+| `/list` | 列出所有胚衣与最新遮罩/评分 |
+| `/scores` | 评分总表（低分排前标红） |
+| `/mask` (POST) | 触发自动遮罩生成（「生成遮罩」按钮） |
+| `/versions/<category>/<stem>` | 列出某胚衣全部版本 |
+| `/version_file/...` `/use_version` (POST) | 查看/切换到指定版本 |
+| `/delete` `/delete_version` (POST) | 删除胚衣 / 删除某版本 |
+| `/reindex` `/meta` (POST) | 重建索引 / 更新胚衣元数据 |
+| `/material/<category>/<path>` | 读取素材图 |
+| `/correct_preview` `/correct_confirm` `/correct_cancel` `/correct_check` (POST) | 手动校正三步流程（预览不存→确认归档→放弃删临时） |
+| `/working_file/...` | 提供校正临时预览图 |
+| `/import_manual` (POST) | 导入用户 PS 遮罩并合并 |
+
+### 关键设计决策
+
+- **版本归档双保险**：每次生成都存 `vNNN` 目录，旧版有 `_mask_versions` 备份；`latest.txt` 始终指向生产版本，切换版本不影响正在跑的贴图。
+- **FASHN 失败零风险回退**：语义分割仅用于「补强」（更贴合的衣身 + 戒指/手/头发），加载失败自动回退 BiRefNet+聚类，遮罩生成绝不中断；模型懒加载 + `local_files_only=True` 离线可用。
+- **手动导入不分析用户内容**：`import_manual_mask` 只认 `alpha>30` 的像素，不做任何元素识别；用户画笔**触碰到的 AI 连通域整块替换为用户精确轮廓**，其余 AI 区域原样保留，`final_body` 限制在 AI 原衣身内防外扩。
+- **body 边缘最终收缩 2px**（`BODY_SHRINK_ITERS=2`）：消除前面膨胀/闭运算累积的 2–5px 外扩，使衣身贴合真实衣服轮廓。
+- **改即生效策略**：`peiyi_mask.py`/`peiyi_correct.py` 由 `_peiyi_worker` 子进程每次新导入，改完直接点「生成遮罩」即生效，无需重启 bridge；仅改 `tpl_generator` 内联路径需重启 bridge。
+
 ## 关键技术决策
 
 ### JS 独立文件（v2.0 关键改进）
@@ -403,9 +482,13 @@ python check_rem.py
 完整复现/回滚步骤见 [`REPRODUCIBILITY.md`](./REPRODUCIBILITY.md)。
 
 要点：
-- 两个主仓库：`ZCodeProject`（Bridge / 控制台）和 `lovart-official`（生图管线）
-- 当前 Tag：`ZCodeProject v2.4.0`、`lovart-official v6.1`
-- Python 依赖：`flask`, `Pillow`, `requests`, `pywin32`, `pythoncom`, `numpy`
+- 两个主仓库：`ZCodeProject`（Bridge / 控制台 / 遮罩生成）和 `lovart-official`（生图管线）
+- 当前 Tag：`ZCodeProject v2.4.2`、`lovart-official v6.1`
+- Python 依赖（Bridge / 去背 / 遮罩）：
+  - 通用：`flask`, `Pillow`, `requests`, `pywin32`, `pythoncom`, `numpy`
+  - 遮罩生成：`torch`, `torchvision`, `transformers`（BiRefNet + fashn-human-parser）、`scipy`、`scikit-image`、`opencv-python`（cv2 来自 `E:/python_packages`）
+  - 运行遮罩生成 / 贴图需 `PYTHONPATH=E:/python_packages;E:/Kimi Code`
+- HuggingFace 模型缓存：`~/.cache/huggingface`（BiRefNet 权重、`fashn-ai/fashn-human-parser`），离线可用
 - Photoshop 路径：`D:\Program Files\Adobe Photoshop 2025 v26.0\Adobe Photoshop 2025\Photoshop.exe`
-- 项目根目录：`D:\Semems WB\02_PROJECTS`
+- 项目根目录：`D:\Semems WB\02_PROJECTS`；胚衣素材库：`D:\Semems WB\03_MATERIAL\<分类>\`
 - 提示词文件：`E:\Claude code\lovart-official\config\POD AI VIRAL FACTORY v3.md`
