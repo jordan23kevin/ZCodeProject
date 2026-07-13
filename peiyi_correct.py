@@ -31,10 +31,10 @@ from skimage import color as skcolor
 # ---------------------------------------------------------------------------
 # 配置
 # ---------------------------------------------------------------------------
-COLOR_TOLERANCE = 18        # LAB 色度距离阈值（越大长得越远）
-SOBEL_WEIGHT = 0.3          # 边缘惩罚权重（0=无视边缘，1=边缘完全阻挡）
-MIN_REGION_PX = 200         # 最小有效区域像素（太小忽略）
-MAX_REGION_PX = 500000      # 最大区域像素（防长到整个画面）
+COLOR_TOLERANCE = 20        # LAB 色度距离阈值（越大长得越远；原18调至20更容错）
+SOBEL_WEIGHT = 0.2          # 边缘惩罚权重（0=无视边缘，1=边缘完全阻挡；原0.3调至0.2）
+MIN_REGION_PX = 100         # 最小有效区域像素（原200调至100，细戒指也能识别）
+MAX_REGION_PX = 1200000     # 最大区域像素（原500000调至1200000，点击大面积区域不轻易报错）
 
 # 形态学清理
 CLEAN_CLOSE_ITERS = 2
@@ -194,10 +194,10 @@ def correct_mask(
     region_px = int(region.sum())
 
     if region_px < MIN_REGION_PX:
-        return {"ok": False, "error": f"生长区域太小({region_px}px)，请点在更明显的区域"}
+        return {"ok": False, "error": f"圈出的区域太小({region_px}px)，请点在一块的明显区域（如杯子边缘、戒指）"}
     if region_px > MAX_REGION_PX:
         # 太大可能是误生长，缩小 tolerance 重试
-        return {"ok": False, "error": f"生长区域过大({region_px}px)，请调整点选位置"}
+        return {"ok": False, "error": f"圈出的区域太大({region_px}px)，请点在小一点的区域试试"}
 
     # 合并
     new_occ = _merge_region(occ_mask, region, mode)

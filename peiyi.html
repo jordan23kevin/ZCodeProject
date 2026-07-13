@@ -202,14 +202,15 @@
     <!-- ✏️ 手动校正工具 -->
     <div style="border-top:1px solid #333;padding-top:12px;margin-top:12px">
       <div style="font-size:14px;color:#ccc;margin-bottom:8px">✏️ 手动校正</div>
-      <div style="font-size:12px;color:#999;margin-bottom:8px">在图片上点一下漏掉/多算的区域，自动圈出整块</div>
+      <div style="font-size:12px;color:#999;margin-bottom:8px">对 AI 自动遮罩不满意？点一下漏掉/多算的区域，自动圈出整块</div>
       <div class="correct-bar">
         <button class="correct-btn occ" id="cbAddOcc" onclick="setCorrMode('add_occ')">➕加遮挡</button>
         <button class="correct-btn body" id="cbAddBody" onclick="setCorrMode('add_body')">➕加衣身</button>
         <button class="correct-btn remove" id="cbRemove" onclick="setCorrMode('remove_occ')">➖减遮挡</button>
         <button class="correct-btn" onclick="setCorrMode(null)" id="cbCancel" style="display:none">✕ 取消</button>
       </div>
-      <div class="correct-status" id="corrStatus">点「加遮挡」→ 再在图上点击要加的区域</div>
+      <div class="correct-status" id="corrStatus">① 点一个模式按钮 → ② 在「分层预览」图上点击</div>
+      <div class="correct-hint" id="corrHint">💡 点「② 分层预览（绿=主体/红=遮挡）」那张图，不是点原图</div>
     </div>
 
     <button class="use-btn" id="useBtn" onclick="useCurrentVersion()" disabled>设为当前版本</button>
@@ -653,17 +654,21 @@ var _corrMode = null;  // null | 'add_occ' | 'remove_occ' | 'add_body'
 
 function setCorrMode(mode){
   _corrMode = mode;
-  // 切换按钮高亮
   document.querySelectorAll('.correct-btn').forEach(function(b){ b.classList.remove('active'); });
   document.getElementById('cbCancel').style.display = mode ? 'inline-block' : 'none';
+  var hintEl = document.getElementById('corrHint');
   if(mode){
     var btnMap={add_occ:'AddOcc', add_body:'AddBody', remove_occ:'Remove'};
-    var hintMap={add_occ:'加到遮挡物', add_body:'加到衣身', remove_occ:'从遮挡物移除'};
+    var hintMap={add_occ:'点「② 分层预览」图上漏掉的地方（如透明杯子/戒指），会自动圈出整块加到红色遮挡区',
+                 add_body:'点「② 分层预览」图上被误裁的衣服边缘，会自动圈出整块加回绿色衣身区',
+                 remove_occ:'点「② 分层预览」图上多算的红色遮挡物，会自动圈出整块去掉'};
     document.getElementById('cb'+btnMap[mode]).classList.add('active');
-    setStatus('在图片上点击要'+hintMap[mode]+'的位置', '');
+    setStatus('👆 '+hintMap[mode], '');
+    hintEl.style.display='block';
     enableClickPreview();
   } else {
-    setStatus('点击「加遮挡」开始手动校正', '');
+    setStatus('① 点一个模式按钮 → ② 在「分层预览」图上点击', '');
+    hintEl.style.display='none';
     disableClickPreview();
   }
 }
