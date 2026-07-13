@@ -205,12 +205,16 @@
     <!-- ✏️ 手动校正工具 -->
     <div style="border-top:1px solid #333;padding-top:12px;margin-top:12px">
       <div style="font-size:14px;color:#ccc;margin-bottom:8px">✏️ 手动校正</div>
-      <div style="font-size:12px;color:#999;margin-bottom:8px">对 AI 自动遮罩不满意？点一下漏掉/多算的区域，自动圈出整块</div>
-      <div class="correct-bar">
+      <div style="font-size:12px;color:#999;margin-bottom:8px">点选校正：在图上点击 → 自动圈出整块</div>
+      <div class="correct-bar" style="margin-bottom:6px">
         <button class="correct-btn occ" id="cbAddOcc" onclick="setCorrMode('add_occ')">➕加遮挡</button>
         <button class="correct-btn body" id="cbAddBody" onclick="setCorrMode('add_body')">➕加衣身</button>
         <button class="correct-btn remove" id="cbRemove" onclick="setCorrMode('remove_occ')">➖减遮挡</button>
         <button class="correct-btn" onclick="setCorrMode(null)" id="cbCancel" style="display:none">✕ 取消</button>
+      </div>
+      <div style="border-top:1px solid #383838;margin:8px 0;padding-top:8px">
+        <button class="correct-btn" onclick="importManualMask()" style="border-color:#7c4dff;color:#b388ff;width:100%">📥 导入手动PS遮罩</button>
+        <div style="font-size:11px;color:#666;margin-top:4px">把 PS 做好的遮罩存为 <b>{stem}_manual.png</b> 到素材目录再点此按钮</div>
       </div>
       <div class="correct-status" id="corrStatus">① 点一个模式按钮 → ② 在「分层预览」图上点击</div>
       <div class="correct-hint" id="corrHint">💡 点「② 分层预览（绿=主体/红=遮挡）」那张图，不是点原图</div>
@@ -813,6 +817,29 @@ function deleteVersion(ver){
     }
   })
   .catch(function(e){ alert('网络错误：'+e); });
+}
+
+function importManualMask(){
+  if(!DRAWER || !DRAWER.name) return;
+  setStatus('⏳ 正在导入合并…', '');
+  fetch('/api/peiyi/import_manual', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({category: DRAWER.category, name: DRAWER.name})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if(d.ok){
+      setStatus('✅ 导入成功！'+d.manual_file+' → '+d.new_version+'（用户'+d.manual_px+'px / AI'+d.ai_px+'px）', 'ok');
+      log('['+DRAWER.category+'] '+DRAWER.stem+' 导入手动遮罩 → '+d.new_version);
+      openDrawer(DRAWER.category, DRAWER.name, DRAWER.url);
+      refreshGallery(DRAWER.category);
+      refreshScores();
+    } else {
+      setStatus('❌ '+d.error, 'err');
+    }
+  })
+  .catch(function(e){ setStatus('❌ 网络错误：'+e, 'err'); });
 }
 
 function setStatus(msg, cls){

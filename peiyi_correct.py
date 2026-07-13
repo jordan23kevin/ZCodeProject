@@ -330,3 +330,192 @@ def delete_version(
     shutil.rmtree(vdir, ignore_errors=True)
 
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# 导入手动 PS 遮罩：读取用户手动制作的 PNG，与 AI 遮罩合并
+# ---------------------------------------------------------------------------
+MANUAL_SUFFIX = "_manual.png"   # 用户手动遮罩文件名后缀
+
+def _read_manual_mask(mask_path: Path) -> np.ndarray:
+    """读取手动遮罩 PNG，返回 bool body_mask（True=衣身）。
+
+    支持两种格式：
+        1. RGBA/灰度：白色/不透明 = 衣身
+        2. RGB（parse风格）：绿色(大量G) = 衣身，红色(大量R) = 遮挡物
+           -> 返回 body_mask（绿色区域）
+    """
+    img = Image.open(mask_path).convert("RGBA")
+    arr = np.array(img)  # (H,W,4)
+    h, w = arr.shape[:2]
+
+    # 检测是否为 parse 风格（有明显绿/红色块）
+    r, g, b, a = arr[:,:,0].astype(float), arr[:,:,1].astype(float), arr[:,:,2].astype(float), arr[:,:,3].astype(float)
+    green_px = int(((g > r + 30) & (g > b + 30) & (g > 60)).sum())
+    red_px = int(((r > g + 30) & (r > b + 30) & (r > 60)).sum())
+    total = h * w
+
+    if green_px > total * 0.01:  # 有超过 1% 的绿色 → parse 风格
+        body = (g > r + 30) & (g > b + 30) & (g > 60)
+        return body
+    else:
+        # 灰度/RGBA 风格：不透明或亮色 = 衣身
+        body = (a > 128) | ((r + g + b) / 3 > 128)
+        return body
+
+
+def import_manual_mask(image_path: str | Path) -> dict:
+    """导入用户手动制作的遮罩，与 AI 最新遮罩合并。
+
+    流程：
+        1. 读取 `{stem}_manual.png`（放在原图同级目录）
+        2. 读取 AI 最新 body_mask + 原图 + person_mask（从 alpha 重算）
+        3. 合并：用户 body 优先，AI 的 person_mask 约束范围
+        4. 保存到标准路径 + 归档新版本
+
+    参数：
+        image_path: 原图路径（如 D:/.../白W2.jpg）
+                    手动遮罩在 同目录/{stem}_manual.png
+
+    返回：
+        { ok, new_version, manual_px, ai_px, diff_px }
+    """
+    image_path = Path(image_path)
+    if not image_path.exists():
+        return {"ok": False, "error": f"图片不存在: {image_path}"}
+
+    stem = image_path.stem
+    out_dir = image_path.parent
+
+    # 1. 找手动遮罩文件（优先同级目录，其次 _mask_versions/<stem>/）
+    manual_path = out_dir / f"{stem}{MANUAL_SUFFIX}"
+    if not manual_path.exists():
+        # 回退到 _mask_versions/<stem>/
+        manual_path2 = out_dir / "_mask_versions" / stem / f"{stem}{MANUAL_SUFFIX}"
+        if manual_path2.exists():
+            manual_path = manual_path2
+        else:
+            # 也试试 stem.png
+            manual_path3 = out_dir / "_mask_versions" / stem / f"{stem}.png"
+            if manual_path3.exists():
+                manual_path = manual_path3
+            else:
+                return {"ok": False, "error": f"未找到手动遮罩文件，请保存为 {stem}_manual.png 到同级目录"}
+
+    # 2. 读取手动 body_mask
+    manual_body = _read_manual_mask(manual_path)
+    m_h, m_w = manual_body.shape
+
+    # 3. 加载当前 AI 遮罩
+    image = np.array(Image.open(image_path).convert("RGB"))
+    img_h, img_w = image.shape[:2]
+
+    # 检查尺寸
+    if m_h != img_h or m_w != img_w:
+        return {"ok": False, "error": f"手动遮罩尺寸({m_w}x{m_h})与原图({img_w}x{img_h})不一致"}
+
+    ai_body_path = out_dir / f"{stem}_body_mask.png"
+    ai_body = np.array(Image.open(ai_body_path)) > 128 if ai_body_path.exists() else None
+    ai_occ_path = out_dir / f"{stem}_occluder_mask.png"
+    ai_occ = np.array(Image.open(ai_occ_path)) > 128 if ai_occ_path.exists() else None
+
+    # 4. 计算 person_mask（从 body+occluder 还原，或从 alpha 重算）
+    if ai_body is not None and ai_occ is not None:
+        person_mask = ai_body | ai_occ
+    else:
+        # 从原图重新 BiRefNet
+        import peiyi_mask as _pm
+        alpha_raw = _pm._infer_matte(Image.open(image_path).convert("RGB"))
+        person_mask = alpha_raw >= (64 / 255.0)
+        import scipy.ndimage as _ndi
+        person_mask = _ndi.binary_closing(person_mask, iterations=5)
+
+    # 5. 合并：用户的 body 优先
+    final_body = manual_body & person_mask   # 用户 body 不能超出人像范围
+    final_occ = person_mask & (~final_body)  # 人像内非 body 的部分 = 遮挡物
+    # 如果用户漏掉了 AI 正确识别的 body 区域，补充回来
+    if ai_body is not None:
+        # 补充 AI 中属于 body 且在人像范围内的像素
+        ai_body_in_person = ai_body & person_mask
+        # 只要 AI 认为是 body 的，且用户没画为 occluder
+        final_body = final_body | (ai_body_in_person & (~final_occ))
+
+    # 6. 保存
+    h, w = img_h, img_w
+    occ_rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    occ_rgba[:, :, :3] = image
+    occ_rgba[:, :, 3] = (final_occ * 255).astype(np.uint8)
+    # parse 可视化
+    parse_vis = image.copy()
+    parse_vis[final_body] = (parse_vis[final_body] * 0.6 + np.array([0, 255, 0], np.uint8) * 0.4).astype(np.uint8)
+    parse_vis[final_occ] = (parse_vis[final_occ] * 0.6 + np.array([255, 0, 0], np.uint8) * 0.4).astype(np.uint8)
+
+    Image.fromarray(occ_rgba).save(out_dir / f"{stem}_occluder.png", "PNG")
+    Image.fromarray((final_occ * 255).astype(np.uint8)).save(out_dir / f"{stem}_occluder_mask.png", "PNG")
+    Image.fromarray((final_body * 255).astype(np.uint8)).save(out_dir / f"{stem}_body_mask.png", "PNG")
+    Image.fromarray(parse_vis).save(out_dir / f"{stem}_parse.png", "PNG")
+
+    # alpha 从标准路径复制（不变）
+    alpha_path = out_dir / f"{stem}_alpha.png"
+    if not alpha_path.exists() and ai_body_path.exists():
+        # 从 AI body_mask 尺寸创建一个空白 alpha
+        Image.fromarray(np.zeros((h, w), dtype=np.uint8)).save(alpha_path, "PNG")
+
+    # 7. 归档新版本
+    version = _archive_manual_version(out_dir, stem, manual_path.name,
+                                      int(manual_body.sum()), int(final_body.sum()))
+
+    diff_px = int((manual_body ^ final_body).sum()) if ai_body is not None else 0
+    return {
+        "ok": True,
+        "new_version": version,
+        "manual_px": int(manual_body.sum()),
+        "ai_px": int(ai_body.sum()) if ai_body is not None else 0,
+        "final_px": int(final_body.sum()),
+        "diff_px": diff_px,
+        "manual_file": manual_path.name,
+    }
+
+
+def _archive_manual_version(out_dir: Path, stem: str, manual_fn: str,
+                             manual_px: int, final_px: int) -> Optional[str]:
+    """手动导入的新版本归档。"""
+    try:
+        vroot = out_dir / "_mask_versions" / stem
+        vroot.mkdir(parents=True, exist_ok=True)
+        existing = [p for p in vroot.glob("v*") if p.is_dir() and p.name != WORKING_DIR]
+        def _vnum(p):
+            try: return int(p.name[1:])
+            except: return 0
+        next_n = (max([_vnum(p) for p in existing]) + 1) if existing else 1
+        vdir = vroot / f"v{next_n:03d}"
+        vdir.mkdir(parents=True, exist_ok=True)
+
+        for suffix in ["_occluder.png", "_occluder_mask.png", "_body_mask.png",
+                        "_parse.png", "_alpha.png"]:
+            src = out_dir / f"{stem}{suffix}"
+            if src.exists():
+                shutil.copy2(src, vdir / src.name)
+
+        score_obj = {
+            "version": f"v{next_n:03d}",
+            "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+            "algorithm_version": "manual_import",
+            "manual_correction": True,
+            "manual_source": manual_fn,
+            "score": None, "metrics": {"manual_px": manual_px, "final_px": final_px},
+            "flags": ["manual_import"],
+        }
+        (vdir / "score.json").write_text(
+            json.dumps(score_obj, ensure_ascii=False, indent=2), encoding="utf-8")
+        hist_path = vroot / "history.json"
+        try:
+            history = json.loads(hist_path.read_text(encoding="utf-8")) if hist_path.exists() else []
+        except Exception:
+            history = []
+        history.append(score_obj)
+        hist_path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+        (vroot / "latest.txt").write_text(f"v{next_n:03d}", encoding="utf-8")
+        return f"v{next_n:03d}"
+    except Exception as e:
+        return None

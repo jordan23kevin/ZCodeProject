@@ -4830,6 +4830,37 @@ def api_peiyi_delete_version():
         return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
 
 
+@app.route('/api/peiyi/import_manual', methods=['POST'])
+def api_peiyi_import_manual():
+    """导入 PS 手动遮罩，与 AI 遮罩合并。
+
+    POST JSON: { "category": "W白", "name": "白W2.jpg" }
+    手动遮罩文件位置: 素材目录/白W2_manual.png 或 _mask_versions/白W2/白W2.png
+    """
+    data = request.get_json(silent=True) or {}
+    category = data.get('category', '')
+    name = data.get('name', '')
+
+    if category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    safe = os.path.basename(name)
+    d = PEIYI_CATEGORIES[category]
+    fp = d / safe
+    if not fp.exists():
+        return jsonify({'ok': False, 'error': '文件不存在'}), 404
+
+    try:
+        import peiyi_correct
+        result = peiyi_correct.import_manual_mask(str(fp))
+        if result.get('ok'):
+            return jsonify(result)
+        return jsonify(result), 400
+    except Exception as e:
+        import traceback as _tb
+        _tb.print_exc()
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
+
+
 # ============================================================================
 # 贴图（AI 去背贴图）：自动按胚衣数据 + 遮罩 + 扭曲精准贴入
 # ============================================================================
