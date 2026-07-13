@@ -142,6 +142,9 @@
   .drawer-preview img.clickable{cursor:crosshair}
   .drawer-preview img.clickable:hover{outline:2px solid #ffcc00}
   .correct-hint{font-size:12px;color:#888;margin-top:4px;text-align:center}
+  .del-ver{position:absolute;top:2px;right:2px;font-size:11px;cursor:pointer;opacity:0.3;padding:2px 4px;border-radius:3px}
+  .del-ver:hover{opacity:1;background:#500;color:#f88}
+  .ver-chip{position:relative}
 </style>
 </head>
 <body>
@@ -211,6 +214,11 @@
       </div>
       <div class="correct-status" id="corrStatus">① 点一个模式按钮 → ② 在「分层预览」图上点击</div>
       <div class="correct-hint" id="corrHint">💡 点「② 分层预览（绿=主体/红=遮挡）」那张图，不是点原图</div>
+      <!-- 确认/放弃按钮（校正预览后出现） -->
+      <div class="correct-bar" id="corrConfirmBar" style="display:none;border-top:1px solid #444;padding-top:10px;margin-top:8px">
+        <button class="correct-btn" id="corrConfirmBtn" onclick="confirmCorrection()" style="background:#1b5e20;border-color:#4caf50;color:#81c784;font-weight:bold;flex:1">✅ 确认保存</button>
+        <button class="correct-btn" onclick="cancelCorrection()" style="background:#5f2020;border-color:#f44336;color:#ef9a9a;flex:1">✕ 放弃</button>
+      </div>
     </div>
 
     <button class="use-btn" id="useBtn" onclick="useCurrentVersion()" disabled>设为当前版本</button>
@@ -615,11 +623,20 @@ function renderVerChips(){
       (v.is_current?'<div class="curtag">当前</div>':'')+
       (v.algorithm_version?'<div class="curtag">算法 v'+v.algorithm_version+'</div>':'');
     chip.onclick=function(){ selectVersion(v.version); };
+    // 删除按钮（非当前版本可删）
+    if(!v.is_current && v.version){
+      var delBtn=document.createElement('span');
+      delBtn.className='del-ver';
+      delBtn.textContent='🗑';
+      delBtn.title='删除此版本';
+      delBtn.onclick=function(ev){ ev.stopPropagation(); deleteVersion(v.version); };
+      chip.appendChild(delBtn);
+    }
     row.appendChild(chip);
   });
 }
 
-function selectVersion(ver){
+function selectVersion(ver, isPreview){
   DRAWER.sel=ver;
   renderVerChips();
   var v=DRAWER.versions.find(function(x){return x.version===ver;});
@@ -631,10 +648,19 @@ function selectVersion(ver){
     (v.timestamp?(' · '+String(v.timestamp).replace('T',' ').slice(0,16)):'');
   var bust='?t='+Date.now();
   var u=v.urls||{};
+  // 如果是在预览校正（_working 有临时图），用临时路径代替版本路径
+  var workingBase = '/api/peiyi/working_file/'+encodeURIComponent(DRAWER.category)+'/'+encodeURIComponent(DRAWER.stem)+'/';
+  var stem = DRAWER.stem;
   var figs='';
   if(DRAWER.url) figs+='<figure><img src="'+DRAWER.url+bust+'"><figcaption>① 原图</figcaption></figure>';
-  if(u.parse) figs+='<figure><img src="'+u.parse+bust+'"><figcaption>② 分层预览（绿=主体 / 红=遮挡物）</figcaption></figure>';
-  if(u.occluder) figs+='<figure><img src="'+u.occluder+bust+'"><figcaption>③ 遮挡物抠图（最上层）</figcaption></figure>';
+  if(isPreview){
+    // 从 _working 加载预览
+    figs+='<figure><img src="'+workingBase+stem+'_parse.png'+bust+'"><figcaption>② 预览效果（绿=主体 / 红=遮挡）</figcaption></figure>';
+    figs+='<figure><img src="'+workingBase+stem+'_occluder.png'+bust+'"><figcaption>③ 遮挡物抠图（预览）</figcaption></figure>';
+  } else {
+    if(u.parse) figs+='<figure><img src="'+u.parse+bust+'"><figcaption>② 分层预览（绿=主体 / 红=遮挡物）</figcaption></figure>';
+    if(u.occluder) figs+='<figure><img src="'+u.occluder+bust+'"><figcaption>③ 遮挡物抠图（最上层）</figcaption></figure>';
+  }
   if(u.body_mask) figs+='<figure><img src="'+u.body_mask+bust+'"><figcaption>④ 主体蒙版（贴图案区域）</figcaption></figure>';
   if(u.occluder_mask) figs+='<figure><img src="'+u.occluder_mask+bust+'"><figcaption>⑤ 最终遮罩</figcaption></figure>';
   if(!figs) figs='<div class="empty">该版本无预览图</div>';
@@ -657,18 +683,22 @@ function setCorrMode(mode){
   document.querySelectorAll('.correct-btn').forEach(function(b){ b.classList.remove('active'); });
   document.getElementById('cbCancel').style.display = mode ? 'inline-block' : 'none';
   var hintEl = document.getElementById('corrHint');
+  var corrBar = document.querySelector('.correct-bar');
   if(mode){
     var btnMap={add_occ:'AddOcc', add_body:'AddBody', remove_occ:'Remove'};
-    var hintMap={add_occ:'点「② 分层预览」图上漏掉的地方（如透明杯子/戒指），会自动圈出整块加到红色遮挡区',
-                 add_body:'点「② 分层预览」图上被误裁的衣服边缘，会自动圈出整块加回绿色衣身区',
-                 remove_occ:'点「② 分层预览」图上多算的红色遮挡物，会自动圈出整块去掉'};
+    var hintMap={add_occ:'点「② 分层预览」图上漏掉的地方（如透明杯子/戒指），会自动圈出',
+                 add_body:'点「② 分层预览」图上被误裁的衣服边缘，会自动圈出',
+                 remove_occ:'点「② 分层预览」图上多算的红色遮挡物，会自动圈出'};
     document.getElementById('cb'+btnMap[mode]).classList.add('active');
     setStatus('👆 '+hintMap[mode], '');
     hintEl.style.display='block';
+    // 显示确认/放弃按钮
+    document.getElementById('corrConfirmBar').style.display='flex';
     enableClickPreview();
   } else {
     setStatus('① 点一个模式按钮 → ② 在「分层预览」图上点击', '');
     hintEl.style.display='none';
+    document.getElementById('corrConfirmBar').style.display='none';
     disableClickPreview();
   }
 }
@@ -692,42 +722,97 @@ function onImageClick(event, img){
   var rect = img.getBoundingClientRect();
   var clickX = event.clientX - rect.left;
   var clickY = event.clientY - rect.top;
-  // 换算到原图坐标
   var nw = img.naturalWidth, nh = img.naturalHeight;
   var dw = rect.width, dh = rect.height;
   var ox = Math.round(clickX * nw / dw);
   var oy = Math.round(clickY * nh / dh);
-  setStatus('正在校正…', '');
-  doCorrection(ox, oy, _corrMode);
+  setStatus('⏳ 正在计算校正…', '');
+  doPreviewCorrection(ox, oy, _corrMode);
 }
 
-function doCorrection(x, y, mode){
-  var btnIdMap={add_occ:'cbAddOcc', add_body:'cbAddBody', remove_occ:'cbRemove'};
-  var btn=document.getElementById(btnIdMap[mode]);
-  if(btn) btn.disabled = true;
-  fetch('/api/peiyi/correct', {
+function doPreviewCorrection(x, y, mode){
+  fetch('/api/peiyi/correct_preview', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({category: DRAWER.category, name: DRAWER.name, x: x, y: y, mode: mode})
   })
   .then(function(r){ return r.json(); })
   .then(function(d){
-    if(btn) btn.disabled = false;
     if(d.ok){
-      setStatus('✅ 校正成功！生长了 '+d.region_px+' 像素，新版本 '+d.new_version, 'ok');
-      log('['+DRAWER.category+'] '+DRAWER.stem+' 手动校正('+mode+') → '+d.new_version);
-      // 刷新抽屉
+      setStatus('✅ 已圈出 '+d.region_px+' 像素 — 点「确认保存」才生成版本', 'ok');
+      log('['+DRAWER.category+'] '+DRAWER.stem+' 预览校正('+mode+') 圈出 '+d.region_px+'px');
+      // 刷新抽屉预览（_working 区有新图）
+      selectVersion(DRAWER.sel, true);
+    } else {
+      setStatus('❌ '+d.error, 'err');
+    }
+  })
+  .catch(function(e){ setStatus('❌ 网络错误：'+e, 'err'); });
+}
+
+function confirmCorrection(){
+  setStatus('⏳ 正在保存…', '');
+  document.getElementById('corrConfirmBtn').disabled = true;
+  fetch('/api/peiyi/correct_confirm', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({category: DRAWER.category, name: DRAWER.name})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    document.getElementById('corrConfirmBtn').disabled = false;
+    if(d.ok){
+      setStatus('✅ 已保存为 '+d.new_version+' 版本！', 'ok');
+      log('['+DRAWER.category+'] '+DRAWER.stem+' 手动校正保存为 '+d.new_version);
+      // 刷新整个抽屉
       openDrawer(DRAWER.category, DRAWER.name, DRAWER.url);
       refreshGallery(DRAWER.category);
       refreshScores();
+      // 退出校正模式
+      setCorrMode(null);
     } else {
-      setStatus('❌ 校正失败：'+(d.error||'未知错误'), 'err');
+      setStatus('❌ 保存失败：'+(d.error||'未知错误'), 'err');
     }
   })
-  .catch(function(e){
-    if(btn) btn.disabled = false;
-    setStatus('❌ 网络错误：'+e, 'err');
-  });
+  .catch(function(e){ document.getElementById('corrConfirmBtn').disabled = false; setStatus('❌ 网络错误：'+e, 'err'); });
+}
+
+function cancelCorrection(){
+  if(!confirm('放弃本次所有手动修改？')) return;
+  fetch('/api/peiyi/correct_cancel', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({category: DRAWER.category, name: DRAWER.name})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    setStatus('已放弃修改', '');
+    log('['+DRAWER.category+'] '+DRAWER.stem+' 放弃手动修改');
+    // 刷新到使用当前版本
+    openDrawer(DRAWER.category, DRAWER.name, DRAWER.url);
+    setCorrMode(null);
+  })
+  .catch(function(e){ setStatus('❌ 网络错误：'+e, 'err'); });
+}
+
+function deleteVersion(ver){
+  if(!ver || !DRAWER) return;
+  if(!confirm('确定要删除版本 '+ver+' 吗？\n\n删除后不可恢复！')) return;
+  fetch('/api/peiyi/delete_version', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({category: DRAWER.category, stem: DRAWER.stem, version: ver})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if(d.ok){
+      log('['+DRAWER.category+'] '+DRAWER.stem+' 删除版本 '+ver);
+      openDrawer(DRAWER.category, DRAWER.name, DRAWER.url);  // 刷新
+    } else {
+      alert('删除失败：'+(d.error||'未知错误'));
+    }
+  })
+  .catch(function(e){ alert('网络错误：'+e); });
 }
 
 function setStatus(msg, cls){

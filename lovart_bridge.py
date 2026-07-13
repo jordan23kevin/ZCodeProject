@@ -4686,27 +4686,9 @@ def api_peiyi_mask():
         return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}', 'trace': _tb.format_exc()[-1500:]}), 500
 
 
-@app.route('/api/peiyi/correct', methods=['POST'])
-def api_peiyi_correct():
-    """手动校正遮罩：点一下，算法自动圈出整块区域并合并到遮罩中。
-
-    POST JSON:
-        {
-            "category": "W白",
-            "name": "白W3.jpg",
-            "x": 450,        # 点击坐标（原图像素）
-            "y": 320,
-            "mode": "add_occ"   # add_occ | remove_occ | add_body
-        }
-
-    返回:
-        {
-            "ok": True,
-            "region_px": 12345,     生长出的区域像素数
-            "new_version": "v003",   新版本号
-            "mode": "add_occ"
-        }
-    """
+@app.route('/api/peiyi/correct_preview', methods=['POST'])
+def api_peiyi_correct_preview():
+    """预览校正效果（不保存，返回临时区状态）"""
     data = request.get_json(silent=True) or {}
     category = data.get('category', '')
     name = data.get('name', '')
@@ -4729,16 +4711,122 @@ def api_peiyi_correct():
 
     try:
         import peiyi_correct
-        result = peiyi_correct.correct_mask(
-            str(fp), click_x, click_y, mode=mode
-        )
+        result = peiyi_correct.preview_correction(str(fp), click_x, click_y, mode=mode)
         if result.get('ok'):
             return jsonify(result)
-        else:
-            return jsonify(result), 400
+        return jsonify(result), 400
     except Exception as e:
         import traceback as _tb
         _tb.print_exc()
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
+
+
+@app.route('/api/peiyi/correct_confirm', methods=['POST'])
+def api_peiyi_correct_confirm():
+    """确认临时遮罩并归档为新版本"""
+    data = request.get_json(silent=True) or {}
+    category = data.get('category', '')
+    name = data.get('name', '')
+
+    if category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    safe = os.path.basename(name)
+    d = PEIYI_CATEGORIES[category]
+    fp = d / safe
+    if not fp.exists():
+        return jsonify({'ok': False, 'error': '文件不存在'}), 404
+
+    try:
+        import peiyi_correct
+        result = peiyi_correct.confirm_correction(str(fp))
+        if result.get('ok'):
+            return jsonify(result)
+        return jsonify(result), 400
+    except Exception as e:
+        import traceback as _tb
+        _tb.print_exc()
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
+
+
+@app.route('/api/peiyi/correct_cancel', methods=['POST'])
+def api_peiyi_correct_cancel():
+    """放弃临时修改"""
+    data = request.get_json(silent=True) or {}
+    category = data.get('category', '')
+    name = data.get('name', '')
+
+    if category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    safe = os.path.basename(name)
+    d = PEIYI_CATEGORIES[category]
+    fp = d / safe
+    if not fp.exists():
+        return jsonify({'ok': False, 'error': '文件不存在'}), 404
+
+    try:
+        import peiyi_correct
+        result = peiyi_correct.cancel_correction(str(fp))
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
+
+
+@app.route('/api/peiyi/correct_check', methods=['POST'])
+def api_peiyi_correct_check():
+    """检查是否有未确认的临时修改"""
+    data = request.get_json(silent=True) or {}
+    category = data.get('category', '')
+    name = data.get('name', '')
+
+    if category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    safe = os.path.basename(name)
+    d = PEIYI_CATEGORIES[category]
+    fp = d / safe
+    if not fp.exists():
+        return jsonify({'ok': False, 'error': '文件不存在'}), 404
+
+    try:
+        import peiyi_correct
+        result = peiyi_correct.check_working_status(str(fp))
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
+
+
+@app.route('/api/peiyi/working_file/<category>/<stem>/<path:filename>')
+def api_peiyi_working_file(category, stem, filename):
+    """提供 _working 临时目录的预览图"""
+    if category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    safe = os.path.basename(filename)
+    fp = PEIYI_CATEGORIES[category] / "_mask_versions" / stem / "_working" / safe
+    if not fp.exists():
+        return jsonify({'ok': False, 'error': '文件不存在'}), 404
+    return send_file(str(fp))
+
+
+@app.route('/api/peiyi/delete_version', methods=['POST'])
+def api_peiyi_delete_version():
+    """删除指定版本（不能删除当前正在使用的版本）"""
+    data = request.get_json(silent=True) or {}
+    category = data.get('category', '')
+    stem = data.get('stem', '')
+    version = data.get('version', '')
+
+    if category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    if not stem or not version:
+        return jsonify({'ok': False, 'error': '缺少 stem 或 version'}), 400
+
+    d = PEIYI_CATEGORIES[category]
+    try:
+        import peiyi_correct
+        result = peiyi_correct.delete_version(d, stem, version)
+        if result.get('ok'):
+            return jsonify(result)
+        return jsonify(result), 400
+    except Exception as e:
         return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
 
 
