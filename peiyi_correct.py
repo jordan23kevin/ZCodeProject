@@ -393,10 +393,24 @@ def import_manual_mask(image_path: str | Path) -> dict:
     ai_body = np.array(Image.open(ai_body_path)) > 128 if ai_body_path.exists() else np.zeros((img_h, img_w), dtype=bool)
     person_mask = ai_body | ai_occ
 
-    # 4. 合并：用户画的最准，保留像素级精度；
-    #    AI 遮挡物缩小 3px 去掉生成时的膨胀，只在用户没画的区域用
-    ai_occ_shrunk = ndi.binary_erosion(ai_occ, iterations=3)
-    final_occ = user_paint | (ai_occ_shrunk & ~user_paint)
+    # 4. 合并：用户画的区域优先。
+    #    关键：找出被用户画笔「触碰」到的 AI 连通域，
+    #    整块用用户精确轮廓替换，不让 AI 粗糙边缘污染。
+    lab_u, nu = ndi.label(user_paint)
+    lab_a, na = ndi.label(ai_occ)
+
+    # 被用户画笔触碰到的 AI 连通域标签
+    touched = set()
+    for uid in range(1, nu + 1):
+        u_comp = lab_u == uid
+        ai_here = set(int(x) for x in np.unique(lab_a[u_comp]) if x > 0)
+        touched.update(ai_here)
+
+    # 重建：用户画的原样保留；AI 没被碰到的保留；被碰到的整块换成用户画的
+    final_occ = user_paint.copy()
+    for label in range(1, na + 1):
+        if label not in touched:
+            final_occ = final_occ | (lab_a == label)
     final_body = person_mask & (~final_occ)
 
     # 5. 保存
