@@ -22,7 +22,10 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 import time
+import shutil
+import datetime
 import threading
 from pathlib import Path
 from typing import Tuple, Optional
@@ -43,8 +46,8 @@ from transformers import AutoModelForImageSegmentation
 # ---------------------------------------------------------------------------
 # 配置常量
 # ---------------------------------------------------------------------------
-VERSION = "1.3.1"              # 2026-07-13：前景扩展包住手持物(杯子/杯盖) + 放宽refine防误伤杯子/头发，
-                             # 修复白W3戒指/杯底、白W2杯盖/发丝漏遮挡。v1.3 放宽小遮挡物清理阈值+配件回收
+VERSION = "1.4.0"              # 2026-07-13：接入「版本归档 + 评分」(score.json)，每次生成自动存 vNNN，
+                             # 可对比改好/改坏、一键退回。v1.3.1 前景扩展包住手持物+放宽refine防误伤
 MODEL_NAME = "ZhengPeng7/BiRefNet"
 BIR_NET_INPUT_SIZE = (1024, 1024)
 NORMALIZE_MEAN = [0.485, 0.456, 0.406]
@@ -97,6 +100,10 @@ SUFFIX_OCCLUDER_MASK = "occluder_mask.png"
 SUFFIX_OCCLUDER = "occluder.png"
 SUFFIX_PARSE = "parse.png"
 SUFFIX_ALPHA = "alpha.png"
+
+# 版本归档：每次生成把结果复制到 <素材目录>/<该目录名>/<stem>/vNNN/，并写 score.json。
+# 标准路径(*_occluder.png 等)始终是最新版，生产贴图不受影响。
+VERSION_DIRNAME = "_mask_versions"
 
 # ---------------------------------------------------------------------------
 # 模型单例（bridge 进程内只加载一次）
@@ -453,6 +460,112 @@ def _refine_occluder_mask(
 
 
 # ---------------------------------------------------------------------------
+# 评分 + 版本归档（接入「数字孪生」蓝图的好点子；任何异常都不阻断遮罩生成）
+# ---------------------------------------------------------------------------
+def _compute_mask_score(body_mask, occluder_mask, person_mask, info, img_h, img_w):
+    """根据遮罩客观指标打一个 0-100 的启发式分数 + 标记已知坏情况。
+
+    分数用于「同一胚衣跨版本对比」（这次改好了还是改坏了），不是绝对质量标准。
+    返回 (score, metrics, flags)。
+    """
+    score = 100.0
+    flags = []
+    person_n = int(person_mask.sum())
+    body_n = int(body_mask.sum())
+    occ_n = int(occluder_mask.sum())
+    img_n = max(1, img_h * img_w)
+    occ_ratio = (occ_n / person_n) if person_n > 0 else 0.0
+    body_cov = body_n / img_n
+    is_person = bool(info.get("is_person", False)) or person_n > 10000
+
+    if body_n == 0:
+        score -= 60
+        flags.append("no_shirt_body")
+
+    flat_lay = occ_ratio < 0.01          # 几乎无遮挡 = 平铺/纯白底（正常）
+    if flat_lay:
+        if occ_ratio > 0.05:             # 平铺却被识别出较多遮挡 = 误识别
+            score -= 30
+            flags.append("flatlay_over_occluded")
+    else:
+        if occ_ratio > 0.6:              # 模特图遮挡过多 = 把衣服也吃掉了
+            score -= 25
+            flags.append("occluder_too_much")
+        elif occ_ratio < 0.01:           # 有模特却几乎没遮挡 = 漏了手/头发/杯子
+            score -= 20
+            flags.append("occluder_too_little")
+
+    if body_cov < 0.02:
+        score -= 20
+        flags.append("shirt_too_small")
+    elif body_cov > 0.85:
+        score -= 15
+        flags.append("shirt_too_large")
+
+    score = max(0.0, min(100.0, score))
+    metrics = {
+        "is_person": is_person,
+        "flat_lay": flat_lay,
+        "person_px": person_n,
+        "body_px": body_n,
+        "occluder_px": occ_n,
+        "occ_ratio": round(occ_ratio, 4),
+        "body_coverage": round(body_cov, 4),
+    }
+    return round(score, 1), metrics, flags
+
+
+def _archive_mask_version(out_dir, stem, saved_files, score, metrics, flags):
+    """把本次生成的遮罩结果归档为一个版本 vNNN，并写 score.json + history.json。
+
+    saved_files: dict[str, Path] 已落到标准路径的文件。返回版本号字符串或 None。
+    """
+    try:
+        vroot = Path(out_dir) / VERSION_DIRNAME / stem
+        vroot.mkdir(parents=True, exist_ok=True)
+
+        def _vnum(p):
+            try:
+                return int(p.name[1:])
+            except Exception:
+                return 0
+
+        existing = [p for p in vroot.glob("v*") if p.is_dir()]
+        next_n = (max([_vnum(p) for p in existing]) + 1) if existing else 1
+        vdir = vroot / f"v{next_n:03d}"
+        vdir.mkdir(parents=True, exist_ok=True)
+
+        for _name, p in saved_files.items():
+            p = Path(p)
+            if p.exists():
+                shutil.copy2(p, vdir / p.name)
+
+        score_obj = {
+            "version": f"v{next_n:03d}",
+            "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+            "algorithm_version": VERSION,
+            "score": score,
+            "metrics": metrics,
+            "flags": flags,
+        }
+        (vdir / "score.json").write_text(
+            json.dumps(score_obj, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        hist_path = vroot / "history.json"
+        try:
+            history = json.loads(hist_path.read_text(encoding="utf-8")) if hist_path.exists() else []
+        except Exception:
+            history = []
+        history.append(score_obj)
+        hist_path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+        (vroot / "latest.txt").write_text(f"v{next_n:03d}", encoding="utf-8")
+        return f"v{next_n:03d}"
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # 对外主入口
 # ---------------------------------------------------------------------------
 def generate_masks(
@@ -554,6 +667,22 @@ def generate_masks(
         Image.fromarray(parse_vis).save(parse_path, "PNG")
         Image.fromarray((alpha * 255).astype(np.uint8)).save(alpha_path, "PNG")
 
+        # ---- 版本归档 + 评分（任何异常都不阻断遮罩生成）----
+        score_val, metrics, flags = _compute_mask_score(
+            body_mask, occluder_mask, person_mask, info, arr.shape[0], arr.shape[1]
+        )
+        ver = _archive_mask_version(
+            out_dir, stem,
+            {
+                "occluder": occluder_path,
+                "occluder_mask": occluder_mask_path,
+                "body_mask": body_mask_path,
+                "parse": parse_path,
+                "alpha": alpha_path,
+            },
+            score_val, metrics, flags,
+        )
+
         is_person = info.get("is_person", False) or int(person_mask.sum()) > 10000
         return {
             "ok": True,
@@ -566,6 +695,9 @@ def generate_masks(
             "is_person": bool(is_person),
             "body_px": int(body_mask.sum()),
             "occluder_px": int(occluder_mask.sum()),
+            "score": score_val,
+            "score_flags": flags,
+            "version": ver,
             "elapsed": round(time.time() - t0, 2),
             "info": info,
         }
