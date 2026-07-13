@@ -81,6 +81,29 @@
   .legend{display:flex;gap:18px;flex-wrap:wrap;margin:0 0 14px;font-size:13px;color:#ccc}
   .legend span{display:inline-flex;align-items:center;gap:6px}
   .sw{width:14px;height:14px;border-radius:3px;display:inline-block}
+  /* 评分总表 */
+  .scorecard{background:#252525;border:1px solid #444;border-radius:10px;padding:16px 20px;max-width:2500px;margin:0 auto 28px}
+  .scorecard .sc-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+  .scorecard .sc-title{font-size:20px;font-weight:700;color:#fff}
+  .scorecard .sc-sub{font-size:13px;color:#9aa0a6}
+  .scorecard .sc-legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:#bbb}
+  .scorecard .sc-legend i{width:12px;height:12px;border-radius:3px;display:inline-block;margin-right:5px;vertical-align:-1px}
+  .scoretable-wrap{max-height:340px;overflow-y:auto;border:1px solid #333;border-radius:8px}
+  table.scoretable{width:100%;border-collapse:collapse;font-size:14px}
+  table.scoretable th,table.scoretable td{padding:9px 12px;text-align:left;border-bottom:1px solid #2e2e2e;white-space:nowrap}
+  table.scoretable th{position:sticky;top:0;background:#1f1f1f;color:#bbb;font-weight:600;z-index:2}
+  table.scoretable tbody tr:hover{background:#2a2a2a}
+  table.scoretable td.cat{color:#9aa0a6;font-size:12px}
+  table.scoretable td.name{font-weight:600;color:#eee}
+  table.scoretable .score{font-weight:700;text-align:center}
+  table.scoretable tr.s-good .score{color:#7ee787}
+  table.scoretable tr.s-warn .score{color:#ffd866}
+  table.scoretable tr.s-bad{background:#3a1414}
+  table.scoretable tr.s-bad .score{color:#ff6b6b}
+  table.scoretable tr.s-none .score{color:#666}
+  table.scoretable .flag{display:inline-block;background:#5a2a2a;color:#ffb3b3;font-size:11px;border-radius:4px;padding:1px 6px;margin-left:4px}
+  table.scoretable .ver{color:#888;font-size:12px}
+  .score-empty{color:#666;font-size:14px;padding:16px;text-align:center}
 </style>
 </head>
 <body>
@@ -90,6 +113,33 @@
 <div class="toolbar">
   <button class="btn-blue" onclick="refreshAll()">🔄 刷新全部</button>
   <button onclick="location.href='/'" title="返回主面板">🏠 主面板</button>
+</div>
+
+<!-- 评分总表：一眼看清所有胚衣最新遮罩评分，低分标红 -->
+<div class="scorecard">
+  <div class="sc-head">
+    <div>
+      <div class="sc-title">📊 遮罩评分总表</div>
+      <div class="sc-sub">每次「生成遮罩」自动打分 · 低分=可能有遮挡问题 · 点行可预览遮罩</div>
+    </div>
+    <div class="sc-legend">
+      <span><i style="background:#7ee787"></i>好 ≥90</span>
+      <span><i style="background:#ffd866"></i>一般 70-89</span>
+      <span><i style="background:#ff6b6b"></i>差 &lt;70</span>
+      <span><i style="background:#666"></i>未生成</span>
+      <button class="mini" onclick="refreshScores()">🔄 刷新评分</button>
+    </div>
+  </div>
+  <div class="scoretable-wrap">
+    <table class="scoretable">
+      <thead>
+        <tr><th>分类</th><th>胚衣</th><th>评分</th><th>遮挡占比</th><th>衣服覆盖</th><th>版本</th><th>更新时间</th><th>提示</th></tr>
+      </thead>
+      <tbody id="scoreBody">
+        <tr><td colspan="8" class="score-empty">加载中…</td></tr>
+      </tbody>
+    </table>
+  </div>
 </div>
 
 <div class="grid" id="grid"></div>
@@ -398,8 +448,77 @@ window.addEventListener('click', function(e){
   if(e.target===m) closeModal();
 });
 
+// ============ 遮罩评分总表 ============
+function scoreClass(r){
+  if(!r.has_score || r.score==null) return 's-none';
+  if(r.score >= 90) return 's-good';
+  if(r.score >= 70) return 's-warn';
+  return 's-bad';
+}
+function fmtPct(v){ return (v==null)?'—':(Math.round(v*1000)/10)+'%'; }
+function fmtTime(t){ return t ? String(t).replace('T',' ').slice(0,16) : '—'; }
+
+function refreshScores(){
+  var body=document.getElementById('scoreBody');
+  body.innerHTML='<tr><td colspan="8" class="score-empty">加载中…</td></tr>';
+  fetch('/api/peiyi/scores')
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(!d.ok){ body.innerHTML='<tr><td colspan="8" class="score-empty">加载失败：'+(d.error||'')+'</td></tr>'; return; }
+      var rows=d.rows||[];
+      if(!rows.length){ body.innerHTML='<tr><td colspan="8" class="score-empty">暂无胚衣</td></tr>'; return; }
+      body.innerHTML='';
+      rows.forEach(function(r){
+        var cls=scoreClass(r);
+        var scoreTxt = (r.has_score && r.score!=null) ? r.score : '未生成';
+        var flagsHtml = (r.flags||[]).map(function(f){return '<span class="flag">'+f+'</span>';}).join('');
+        var tr=document.createElement('tr');
+        tr.className=cls;
+        tr.innerHTML =
+          '<td class="cat">'+r.category+'</td>'+
+          '<td class="name">'+r.stem+'</td>'+
+          '<td class="score">'+scoreTxt+'</td>'+
+          '<td>'+fmtPct(r.occ_ratio)+'</td>'+
+          '<td>'+fmtPct(r.body_coverage)+'</td>'+
+          '<td class="ver">'+(r.version||'—')+(r.algorithm_version?(' · v'+r.algorithm_version):'')+'</td>'+
+          '<td>'+fmtTime(r.timestamp)+'</td>'+
+          '<td>'+flagsHtml+'</td>';
+        // 点行 → 预览该胚衣遮罩
+        tr.style.cursor = r.has_score ? 'pointer' : 'default';
+        if(r.has_score){
+          tr.title='点击预览 '+r.stem+' 的遮罩';
+          tr.onclick=function(){ openMaskByStem(r.category, r.name); };
+        }
+        body.appendChild(tr);
+      });
+      // 统计一行：好/一般/差/未生成 各几个
+      var g=0,w=0,b=0,n=0;
+      rows.forEach(function(r){ var c=scoreClass(r); if(c==='s-good')g++; else if(c==='s-warn')w++; else if(c==='s-bad')b++; else n++; });
+      var sum=document.createElement('tr');
+      sum.style.background='#1b1b1b';
+      sum.innerHTML='<td colspan="8" style="color:#9aa0a6;font-size:13px">合计 '+rows.length+
+        ' 个胚衣：<span style="color:#7ee787">好 '+g+'</span> · <span style="color:#ffd866">一般 '+w+'</span> · <span style="color:#ff6b6b">差 '+b+'</span> · <span style="color:#888">未生成 '+n+'</span></td>';
+      body.appendChild(sum);
+    })
+    .catch(function(e){ body.innerHTML='<tr><td colspan="8" class="score-empty">网络错误：'+e+'</td></tr>'; });
+}
+
+// 按胚衣名打开遮罩预览：先从列表接口取该胚衣的 mask_urls，再复用 previewMask
+function openMaskByStem(category, name){
+  fetch('/api/peiyi/list?category='+encodeURIComponent(category))
+    .then(function(r){return r.json();})
+    .then(function(d){
+      var items=(d.categories&&d.categories[category])||[];
+      var it=items.find(function(x){return x.name===name;});
+      if(it && it.has_mask){ previewMask(it); }
+      else { log('['+category+'] '+name+' 暂无可预览的遮罩'); }
+    })
+    .catch(function(e){ log('打开遮罩预览失败：'+e); });
+}
+
 buildCards();
 refreshAll();
+refreshScores();
 </script>
 </body>
 </html>

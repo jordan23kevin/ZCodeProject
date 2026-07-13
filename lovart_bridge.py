@@ -4252,6 +4252,72 @@ def api_peiyi_list():
     return jsonify({'ok': True, 'categories': out})
 
 
+def _peiyi_latest_score(category_dir, stem):
+    """读取某胚衣最新一版的评分（来自 _mask_versions/<stem>/latest.txt → vNNN/score.json）。
+    返回 dict 或 None（尚无版本/读取失败）。任何异常都吞掉，绝不影响列表页。"""
+    try:
+        vroot = Path(category_dir) / "_mask_versions" / stem
+        latest_f = vroot / "latest.txt"
+        if not latest_f.exists():
+            return None
+        latest = latest_f.read_text(encoding="utf-8").strip()
+        sf = vroot / latest / "score.json"
+        if not sf.exists():
+            return None
+        import json as _json
+        data = _json.loads(sf.read_text(encoding="utf-8"))
+        m = data.get("metrics", {}) or {}
+        return {
+            "version": data.get("version", latest),
+            "timestamp": data.get("timestamp", ""),
+            "algorithm_version": data.get("algorithm_version", ""),
+            "score": data.get("score"),
+            "occ_ratio": m.get("occ_ratio"),
+            "body_coverage": m.get("body_coverage"),
+            "is_person": m.get("is_person"),
+            "flat_lay": m.get("flat_lay"),
+            "flags": data.get("flags", []) or [],
+        }
+    except Exception:
+        return None
+
+
+@app.route('/api/peiyi/scores')
+def api_peiyi_scores():
+    """汇总所有胚衣最新一版的评分（低分可一眼标红）。
+    评分在“生成遮罩”时写入 _mask_versions/<stem>/vNNN/score.json。"""
+    category = request.args.get('category', '')
+    if category and category not in PEIYI_CATEGORIES:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    cats = [category] if category else list(PEIYI_CATEGORIES.keys())
+    rows = []
+    for c in cats:
+        d = PEIYI_CATEGORIES[c]
+        if not d.exists():
+            continue
+        for fn in os.listdir(d):
+            lfn = fn.lower()
+            ext = os.path.splitext(lfn)[1]
+            if ext not in PEIYI_ALLOWED_EXT:
+                continue
+            if fn.startswith('_tmp_'):
+                continue
+            if any(lfn.endswith(s) for s in PEIYI_MASK_SUFFIXES):
+                continue
+            stem, _ = os.path.splitext(fn)
+            info = _peiyi_latest_score(d, stem)
+            row = {'category': c, 'name': fn, 'stem': stem, 'has_score': info is not None}
+            if info:
+                row.update(info)
+            rows.append(row)
+    # 排序：有分数按分数升序（低分排最前，问题胚衣一眼可见），无分数排最后
+    def _key(r):
+        sc = r.get('score')
+        return (0, sc) if (r.get('has_score') and isinstance(sc, (int, float))) else (1, 0)
+    rows.sort(key=_key)
+    return jsonify({'ok': True, 'rows': rows})
+
+
 @app.route('/api/peiyi/material/<category>/<path:filename>')
 def api_peiyi_material(category, filename):
     """返回已存素材（原图 / 遮罩侧车）。
