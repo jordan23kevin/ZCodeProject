@@ -776,10 +776,13 @@ def batch_rembg(dx_files):
     print(f"  [批量去背] 共 {len(staged)} 张, 启动美图...", flush=True)
     print(f"  ⚠ 美图将接管屏幕，请勿动键鼠，等待脚本结束。", flush=True)
     try:
+        # 注意：timeout 必须足够大。每张图美图去背约 30~60s，48 张批量约需
+        # 30~60 分钟；旧值 600s 会在 10 分钟时强制掐断大批量，导致"美图没跑完"。
+        # 这里放宽到 3 小时；单张重去背流程本就不设超时。
         proc = run_minimized(
             [sys.executable, str(MEITU_SCRIPT)],
             cwd=str(MEITU_SCRIPT.parent),
-            capture_output=True, timeout=600,
+            capture_output=True, timeout=10800,
         )
         ok = proc.returncode == 0
     except subprocess.TimeoutExpired:
