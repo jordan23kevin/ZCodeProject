@@ -393,9 +393,10 @@ def import_manual_mask(image_path: str | Path) -> dict:
     ai_body = np.array(Image.open(ai_body_path)) > 128 if ai_body_path.exists() else np.zeros((img_h, img_w), dtype=bool)
     person_mask = ai_body | ai_occ
 
-    # 4. 合并：把你画的区域直接加到遮挡物上
-    #    不加 person_mask 限制——用户画的就是该加的
-    final_occ = ai_occ | user_paint
+    # 4. 合并：用户画的最准，保留像素级精度；
+    #    AI 遮挡物缩小 3px 去掉生成时的膨胀，只在用户没画的区域用
+    ai_occ_shrunk = ndi.binary_erosion(ai_occ, iterations=3)
+    final_occ = user_paint | (ai_occ_shrunk & ~user_paint)
     final_body = person_mask & (~final_occ)
 
     # 5. 保存
