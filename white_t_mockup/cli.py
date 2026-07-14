@@ -245,8 +245,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--bt-ps-wrinkle-threshold",
         type=float,
-        default=5.0,
-        help="黑T PS 暗谷噪声阈值（默认 5）：只过滤极小噪声，保留连续暗谷深度",
+        default=2.0,
+        help="黑T PS 暗谷最小噪声阈值（默认 2，0-255 范围；低于此值的微小灰度差忽略）",
+    )
+    parser.add_argument(
+        "--bt-ps-valley-scale",
+        type=float,
+        default=30.0,
+        help="黑T PS 暗谷深度尺度（默认 30）：当暗谷灰度差达到该值时 mask=1.0，深褶印花可压到几乎全黑",
     )
     parser.add_argument(
         "--bt-ps-mask-blur",
@@ -257,8 +263,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--bt-ps-effect",
         type=float,
-        default=0.8,
-        help="黑T PS 暗谷压暗强度（默认 0.8，建议 0.6-1.0）：深谷处印花可压到接近全黑",
+        default=1.0,
+        help="黑T PS 暗谷压暗强度（默认 1.0，建议 0.6-1.0）：深谷处印花可压到接近全黑",
     )
     parser.add_argument(
         "--bt-ps-body-mask",
@@ -449,6 +455,7 @@ def main() -> None:
                 disp_mode=args.disp_mode,
                 wrinkle_sigma=args.bt_ps_wrinkle_sigma,
                 wrinkle_threshold=args.bt_ps_wrinkle_threshold,
+                valley_scale=args.bt_ps_valley_scale,
                 mask_blur=args.bt_ps_mask_blur,
                 effect_strength=args.bt_ps_effect,
                 tpl_dir=tpl_dir,

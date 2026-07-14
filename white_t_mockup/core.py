@@ -1095,9 +1095,10 @@ def apply_black_t_ps_transform(
     disp_dead_zone: float = 25.0,
     disp_mode: str = "gradient",
     wrinkle_sigma: float = 20.0,
-    wrinkle_threshold: float = 5.0,
+    wrinkle_threshold: float = 2.0,
+    valley_scale: float = 30.0,
     mask_blur: float = 3.0,
-    effect_strength: float = 0.8,
+    effect_strength: float = 1.0,
     tpl_dir: str | Path | None = None,
     occluder: str | Path | None = None,
     body_mask: str | Path | None = None,
@@ -1117,9 +1118,11 @@ def apply_black_t_ps_transform(
       3) 从衣服灰度图提取暗谷：
          valley = max(0, GaussianBlur(gray, sigma=wrinkle_sigma) - gray)，再 ^1.5 增强。
          只有当前像素比周围局部均值暗，才代表布料折进去的阴影。
-      4) 阈值(wrinkle_threshold，默认5)仅用于过滤最小噪声；
-         用连续暗谷深度作为 Mask（不做二值化），按深度自然衰减。
-      5) 高斯平滑(mask_blur=3)得极窄软 Mask，只沿褶皱线生效，不扩散到平整区。
+      4) 阈值(wrinkle_threshold，默认2)仅过滤最小噪声；
+         用固定深度尺度 valley_scale（默认30）把连续暗谷映射到 mask：
+         mask = min(valley / 30, 1)。
+         → 浅谷（valley≈10）压暗约 30%；深谷（valley≥30）可压到几乎全黑。
+      5) 高斯平滑(mask_blur=3)得极窄软 Mask，只沿褶皱线，不扩散到平整区。
       6) 仅在暗谷 Mask 区，对印花做乘法压暗：
          final = print * (1 - mask * effect_strength)
          → 平整区 mask≈0 → 100% 原色；
@@ -1191,14 +1194,12 @@ def apply_black_t_ps_transform(
         # 暗谷：当前像素比周围局部均值暗多少 → 代表布料折进去形成的阴影
         valley = np.clip(blur_gray - bg_gray, 0.0, 255.0)
         valley = np.power(valley, 1.5)                        # 增强深谷、压低浅谷
-        # 阈值只用于过滤最小噪声，不用于二值化；保留连续深度
+        # 阈值只用于过滤最小噪声（绝对灰度差，0-255 范围）
         valley = np.maximum(valley - wrinkle_threshold, 0.0)
-        # 归一化到 0..1，然后做极窄高斯平滑（只让 Mask 沿褶皱线，不扩散到平整区）
-        vmax = valley.max()
-        if vmax > 0.0:
-            m = valley / vmax
-        else:
-            m = np.zeros_like(valley)
+        # 用固定深度尺度把暗谷映射到 0..1：越深→mask 越大，深谷直接到 1.0
+        # valley_scale 是"完全折进去"的深度参照，默认 30（对应原图灰度差约 30）。
+        m = np.clip(valley / max(valley_scale, 1.0), 0.0, 1.0)
+        # 极窄高斯平滑，只让 Mask 沿褶皱线，不扩散到平整区
         m = cv2.GaussianBlur(m, (0, 0), mask_blur)
         m = np.clip(m, 0.0, 1.0)
         m = m * body_norm                                    # 只在衣服主体内生效
