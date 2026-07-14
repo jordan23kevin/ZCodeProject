@@ -261,6 +261,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="黑T PS 大褶皱区融合强度（默认 0.40，建议 0.30-0.50）",
     )
     parser.add_argument(
+        "--bt-ps-body-mask",
+        type=str,
+        default=None,
+        help="黑T PS 衣服主体 Mask（_mask_versions/<款>/v001/<款>_body_mask.png）："
+             "将其与皱褶 Mask 相乘，确保只提取衣服内部褶皱，排除背景/轮廓误判",
+    )
+    parser.add_argument(
         "--bt2-fabric-texture-opacity",
         type=float,
         default=0.10,
@@ -446,6 +453,7 @@ def main() -> None:
                 effect_strength=args.bt_ps_effect,
                 tpl_dir=tpl_dir,
                 occluder=args.occluder,
+                body_mask=args.bt_ps_body_mask,
                 blur_radius=args.blur,
             )
             mode_tag = " [BlackT PS]"

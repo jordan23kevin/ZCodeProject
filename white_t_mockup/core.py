@@ -1100,6 +1100,7 @@ def apply_black_t_ps_transform(
     effect_strength: float = 0.4,
     tpl_dir: str | Path | None = None,
     occluder: str | Path | None = None,
+    body_mask: str | Path | None = None,
     blur_radius: float = 0.4,
 ) -> dict:
     """黑T PS 风格贴图 v2（用户提案 2026-07-15 修订）：保持印花原色，仅大褶皱区局部融合。
@@ -1118,6 +1119,11 @@ def apply_black_t_ps_transform(
          final = print*(1 - mask*effect) + SoftLight(print, light)*(mask*effect)
          → 平整区 mask≈0 → 100% 原色；大褶皱区吸收衣服明暗，幅度温和不发黑。
       6) 顶层遮挡物(手/配饰)盖住印花。
+
+    衣服主体约束(body_mask)：来自 _mask_versions/<款>/v001/<款>_body_mask.png，
+    为"衣服主体白、其余黑"的灰度图，尺寸与胚衣图一致。将其归一化后与皱褶 Mask 相乘，
+    确保皱褶只提取衣服内部，排除背景、人物轮廓、衣服外缘被 Difference 误判为褶皱的问题。
+    不传 body_mask 时退化为上一版（仅阈值约束）。
     """
     design = Image.open(str(design_path)).convert("RGBA")
     design = prepare_design_for_shirt(design, "black", prepare_method)
@@ -1159,6 +1165,18 @@ def apply_black_t_ps_transform(
     if bx1 > bx0 and by1 > by0:
         import cv2
         import os
+        # ---- 衣服主体 Mask：限定皱褶只提取衣服内部，排除背景/轮廓误判 ----
+        if body_mask is not None:
+            _bm = Image.open(str(body_mask)).convert("L")
+            if _bm.size != canvas_size:
+                _bm = _bm.resize(canvas_size, Image.Resampling.LANCZOS)
+            # 二值化后做轻微腐蚀，让 body_mask 比真实衣服主体小一圈，避免边缘被 wrinkle/mask_blur 扩散
+            _bm_bin = (np.array(_bm) > 128).astype(np.uint8) * 255
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            _bm_eroded = cv2.erode(_bm_bin, kernel, iterations=1)
+            body_norm = _bm_eroded.astype(np.float32) / 255.0
+        else:
+            body_norm = np.ones((ch, cw), dtype=np.float32)
         # ---- 从衣服灰度图提取大褶皱 Mask（Difference 法）----
         bg_arr = np.array(background.convert("RGB")).astype(np.float32)
         bg_gray = 0.299 * bg_arr[..., 0] + 0.587 * bg_arr[..., 1] + 0.114 * bg_arr[..., 2]
@@ -1169,6 +1187,8 @@ def apply_black_t_ps_transform(
         m = (wrinkle > wrinkle_threshold).astype(np.float32)
         # 高斯平滑得软 Mask（0..1）
         m = cv2.GaussianBlur(m, (0, 0), mask_blur)
+        m = np.clip(m, 0.0, 1.0)
+        m = m * body_norm   # ★ 关键：只在衣服主体内生效，排除轮廓/背景
         m = np.clip(m, 0.0, 1.0)
 
         # 衣服光照场（归一化，中调=0.5 中性点；供局部 Soft Light 融合）
