@@ -779,11 +779,25 @@ def batch_rembg(dx_files):
         # 注意：timeout 必须足够大。每张图美图去背约 30~60s，48 张批量约需
         # 30~60 分钟；旧值 600s 会在 10 分钟时强制掐断大批量，导致"美图没跑完"。
         # 这里放宽到 3 小时；单张重去背流程本就不设超时。
-        proc = run_minimized(
-            [sys.executable, str(MEITU_SCRIPT)],
-            cwd=str(MEITU_SCRIPT.parent),
-            capture_output=True, timeout=10800,
-        )
+        # 关键修复：批量去背必须传 --skip-precheck，跳过 B/W 配对预检。
+        # 否则只要勾选的款里有任意一款是单面（只有 W 或只有 B），precheck_pairs
+        # 会判定"配对不完整"并直接 return，美图窗口永远不会弹出（用户报"没弹出来"）。
+        # 同时把美图脚本输出写进日志文件（之前 capture_output 把报错全吞了，无法排查）。
+        meitu_log = WB_ROOT / "_temp_rembg" / "meitu_batch.log"
+        try:
+            _lf = open(meitu_log, "w", encoding="utf-8")
+        except Exception:
+            _lf = None
+        try:
+            proc = run_minimized(
+                [sys.executable, str(MEITU_SCRIPT), "--skip-precheck"],
+                cwd=str(MEITU_SCRIPT.parent),
+                stdout=_lf, stderr=subprocess.STDOUT, timeout=10800,
+            )
+        finally:
+            if _lf is not None:
+                try: _lf.close()
+                except Exception: pass
         ok = proc.returncode == 0
     except subprocess.TimeoutExpired:
         ok = False
