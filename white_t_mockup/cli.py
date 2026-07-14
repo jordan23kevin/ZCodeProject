@@ -245,20 +245,20 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--bt-ps-wrinkle-threshold",
         type=float,
-        default=15.0,
-        help="黑T PS 褶皱阈值（默认 15）：低于此值的褶皱视为小褶皱/平整区，完全不影响印花",
+        default=5.0,
+        help="黑T PS 暗谷噪声阈值（默认 5）：只过滤极小噪声，保留连续暗谷深度",
     )
     parser.add_argument(
         "--bt-ps-mask-blur",
         type=float,
-        default=15.0,
-        help="黑T PS 褶皱 Mask 平滑 sigma（默认 15）：让局部融合边界柔和过渡",
+        default=3.0,
+        help="黑T PS 暗谷 Mask 平滑 sigma（默认 3）：越窄越只沿褶皱线，不扩散到平整区",
     )
     parser.add_argument(
         "--bt-ps-effect",
         type=float,
-        default=0.40,
-        help="黑T PS 大褶皱区融合强度（默认 0.40，建议 0.30-0.50）",
+        default=0.8,
+        help="黑T PS 暗谷压暗强度（默认 0.8，建议 0.6-1.0）：深谷处印花可压到接近全黑",
     )
     parser.add_argument(
         "--bt-ps-body-mask",

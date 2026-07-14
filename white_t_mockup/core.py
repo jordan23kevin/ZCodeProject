@@ -1095,35 +1095,42 @@ def apply_black_t_ps_transform(
     disp_dead_zone: float = 25.0,
     disp_mode: str = "gradient",
     wrinkle_sigma: float = 20.0,
-    wrinkle_threshold: float = 15.0,
-    mask_blur: float = 15.0,
-    effect_strength: float = 0.4,
+    wrinkle_threshold: float = 5.0,
+    mask_blur: float = 3.0,
+    effect_strength: float = 0.8,
     tpl_dir: str | Path | None = None,
     occluder: str | Path | None = None,
     body_mask: str | Path | None = None,
     blur_radius: float = 0.4,
 ) -> dict:
-    """黑T PS 风格贴图 v2（用户提案 2026-07-15 修订）：保持印花原色，仅大褶皱区局部融合。
+    """黑T PS 风格贴图 v3（用户提案 2026-07-15 修订）：保持印花原色，仅暗谷压暗。
 
-    关键修正：上一版把 Soft Light 应用到整张印花（整片变色），本版改为
-    「Difference 提取褶皱 → 阈值滤除小褶皱 → 软 Mask → 仅在大褶皱区做局部明暗融合」。
-    平整区/小褶皱完全保留原色，无黑斑、无整体偏色。
+    关键修正：上一版用 |gray - blur| 提取全梯度，Mask 会扩散到平整区，
+    导致"挨着褶皱但本身平整"的位置也被提亮/压暗。本版改为：
+    「只提取折进去的暗谷（dark valley）→ 小噪声阈值 → 极窄软 Mask →
+      仅在暗谷处按深度乘法压暗印花」。
+    平整区/小褶皱/亮褶 100% 保留原色，无黑斑、无整体偏色。
 
     流程：
-      1) 轻位移(gradient, 5-10px)：大褶皱把印花"裹"上去，仅几何、不动色。
+      1) 轻位移(gradient)：大褶皱把印花"裹"上去，仅几何、不动色。
       2) Normal 100% 粘贴（原色贴，无色差）。
-      3) 从衣服灰度图提取褶皱：
-         wrinkle = |gray - GaussianBlur(gray, sigma=wrinkle_sigma)|，再 ^1.5 增强。
-      4) 阈值(wrinkle_threshold，默认15)滤掉小褶皱 → 仅大褶皱保留；高斯平滑(mask_blur)得软 Mask。
-      5) 仅在大褶皱 Mask 区，把衣服光照场(归一化)以 Soft Light 融进印花：
-         final = print*(1 - mask*effect) + SoftLight(print, light)*(mask*effect)
-         → 平整区 mask≈0 → 100% 原色；大褶皱区吸收衣服明暗，幅度温和不发黑。
-      6) 顶层遮挡物(手/配饰)盖住印花。
+      3) 从衣服灰度图提取暗谷：
+         valley = max(0, GaussianBlur(gray, sigma=wrinkle_sigma) - gray)，再 ^1.5 增强。
+         只有当前像素比周围局部均值暗，才代表布料折进去的阴影。
+      4) 阈值(wrinkle_threshold，默认5)仅用于过滤最小噪声；
+         用连续暗谷深度作为 Mask（不做二值化），按深度自然衰减。
+      5) 高斯平滑(mask_blur=3)得极窄软 Mask，只沿褶皱线生效，不扩散到平整区。
+      6) 仅在暗谷 Mask 区，对印花做乘法压暗：
+         final = print * (1 - mask * effect_strength)
+         → 平整区 mask≈0 → 100% 原色；
+         → 浅暗谷轻微压暗；
+         → 深暗谷可以压到几乎全黑（模拟布料折进去后印花被遮挡）。
+      7) 顶层遮挡物(手/配饰)盖住印花。
 
     衣服主体约束(body_mask)：来自 _mask_versions/<款>/v001/<款>_body_mask.png，
-    为"衣服主体白、其余黑"的灰度图，尺寸与胚衣图一致。将其归一化后与皱褶 Mask 相乘，
-    确保皱褶只提取衣服内部，排除背景、人物轮廓、衣服外缘被 Difference 误判为褶皱的问题。
-    不传 body_mask 时退化为上一版（仅阈值约束）。
+    为"衣服主体白、其余黑"的灰度图，尺寸与胚衣图一致。将其归一化并腐蚀内缩后
+    与暗谷 Mask 相乘，确保效果只作用于衣服内部真实褶皱，排除背景、人物轮廓、
+    衣服外缘被误判为褶皱的问题。不传 body_mask 时退化为仅阈值约束。
     """
     design = Image.open(str(design_path)).convert("RGBA")
     design = prepare_design_for_shirt(design, "black", prepare_method)
@@ -1177,36 +1184,36 @@ def apply_black_t_ps_transform(
             body_norm = _bm_eroded.astype(np.float32) / 255.0
         else:
             body_norm = np.ones((ch, cw), dtype=np.float32)
-        # ---- 从衣服灰度图提取大褶皱 Mask（Difference 法）----
+        # ---- 从衣服灰度图提取暗谷（Dark Valley）：只认折进去的阴影 ----
         bg_arr = np.array(background.convert("RGB")).astype(np.float32)
         bg_gray = 0.299 * bg_arr[..., 0] + 0.587 * bg_arr[..., 1] + 0.114 * bg_arr[..., 2]
         blur_gray = cv2.GaussianBlur(bg_gray, (0, 0), wrinkle_sigma)
-        wrinkle = np.abs(bg_gray - blur_gray)
-        wrinkle = np.power(np.clip(wrinkle, 0.0, 255.0), 1.5)  # 增强大褶皱、压低小褶皱
-        # 阈值过滤小褶皱（仅保留大褶皱）
-        m = (wrinkle > wrinkle_threshold).astype(np.float32)
-        # 高斯平滑得软 Mask（0..1）
+        # 暗谷：当前像素比周围局部均值暗多少 → 代表布料折进去形成的阴影
+        valley = np.clip(blur_gray - bg_gray, 0.0, 255.0)
+        valley = np.power(valley, 1.5)                        # 增强深谷、压低浅谷
+        # 阈值只用于过滤最小噪声，不用于二值化；保留连续深度
+        valley = np.maximum(valley - wrinkle_threshold, 0.0)
+        # 归一化到 0..1，然后做极窄高斯平滑（只让 Mask 沿褶皱线，不扩散到平整区）
+        vmax = valley.max()
+        if vmax > 0.0:
+            m = valley / vmax
+        else:
+            m = np.zeros_like(valley)
         m = cv2.GaussianBlur(m, (0, 0), mask_blur)
         m = np.clip(m, 0.0, 1.0)
-        m = m * body_norm   # ★ 关键：只在衣服主体内生效，排除轮廓/背景
+        m = m * body_norm                                    # 只在衣服主体内生效
         m = np.clip(m, 0.0, 1.0)
-
-        # 衣服光照场（归一化，中调=0.5 中性点；供局部 Soft Light 融合）
-        light = _normalize_lighting(bg_gray / 255.0)
 
         region = transformed.crop((bx0 - paste_x, by0 - paste_y, bx1 - paste_x, by1 - paste_y)).convert("RGBA")
         rarr = np.array(region).astype(np.float32)
         alpha = rarr[:, :, 3:4] / 255.0
         rgb = rarr[:, :, :3] / 255.0
+        m_crop = m[by0:by1, bx0:bx1][..., None]              # (rh, rw, 1) 暗谷软 Mask
 
-        m_crop = m[by0:by1, bx0:bx1][..., None]          # (rh, rw, 1) 大褶皱软 Mask
-        light_crop = light[by0:by1, bx0:bx1][..., None]  # (rh, rw, 1) 衣服光照场
-
-        # 局部明暗融合：仅在大褶皱 Mask 区，让印花亮度跟随衣服明暗（保留色相，不发黑/不变色）
-        # 比 Soft Light 更强且可控：亮褶提亮、暗褶压暗，三通道同量偏移 → 色相保持、褶皱感明显。
-        shade = light_crop - 0.5                          # 亮褶>0 提亮，暗褶<0 压暗
-        amt = m_crop * effect_strength                    # 局部融合强度 0..effect_strength
-        rgb2 = rgb + shade * amt * 2.0                    # 2.0 = 强度系数（配合 effect 控制整体幅度）
+        # 局部压暗：仅在暗谷 Mask 区按深度乘法压暗印花（不提亮、不变色）
+        # 褶皱越深 → mask 越大 → 印花越暗；深谷可压到接近全黑，模拟折进去被遮挡。
+        occlusion = m_crop * effect_strength                   # 0..effect_strength 遮挡比例
+        rgb2 = rgb * (1.0 - np.clip(occlusion, 0.0, 1.0))     # 只压暗，平整区 mask=0 则完全不变
         rgb2 = np.clip(rgb2, 0.0, 1.0)
 
         # 仅不透明像素生效；透明底/平整区(mask≈0)保持原色
