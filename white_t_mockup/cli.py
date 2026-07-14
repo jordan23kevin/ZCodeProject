@@ -17,7 +17,7 @@ from .config import (
     get_preset,
     list_presets,
 )
-from .core import apply_mockup, apply_mockup_transform
+from .core import apply_mockup, apply_mockup_transform, apply_black_t_v2_transform, apply_black_t_ps_transform
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -221,6 +221,44 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.0,
         help="褶皱折入区域最低可见度（0=可完全隐藏；黑衫建议 0.25，防止露出黑底形成黑斑）",
     )
+    # ---- Black T Print Engine v2.0 ----
+    parser.add_argument(
+        "--black-t-v2",
+        action="store_true",
+        help="启用黑T v2 渲染引擎：关闭 occlusion alpha，频率分离大/小褶皱，"
+             "高光转移 + 柔和阴影 + 限制布料压暗，模拟印花长在黑布里",
+    )
+    # ---- Black T PS 风格（用户提案 2026-07-15）----
+    parser.add_argument(
+        "--black-t-ps",
+        action="store_true",
+        help="黑T PS 风格：Normal 100% + Soft Light 布料光影 + Blend If 高光提亮 + 轻位移"
+             "（设计图须为已反相黑衫版 _黑*_cut.png）",
+    )
+    parser.add_argument(
+        "--bt-ps-soft-light",
+        type=float,
+        default=0.25,
+        help="黑T PS 的 Soft Light 布料光影强度（默认 0.25，建议 0.20-0.35）",
+    )
+    parser.add_argument(
+        "--bt-ps-blend-if",
+        type=float,
+        default=0.25,
+        help="黑T PS 的 Blend If 高光提亮强度（默认 0.25；0 关闭）",
+    )
+    parser.add_argument(
+        "--bt2-fabric-texture-opacity",
+        type=float,
+        default=0.10,
+        help="黑T v2 小纹理/布纹材质感强度（默认 0.10，0 关闭）",
+    )
+    parser.add_argument(
+        "--bt2-max-darkening",
+        type=float,
+        default=0.10,
+        help="黑T v2 布料同步明度最大压暗幅度（默认 0.10，即最多压暗 10%）",
+    )
     # ---- 布料同步明度（印花与布料同光同暗，H/S 零偏差）----
     parser.add_argument(
         "--no-fabric-shading",
@@ -346,38 +384,89 @@ def main() -> None:
         if missing:
             parser.error(f"新版方法缺少参数（请在 CSV 补齐「缩放后宽px/缩放后高px」）: {missing}")
 
-        result = apply_mockup_transform(
-            design_path=args.design,
-            output_path=args.output,
-            template_path=template_path,
-            final_w=final_w,
-            final_h=final_h,
-            rotation_degrees=rotate,
-            effective_top_y=top,
-            effective_center_x=center,
-            blend_mode=blend_mode,
-            quality=quality,
-            shirt_color=shirt_color,
-            prepare_method=prepare_method,
-            realism=not args.no_realism and not args.preserve_color,
-            blur_radius=args.blur,
-            texture_opacity=args.texture_opacity,
-            tpl_dir=tpl_dir,
-            disp_strength=args.disp_strength,
-            disp_smooth=args.disp_smooth,
-            disp_dead_zone=args.disp_dead_zone,
-            disp_mode=args.disp_mode,
-            saturation=saturation,
-            brightness=brightness,
-            shadow_opacity=shadow_opacity,
-            highlight_opacity=highlight_opacity,
-            occluder=args.occluder,
-            occlusion_strength=args.occlusion_strength,
-            occlusion_min_visibility=args.occlusion_min_vis,
-            fabric_shading=not args.no_fabric_shading,
-            shading_blur=args.shading_blur,
-        )
-        mode_tag = " [保色]" if args.preserve_color else ""
+        if args.black_t_v2:
+            # 黑T v2 强制 normal 混合，multiply 会把印花压进黑底
+            result = apply_black_t_v2_transform(
+                design_path=args.design,
+                output_path=args.output,
+                template_path=template_path,
+                final_w=final_w,
+                final_h=final_h,
+                rotation_degrees=rotate,
+                effective_top_y=top,
+                effective_center_x=center,
+                blend_mode=None,
+                quality=quality,
+                prepare_method=prepare_method,
+                realism=not args.no_realism and not args.preserve_color,
+                blur_radius=args.blur,
+                disp_strength=args.disp_strength,
+                disp_smooth=args.disp_smooth,
+                disp_dead_zone=args.disp_dead_zone,
+                fabric_texture_opacity=args.bt2_fabric_texture_opacity,
+                highlight_opacity=highlight_opacity,
+                shadow_opacity=shadow_opacity,
+                max_darkening=args.bt2_max_darkening,
+                occluder=args.occluder,
+                shading_blur=args.shading_blur,
+            )
+            mode_tag = " [BlackT v2]"
+        elif args.black_t_ps:
+            result = apply_black_t_ps_transform(
+                design_path=args.design,
+                output_path=args.output,
+                template_path=template_path,
+                final_w=final_w,
+                final_h=final_h,
+                rotation_degrees=rotate,
+                effective_top_y=top,
+                effective_center_x=center,
+                quality=quality,
+                prepare_method="unpremultiply",
+                disp_strength=args.disp_strength,
+                disp_smooth=args.disp_smooth,
+                disp_dead_zone=args.disp_dead_zone,
+                disp_mode=args.disp_mode,
+                soft_light_opacity=args.bt_ps_soft_light,
+                blend_if_strength=args.bt_ps_blend_if,
+                tpl_dir=tpl_dir,
+                occluder=args.occluder,
+                blur_radius=args.blur,
+            )
+            mode_tag = " [BlackT PS]"
+        else:
+            result = apply_mockup_transform(
+                design_path=args.design,
+                output_path=args.output,
+                template_path=template_path,
+                final_w=final_w,
+                final_h=final_h,
+                rotation_degrees=rotate,
+                effective_top_y=top,
+                effective_center_x=center,
+                blend_mode=blend_mode,
+                quality=quality,
+                shirt_color=shirt_color,
+                prepare_method=prepare_method,
+                realism=not args.no_realism and not args.preserve_color,
+                blur_radius=args.blur,
+                texture_opacity=args.texture_opacity,
+                tpl_dir=tpl_dir,
+                disp_strength=args.disp_strength,
+                disp_smooth=args.disp_smooth,
+                disp_dead_zone=args.disp_dead_zone,
+                disp_mode=args.disp_mode,
+                saturation=saturation,
+                brightness=brightness,
+                shadow_opacity=shadow_opacity,
+                highlight_opacity=highlight_opacity,
+                occluder=args.occluder,
+                occlusion_strength=args.occlusion_strength,
+                occlusion_min_visibility=args.occlusion_min_vis,
+                fabric_shading=not args.no_fabric_shading,
+                shading_blur=args.shading_blur,
+            )
+            mode_tag = " [保色]" if args.preserve_color else ""
         print(
             f"已保存: {args.output}  尺寸: {result['output_size']}  混合模式: {result['blend_mode']}{mode_tag}"
         )
@@ -388,6 +477,9 @@ def main() -> None:
         if result.get("template_pipeline"):
             _occ = " + occlusion(褶皱隐藏)" if result.get("occlusion_applied") else ""
             print(f"模板管线: displacement + shadow/highlight{_occ}  (tpl_dir={tpl_dir})")
+        if result.get("black_t_v2"):
+            print(f"BlackT v2: disp_smooth={args.disp_smooth}, texture={args.bt2_fabric_texture_opacity}, "
+                  f"highlight={highlight_opacity}, shadow={shadow_opacity}, max_darkening={args.bt2_max_darkening}")
     else:
         top = args.top_y if args.top_y is not None else params.get("top_y", DEFAULT_TOP_Y)
         center = args.center_x if args.center_x is not None else params.get("center_x", DEFAULT_CENTER_X)

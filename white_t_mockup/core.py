@@ -60,6 +60,7 @@ except ImportError:  # pragma: no cover - 离线环境无 psd_tools
     PSDImage = None
 
 from .config import DEFAULT_BLEND_MODE, SUPPORTED_BLEND_MODES
+from . import black_fabric
 
 # ---- PS 缩放复现（final 像素模型）----
 # 每款在 CSV 直接填贴图最终像素「缩放后宽px/缩放后高px」（PS 里贴图层缩放后的 final_w/final_h），
@@ -907,6 +908,303 @@ def apply_mockup_transform(
         "template_pipeline": use_tpl,
         "occluder_applied": occluder is not None,
         "occlusion_applied": used_occlusion,
+    }
+
+
+def apply_black_t_v2_transform(
+    design_path: str | Path,
+    output_path: str | Path,
+    template_path: str | Path,
+    final_w: int,
+    final_h: int,
+    rotation_degrees: float,
+    effective_top_y: int,
+    effective_center_x: int,
+    blend_mode: str | None = None,
+    quality: int = 95,
+    prepare_method: Literal["value_invert", "silhouette", "none", "dark_boost", "white_underbase", "matting", "unpremultiply"] = "white_underbase",
+    realism: bool = True,
+    saturation: float = 0.97,
+    brightness: float = 1.0,
+    blur_radius: float = 0.4,
+    tpl_dir: str | Path | None = None,
+    disp_strength: float = 8.0,
+    disp_smooth: float = 120.0,
+    disp_dead_zone: float = 25.0,
+    fabric_texture_opacity: float = 0.10,
+    highlight_opacity: float = 0.22,
+    shadow_opacity: float = 0.12,
+    max_darkening: float = 0.10,
+    occluder: str | Path | None = None,
+    shading_blur: float = 4.0,
+) -> dict:
+    """
+    Black T Print Engine v2.0 —— 黑T专用渲染链。
+
+    核心变化（用户规范 2026-07-14）：
+      - 删除 occlusion alpha（黑T流程不再用它隐藏印花，避免黑斑）。
+      - 频率分离：大褶皱只进 displacement（几何），小纹理只给材质感（≤10%）。
+      - 高光转移：把布料高光以 Screen 方式叠到印花上，提升“长在布里”的质感。
+      - 柔和阴影：不用 Multiply，改用有限压暗（≤15%），避免黑上加黑。
+      - 布料同步明度限制最大压暗幅度（max_darkening 默认 10%）。
+    """
+    design = Image.open(str(design_path)).convert("RGBA")
+    # 黑T v2 默认做白墨打底显色；用户可传 prepare_method 覆盖
+    design = prepare_design_for_shirt(design, "black", prepare_method)
+    background, foreground, fg_position, canvas_size = load_any_template(template_path)
+
+    occluder_im = None
+    if occluder is not None:
+        occluder_im = Image.open(str(occluder)).convert("RGBA")
+        if occluder_im.size != canvas_size:
+            occluder_im = occluder_im.resize(canvas_size, Image.Resampling.LANCZOS)
+
+    transformed = apply_transform_ps(design, final_w, final_h, rotation_degrees)
+    paste_x, paste_y, effective_bbox = calculate_effective_position(
+        transformed, effective_top_y, effective_center_x
+    )
+
+    # ---- 1. 黑T布料分析（频率分离） ----
+    fabric = black_fabric.analyze_black_fabric(background, blur_large=25.0)
+
+    # ---- 2. 大褶皱只影响几何：从低频图生成 disp 并做 displacement ----
+    disp_im = black_fabric.make_disp_from_large(fabric["large"], contrast=4.0)
+    # 需要一张 mask 占位（全白，让 displacement 应用到整个设计图区域）
+    mask_im = Image.new("L", canvas_size, 255)
+    transformed = apply_displacement(
+        transformed, disp_im, mask_im, paste_x, paste_y,
+        strength=disp_strength, smooth=disp_smooth, dead_zone=disp_dead_zone,
+        mask_feather=0, occluder=occluder_im, disp_mode="gradient",
+    )
+
+    # ---- 3. 真实感处理（微降饱和、边缘柔化） ----
+    if realism:
+        transformed = apply_realism(
+            transformed, saturation=saturation, brightness=brightness, blur_radius=blur_radius
+        )
+
+    # ---- 4. 布料同步明度：限制最大压暗幅度 ----
+    shading_field = _compute_fabric_shading_field(
+        background, transformed, paste_x, paste_y, occluder_im
+    )
+    transformed = black_fabric.limit_fabric_shading_for_black(
+        transformed, shading_field, paste_x, paste_y,
+        smooth=shading_blur, max_darkening=max_darkening,
+    )
+
+    # ---- 5. 小纹理只给材质感（≤10%） ----
+    if fabric_texture_opacity > 0:
+        transformed = black_fabric.apply_black_texture(
+            transformed, fabric["texture"], paste_x, paste_y,
+            opacity=fabric_texture_opacity,
+        )
+
+    # ---- 6. 高光转移（Screen，模拟反光凸起） ----
+    if highlight_opacity > 0:
+        transformed = black_fabric.apply_black_highlight(
+            transformed, fabric["highlight"], paste_x, paste_y,
+            opacity=highlight_opacity,
+        )
+
+    # ---- 7. 柔和阴影（有限压暗） ----
+    if shadow_opacity > 0:
+        transformed = black_fabric.apply_black_shadow_soft(
+            transformed, fabric["shadow_soft"], paste_x, paste_y,
+            opacity=shadow_opacity,
+        )
+
+    # ---- 8. 合成到画布 ----
+    canvas = Image.new("RGBA", canvas_size, (255, 255, 255, 255))
+    canvas.paste(background, (0, 0), background)
+    paste_with_blend(canvas, transformed, (paste_x, paste_y), blend_mode)
+
+    if foreground is not None and fg_position is not None:
+        canvas.paste(foreground, fg_position, foreground)
+
+    if occluder_im is not None:
+        canvas.paste(_harden_occluder_alpha(occluder_im), (0, 0), _harden_occluder_alpha(occluder_im))
+
+    canvas_rgb = canvas.convert("RGB")
+    canvas_rgb.save(str(output_path), "JPEG", quality=quality, optimize=True)
+
+    return {
+        "output_size": canvas_rgb.size,
+        "design_size": transformed.size,
+        "design_left": paste_x,
+        "design_top": paste_y,
+        "effective_bbox": effective_bbox,
+        "effective_top": effective_top_y,
+        "effective_center_x": effective_center_x,
+        "final_w": final_w,
+        "final_h": final_h,
+        "rotation_degrees": rotation_degrees,
+        "blend_mode": blend_mode or "normal",
+        "black_t_v2": True,
+        "occluder_applied": occluder is not None,
+    }
+
+
+def _soft_light(backdrop: np.ndarray, source: np.ndarray) -> np.ndarray:
+    """PS Soft Light 混合（backdrop/source 均为 [0,1] 浮点数组，可含通道维）。
+
+    result = where(s<=0.5, b-(1-2s)*b*(1-b), b+(2s-1)*(D(b)-b)), D(b)=b*b if b<=0.5 else sqrt(b)
+    用于把衣服明暗场(灰度 source)以 Soft Light 方式融进印花(backdrop)，
+    使印花吸收衣服光影：亮褶提亮、暗褶轻微压暗，幅度温和、不会产生黑斑。
+    """
+    b = backdrop.astype(np.float32)
+    s = source.astype(np.float32)
+    d = np.where(b <= 0.5, b * b, np.sqrt(np.clip(b, 0.0, 1.0)))
+    res = np.where(
+        s <= 0.5,
+        b - (1.0 - 2.0 * s) * b * (1.0 - b),
+        b + (2.0 * s - 1.0) * (d - b),
+    )
+    return np.clip(res, 0.0, 1.0)
+
+
+def _normalize_lighting(shirt_lum: np.ndarray, lo_q: float = 5.0, hi_q: float = 95.0) -> np.ndarray:
+    """把衣服亮度场归一化为 lighting 场（阴影→0，高光→1，中调→0.5），供 Soft Light 使用。
+
+    用局部百分位归一化，使黑衫整片暗布的「中调」映射到 0.5（Soft Light 中性点），
+    衣服褶皱高光→1、深褶→0，印花随之亮处提亮、暗处轻微压暗，且不依赖绝对亮度。
+    """
+    sh = np.clip(shirt_lum, 0.0, 1.0)
+    sel = sh[sh > 0.001]
+    if sel.size < 10:
+        return np.full_like(sh, 0.5)
+    lo = float(np.percentile(sel, lo_q))
+    hi = float(np.percentile(sel, hi_q))
+    if hi - lo < 1e-3:
+        return np.full_like(sh, 0.5)
+    return np.clip((sh - lo) / (hi - lo), 0.0, 1.0)
+
+
+def apply_black_t_ps_transform(
+    design_path: str | Path,
+    output_path: str | Path,
+    template_path: str | Path,
+    final_w: int,
+    final_h: int,
+    rotation_degrees: float,
+    effective_top_y: int,
+    effective_center_x: int,
+    quality: int = 95,
+    prepare_method: str = "unpremultiply",
+    disp_strength: float = 8.0,
+    disp_smooth: float = 120.0,
+    disp_dead_zone: float = 25.0,
+    disp_mode: str = "gradient",
+    soft_light_opacity: float = 0.25,
+    blend_if_strength: float = 0.25,
+    blend_if_hi: float = 0.70,
+    blend_if_split: float = 0.90,
+    tpl_dir: str | Path | None = None,
+    occluder: str | Path | None = None,
+    blur_radius: float = 0.4,
+) -> dict:
+    """黑T PS 风格贴图（用户提案 2026-07-15）：Normal 100% + Soft Light 25% + Blend If + 轻位移。
+
+    设计图(design)应为已反相的黑衫专用版本(_黑*_cut.png)；本函数只做去预乘/清洁边缘。
+    流程：
+      1) 轻位移(gradient, 5-10px)：大褶皱把印花"裹"上去，仅几何、不动色。
+      2) Normal 100% 粘贴（原色贴，无色差）。
+      3) Soft Light 布料光影：以衣服明暗场为 source、印花为 backdrop 做 Soft Light 混合，
+         幅度由 soft_light_opacity 控制（默认 25%），亮褶提亮、暗褶轻微压暗，不产生黑斑。
+      4) Blend If(底层)：仅在高光区(衣服亮度>blend_if_hi，平滑过渡到 blend_if_split)对印花
+         做轻微提亮，使亮处印花更"长"在布里；暗处完全保持印花（不压暗、无黑斑）。
+      5) 顶层遮挡物(手/配饰)盖住印花。
+    """
+    design = Image.open(str(design_path)).convert("RGBA")
+    design = prepare_design_for_shirt(design, "black", prepare_method)
+    background, foreground, fg_position, canvas_size = load_any_template(template_path)
+
+    occluder_im = None
+    if occluder is not None:
+        occluder_im = Image.open(str(occluder)).convert("RGBA")
+        if occluder_im.size != canvas_size:
+            occluder_im = occluder_im.resize(canvas_size, Image.Resampling.LANCZOS)
+
+    transformed = apply_transform_ps(design, final_w, final_h, rotation_degrees)
+    paste_x, paste_y, effective_bbox = calculate_effective_position(
+        transformed, effective_top_y, effective_center_x
+    )
+
+    # 1) 轻位移（大褶皱贴合，仅几何）
+    mask_im = disp_im = None
+    if tpl_dir:
+        td = Path(tpl_dir)
+        mask_im = _load_tpl_optional(td, "mask.png", canvas_size)
+        if mask_im is not None:
+            disp_im = _load_tpl_optional(td, "disp.png", canvas_size)
+    if disp_im is not None:
+        transformed = apply_displacement(
+            transformed, disp_im, mask_im, paste_x, paste_y,
+            strength=disp_strength, smooth=disp_smooth, dead_zone=disp_dead_zone,
+            mask_feather=0, occluder=occluder_im, disp_mode=disp_mode,
+        )
+
+    # 真实感（仅边缘柔化，保持原色）
+    transformed = apply_realism(transformed, saturation=1.0, brightness=1.0, blur_radius=blur_radius)
+
+    dw, dh = transformed.size
+    cw, ch = canvas_size
+    bx0, by0 = max(paste_x, 0), max(paste_y, 0)
+    bx1, by1 = min(paste_x + dw, cw), min(paste_y + dh, ch)
+
+    if bx1 > bx0 and by1 > by0:
+        # 衣服亮度场（画布全尺寸）
+        bg_lum = _luminance(np.array(background.convert("RGB")).astype(np.uint8))
+        light = _normalize_lighting(bg_lum)
+
+        region = transformed.crop((bx0 - paste_x, by0 - paste_y, bx1 - paste_x, by1 - paste_y)).convert("RGBA")
+        rarr = np.array(region).astype(np.float32)
+        alpha = rarr[:, :, 3:4] / 255.0
+        rgb = rarr[:, :, :3] / 255.0
+
+        light_crop = light[by0:by1, bx0:bx1]      # (rh, rw)
+        light_3 = light_crop[..., None]            # (rh, rw, 1)
+
+        # 3) Soft Light 布料光影
+        sl = _soft_light(rgb, light_3)
+        rgb2 = rgb * (1.0 - soft_light_opacity) + sl * soft_light_opacity
+
+        # 4) Blend If(底层) 高光提亮：仅衣服很亮处轻微提亮，暗处不动
+        hi = np.clip((light_crop - blend_if_hi) / max(blend_if_split - blend_if_hi, 1e-3), 0.0, 1.0)
+        boost = hi[..., None] * blend_if_strength
+        rgb3 = rgb2 + boost * (1.0 - rgb2)
+
+        # 仅不透明像素生效；透明底保持原样
+        rgb3 = np.where(alpha > 0.01, rgb3, rgb)
+        rarr[:, :, :3] = np.clip(rgb3 * 255.0, 0, 255)
+        out_region = Image.fromarray(rarr.astype(np.uint8), "RGBA")
+        transformed.paste(out_region, (bx0 - paste_x, by0 - paste_y))
+
+    # 5) 合成
+    canvas = Image.new("RGBA", canvas_size, (255, 255, 255, 255))
+    canvas.paste(background, (0, 0), background)
+    paste_with_blend(canvas, transformed, (paste_x, paste_y), None)
+
+    if foreground is not None and fg_position is not None:
+        canvas.paste(foreground, fg_position, foreground)
+    if occluder_im is not None:
+        canvas.paste(_harden_occluder_alpha(occluder_im), (0, 0), _harden_occluder_alpha(occluder_im))
+
+    canvas_rgb = canvas.convert("RGB")
+    canvas_rgb.save(str(output_path), "JPEG", quality=quality, optimize=True)
+
+    return {
+        "output_size": canvas_rgb.size,
+        "design_size": transformed.size,
+        "design_left": paste_x,
+        "design_top": paste_y,
+        "effective_top": effective_top_y,
+        "effective_center_x": effective_center_x,
+        "final_w": final_w,
+        "final_h": final_h,
+        "rotation_degrees": rotation_degrees,
+        "blend_mode": "normal",
+        "black_t_ps": True,
+        "occluder_applied": occluder is not None,
     }
 
 
