@@ -4175,14 +4175,24 @@ def api_peiyi_upload():
 
 
 def _peiyi_read_meta(dest_dir, name):
-    """读取与图片同名的 .meta.json 侧车，返回5个参数字典；不存在/损坏返回 None。"""
+    """读取与图片同名的 .meta.json 侧车，返回5个参数字典（含可选 bw 第二套）；
+    不存在/损坏返回 None。
+
+    双组参数约定（仅正面 W白/W黑 需要）：
+      - 顶层 width/height/rotation/highest_y/center_x = ① 单面款（只有W贴图）
+      - "bw" 子块同名五参                         = ② 双面款（有W+B贴图）
+    """
     stem, _ = os.path.splitext(name)
     mp = dest_dir / (stem + '.meta.json')
     if not mp.exists():
         return None
     try:
         data = json.loads(mp.read_text(encoding='utf-8'))
-        return {k: data.get(k) for k in PEIYI_META_KEYS}
+        out = {k: data.get(k) for k in PEIYI_META_KEYS}
+        bw = data.get('bw')
+        if isinstance(bw, dict):
+            out['bw'] = {k: bw.get(k) for k in PEIYI_META_KEYS}
+        return out
     except Exception:
         return None
 
@@ -4216,6 +4226,17 @@ def api_peiyi_list():
                     unfilled = (meta is None)   # 尚未填写五项数据
                     if unfilled:
                         meta = {k: default for k, _, default in PEIYI_META_FIELDS}
+                    # 保证 bw 第二套字段存在（缺省用默认值），便于前端渲染第二组输入框；
+                    # 对于 W白/W黑 这类需要两组的素材，未填时 bw_missing=True（顶部"待填"逻辑）
+                    if not isinstance(meta.get('bw'), dict):
+                        meta['bw'] = {k: default for k, _, default in PEIYI_META_FIELDS}
+                    # 双面款(W+B)第二组参数缺失标记（仅 W白/W黑 需要两组；B面只一组）
+                    bw_missing = False
+                    if category in ('W白', 'W黑'):
+                        bw = meta.get('bw') or {}
+                        bw_missing = not all(
+                            (bw.get(k) not in (None, '', 0)) for k, _, _ in PEIYI_META_FIELDS
+                        )
                     # 遮罩状态（body_mask / occluder_mask / occluder / parse）
                     stem, _ = os.path.splitext(fn)
                     occ_mask_path = d / (stem + '_occluder_mask.png')
@@ -4251,6 +4272,7 @@ def api_peiyi_list():
                         'modified': datetime.fromtimestamp(st.st_mtime).isoformat(),
                         'meta': meta,
                         'unfilled': unfilled,
+                        'bw_missing': bw_missing,
                         'has_mask': has_mask,
                         'occluder_px': occ_px,
                         'mask_urls': mask_urls,
@@ -4618,7 +4640,13 @@ def api_peiyi_reindex():
 
 @app.route('/api/peiyi/meta', methods=['POST'])
 def api_peiyi_meta():
-    """保存单张素材的5个贴图参数到同名 .meta.json 侧车（与 胚衣参数表_模板.csv 第5-9列一致）。"""
+    """保存单张素材的贴图参数到同名 .meta.json 侧车。
+
+    支持双组（仅正面 W白/W黑 需要）：
+      - 顶层 width/height/rotation/highest_y/center_x = ① 单面款（只有W贴图）
+      - payload 中的 "bw" 对象同名五参               = ② 双面款（有W+B贴图）
+    合并已有文件，避免只保存一组时清掉另一组。
+    """
     data = request.get_json(silent=True) or {}
     category = data.get('category', '')
     name = data.get('name', '')
@@ -4629,18 +4657,36 @@ def api_peiyi_meta():
     if not (d / safe).exists():
         return jsonify({'ok': False, 'error': '文件不存在'}), 404
     stem, _ = os.path.splitext(safe)
+    mp = d / (stem + '.meta.json')
+    # 合并已有文件，避免只写部分字段时清掉另一套
+    existing = {}
+    if mp.exists():
+        try:
+            existing = json.loads(mp.read_text(encoding='utf-8'))
+        except Exception:
+            existing = {}
+
+    def _num(v, fallback):
+        if v is None or v == '':
+            return fallback
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return fallback
+
     meta = {}
     for k, _, default in PEIYI_META_FIELDS:
-        v = data.get(k)
-        if v is None or v == '':
-            meta[k] = default
-        else:
-            try:
-                meta[k] = float(v)
-            except (TypeError, ValueError):
-                meta[k] = default
-    (d / (stem + '.meta.json')).write_text(
-        json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
+        meta[k] = _num(data.get(k), existing.get(k, default))
+    # 第二组（双面款 W+B）：来自 payload 的 bw 对象；payload 未带则保留原 bw
+    bw_in = data.get('bw')
+    if isinstance(bw_in, dict):
+        bw = {}
+        for k, _, default in PEIYI_META_FIELDS:
+            bw[k] = _num(bw_in.get(k), existing.get('bw', {}).get(k, default))
+        meta['bw'] = bw
+    elif isinstance(existing.get('bw'), dict):
+        meta['bw'] = existing['bw']
+    mp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
     return jsonify({'ok': True, 'meta': meta})
 
 

@@ -52,7 +52,11 @@
   .thumb .sbadge:hover{filter:brightness(1.15)}
   .empty{color:#666;font-size:13px;padding:10px 2px}
   /* 每张素材下方的贴图参数输入区（与 胚衣参数表_模板.csv 第5-9列一致） */
-  .thumb .meta{display:grid;grid-template-columns:1fr 1fr;gap:7px 8px;padding:10px 8px 6px;border-top:1px solid #333}
+  .thumb .meta{border-top:1px solid #333;padding:8px 8px 4px}
+  .thumb .mgrp{background:#1b1b1b;border:1px solid #383838;border-radius:7px;padding:8px 9px 7px;margin-bottom:8px}
+  .thumb .mgrp-title{font-size:13px;color:#cfd3d6;font-weight:700;margin-bottom:7px;display:flex;align-items:center;gap:8px}
+  .thumb .mgrp-title .mwarn{font-size:11px;color:#ffb74d;font-weight:700}
+  .thumb .mgrp .grid2{display:grid;grid-template-columns:1fr 1fr;gap:7px 8px}
   .thumb .mf{display:flex;flex-direction:column;min-width:0}
   .thumb .mf.full{grid-column:1/-1}
   .thumb .mf label{font-size:12px;color:#9aa0a6;margin-bottom:3px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -379,18 +383,44 @@ function scoreBadge(it){
   return '<div class="sbadge '+cls+'" title="遮罩评分 '+sc+flag+' · 点击查看各版本">'+sc+'</div>';
 }
 
+// 构造单张素材下方的参数输入区。
+// 正面 W白/W黑 需要两组五参：① 单面款（只有W贴图）/ ② 双面款（有W+B贴图）；
+// 背面 B白/B黑 只有一组。第二组输入框 data-k 以 "bw." 开头，保存时归到 payload.bw。
+function metaGroupInputs(m, isBw){
+  var prefix = isBw ? 'bw.' : '';
+  var h='';
+  META_FIELDS.forEach(function(f){
+    var cls = f.full ? 'mf full' : 'mf';
+    var val = (m[f.k]!=null) ? m[f.k] : META_DEFAULTS[f.k];
+    h += '<div class="'+cls+'"><label title="'+f.label+'">'+f.label+'</label>'+
+         '<input type="number" step="any" data-k="'+prefix+f.k+'" value="'+val+'"></div>';
+  });
+  return h;
+}
+
+function buildMetaGroups(key, meta, it){
+  var twoGroup = (key==='W白' || key==='W黑');
+  var html='';
+  if(twoGroup){
+    html += '<div class="mgrp"><div class="mgrp-title">① 单面款（只有W贴图）</div>'+
+            '<div class="grid2">'+metaGroupInputs(meta, false)+'</div></div>';
+    var bwWarn = (it && it.bw_missing) ? ' <span class="mwarn">⚠ 双面款未填</span>' : '';
+    html += '<div class="mgrp"><div class="mgrp-title">② 双面款（有W+B贴图）'+bwWarn+'</div>'+
+            '<div class="grid2">'+metaGroupInputs(meta.bw||{}, true)+'</div></div>';
+  } else {
+    html += '<div class="mgrp"><div class="mgrp-title">贴图参数</div>'+
+            '<div class="grid2">'+metaGroupInputs(meta, false)+'</div></div>';
+  }
+  html += '<div class="mstatus"></div>';
+  return html;
+}
+
 // 构建单张胚衣卡片
 function buildThumb(key, it){
   var meta = it.meta || {};
   for(var mk in META_DEFAULTS){ if(!(mk in meta) || meta[mk]==null) meta[mk]=META_DEFAULTS[mk]; }
 
-  var metaHtml='<div class="meta">';
-  META_FIELDS.forEach(function(f){
-    var cls = f.full ? 'mf full' : 'mf';
-    metaHtml+='<div class="'+cls+'"><label title="'+f.label+'">'+f.label+'</label>'+
-      '<input type="number" step="any" data-k="'+f.k+'" value="'+meta[f.k]+'"></div>';
-  });
-  metaHtml+='<div class="mstatus"></div></div>';
+  var metaHtml=buildMetaGroups(key, meta, it);
 
   // 未填写五项数据 → 橙色「待填」角标（排序时已默认排最前）
   var badge = it.unfilled ? '<div class="badge">待填</div>' : '';
@@ -433,11 +463,21 @@ function buildThumb(key, it){
       });
   };
   // 任一参数改动即自动保存到同名 .meta.json 侧车
+  // W白/W黑 有两组（①单面款 / ②双面款W+B）：第二组字段 data-k 以 "bw." 开头，
+  // 收集时归入 payload.bw 对象，后端据此写 "bw" 子块。
   var inputs=t.querySelectorAll('.meta input');
   inputs.forEach(function(inp){
     inp.addEventListener('change', function(){
       var payload={category:key, name:it.name};
-      inputs.forEach(function(mi){ payload[mi.getAttribute('data-k')]=mi.value; });
+      inputs.forEach(function(mi){
+        var dk=mi.getAttribute('data-k');
+        if(dk.indexOf('bw.')===0){
+          payload.bw=payload.bw||{};
+          payload.bw[dk.substring(3)]=mi.value;
+        } else {
+          payload[dk]=mi.value;
+        }
+      });
       saveMeta(payload, key, it.name, t);
     });
   });
