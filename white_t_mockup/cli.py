@@ -235,17 +235,30 @@ def _build_parser() -> argparse.ArgumentParser:
         help="黑T PS 风格：Normal 100% + Soft Light 布料光影 + Blend If 高光提亮 + 轻位移"
              "（设计图须为已反相黑衫版 _黑*_cut.png）",
     )
+    # ---- 黑T PS 风格：Difference 提取大褶皱 → 软 Mask → 仅大褶皱区局部融合 ----
     parser.add_argument(
-        "--bt-ps-soft-light",
+        "--bt-ps-wrinkle-sigma",
         type=float,
-        default=0.25,
-        help="黑T PS 的 Soft Light 布料光影强度（默认 0.25，建议 0.20-0.35）",
+        default=20.0,
+        help="黑T PS 褶皱提取的高斯模糊 sigma（默认 20）：越大只保留越大褶皱",
     )
     parser.add_argument(
-        "--bt-ps-blend-if",
+        "--bt-ps-wrinkle-threshold",
         type=float,
-        default=0.25,
-        help="黑T PS 的 Blend If 高光提亮强度（默认 0.25；0 关闭）",
+        default=15.0,
+        help="黑T PS 褶皱阈值（默认 15）：低于此值的褶皱视为小褶皱/平整区，完全不影响印花",
+    )
+    parser.add_argument(
+        "--bt-ps-mask-blur",
+        type=float,
+        default=15.0,
+        help="黑T PS 褶皱 Mask 平滑 sigma（默认 15）：让局部融合边界柔和过渡",
+    )
+    parser.add_argument(
+        "--bt-ps-effect",
+        type=float,
+        default=0.40,
+        help="黑T PS 大褶皱区融合强度（默认 0.40，建议 0.30-0.50）",
     )
     parser.add_argument(
         "--bt2-fabric-texture-opacity",
@@ -427,8 +440,10 @@ def main() -> None:
                 disp_smooth=args.disp_smooth,
                 disp_dead_zone=args.disp_dead_zone,
                 disp_mode=args.disp_mode,
-                soft_light_opacity=args.bt_ps_soft_light,
-                blend_if_strength=args.bt_ps_blend_if,
+                wrinkle_sigma=args.bt_ps_wrinkle_sigma,
+                wrinkle_threshold=args.bt_ps_wrinkle_threshold,
+                mask_blur=args.bt_ps_mask_blur,
+                effect_strength=args.bt_ps_effect,
                 tpl_dir=tpl_dir,
                 occluder=args.occluder,
                 blur_radius=args.blur,

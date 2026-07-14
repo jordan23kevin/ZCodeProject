@@ -1094,25 +1094,30 @@ def apply_black_t_ps_transform(
     disp_smooth: float = 120.0,
     disp_dead_zone: float = 25.0,
     disp_mode: str = "gradient",
-    soft_light_opacity: float = 0.25,
-    blend_if_strength: float = 0.25,
-    blend_if_hi: float = 0.70,
-    blend_if_split: float = 0.90,
+    wrinkle_sigma: float = 20.0,
+    wrinkle_threshold: float = 15.0,
+    mask_blur: float = 15.0,
+    effect_strength: float = 0.4,
     tpl_dir: str | Path | None = None,
     occluder: str | Path | None = None,
     blur_radius: float = 0.4,
 ) -> dict:
-    """黑T PS 风格贴图（用户提案 2026-07-15）：Normal 100% + Soft Light 25% + Blend If + 轻位移。
+    """黑T PS 风格贴图 v2（用户提案 2026-07-15 修订）：保持印花原色，仅大褶皱区局部融合。
 
-    设计图(design)应为已反相的黑衫专用版本(_黑*_cut.png)；本函数只做去预乘/清洁边缘。
+    关键修正：上一版把 Soft Light 应用到整张印花（整片变色），本版改为
+    「Difference 提取褶皱 → 阈值滤除小褶皱 → 软 Mask → 仅在大褶皱区做局部明暗融合」。
+    平整区/小褶皱完全保留原色，无黑斑、无整体偏色。
+
     流程：
       1) 轻位移(gradient, 5-10px)：大褶皱把印花"裹"上去，仅几何、不动色。
       2) Normal 100% 粘贴（原色贴，无色差）。
-      3) Soft Light 布料光影：以衣服明暗场为 source、印花为 backdrop 做 Soft Light 混合，
-         幅度由 soft_light_opacity 控制（默认 25%），亮褶提亮、暗褶轻微压暗，不产生黑斑。
-      4) Blend If(底层)：仅在高光区(衣服亮度>blend_if_hi，平滑过渡到 blend_if_split)对印花
-         做轻微提亮，使亮处印花更"长"在布里；暗处完全保持印花（不压暗、无黑斑）。
-      5) 顶层遮挡物(手/配饰)盖住印花。
+      3) 从衣服灰度图提取褶皱：
+         wrinkle = |gray - GaussianBlur(gray, sigma=wrinkle_sigma)|，再 ^1.5 增强。
+      4) 阈值(wrinkle_threshold，默认15)滤掉小褶皱 → 仅大褶皱保留；高斯平滑(mask_blur)得软 Mask。
+      5) 仅在大褶皱 Mask 区，把衣服光照场(归一化)以 Soft Light 融进印花：
+         final = print*(1 - mask*effect) + SoftLight(print, light)*(mask*effect)
+         → 平整区 mask≈0 → 100% 原色；大褶皱区吸收衣服明暗，幅度温和不发黑。
+      6) 顶层遮挡物(手/配饰)盖住印花。
     """
     design = Image.open(str(design_path)).convert("RGBA")
     design = prepare_design_for_shirt(design, "black", prepare_method)
@@ -1152,32 +1157,47 @@ def apply_black_t_ps_transform(
     bx1, by1 = min(paste_x + dw, cw), min(paste_y + dh, ch)
 
     if bx1 > bx0 and by1 > by0:
-        # 衣服亮度场（画布全尺寸）
-        bg_lum = _luminance(np.array(background.convert("RGB")).astype(np.uint8))
-        light = _normalize_lighting(bg_lum)
+        import cv2
+        import os
+        # ---- 从衣服灰度图提取大褶皱 Mask（Difference 法）----
+        bg_arr = np.array(background.convert("RGB")).astype(np.float32)
+        bg_gray = 0.299 * bg_arr[..., 0] + 0.587 * bg_arr[..., 1] + 0.114 * bg_arr[..., 2]
+        blur_gray = cv2.GaussianBlur(bg_gray, (0, 0), wrinkle_sigma)
+        wrinkle = np.abs(bg_gray - blur_gray)
+        wrinkle = np.power(np.clip(wrinkle, 0.0, 255.0), 1.5)  # 增强大褶皱、压低小褶皱
+        # 阈值过滤小褶皱（仅保留大褶皱）
+        m = (wrinkle > wrinkle_threshold).astype(np.float32)
+        # 高斯平滑得软 Mask（0..1）
+        m = cv2.GaussianBlur(m, (0, 0), mask_blur)
+        m = np.clip(m, 0.0, 1.0)
+
+        # 衣服光照场（归一化，中调=0.5 中性点；供局部 Soft Light 融合）
+        light = _normalize_lighting(bg_gray / 255.0)
 
         region = transformed.crop((bx0 - paste_x, by0 - paste_y, bx1 - paste_x, by1 - paste_y)).convert("RGBA")
         rarr = np.array(region).astype(np.float32)
         alpha = rarr[:, :, 3:4] / 255.0
         rgb = rarr[:, :, :3] / 255.0
 
-        light_crop = light[by0:by1, bx0:bx1]      # (rh, rw)
-        light_3 = light_crop[..., None]            # (rh, rw, 1)
+        m_crop = m[by0:by1, bx0:bx1][..., None]          # (rh, rw, 1) 大褶皱软 Mask
+        light_crop = light[by0:by1, bx0:bx1][..., None]  # (rh, rw, 1) 衣服光照场
 
-        # 3) Soft Light 布料光影
-        sl = _soft_light(rgb, light_3)
-        rgb2 = rgb * (1.0 - soft_light_opacity) + sl * soft_light_opacity
+        # 局部明暗融合：仅在大褶皱 Mask 区，以 Soft Light 把衣服光照融进印花
+        sl = _soft_light(rgb, light_crop)
+        amt = m_crop * effect_strength                    # 局部融合强度 0..effect_strength
+        rgb2 = rgb * (1.0 - amt) + sl * amt
 
-        # 4) Blend If(底层) 高光提亮：仅衣服很亮处轻微提亮，暗处不动
-        hi = np.clip((light_crop - blend_if_hi) / max(blend_if_split - blend_if_hi, 1e-3), 0.0, 1.0)
-        boost = hi[..., None] * blend_if_strength
-        rgb3 = rgb2 + boost * (1.0 - rgb2)
-
-        # 仅不透明像素生效；透明底保持原样
-        rgb3 = np.where(alpha > 0.01, rgb3, rgb)
-        rarr[:, :, :3] = np.clip(rgb3 * 255.0, 0, 255)
+        # 仅不透明像素生效；透明底/平整区(mask≈0)保持原色
+        rgb2 = np.where(alpha > 0.01, rgb2, rgb)
+        rarr[:, :, :3] = np.clip(rgb2 * 255.0, 0, 255)
         out_region = Image.fromarray(rarr.astype(np.uint8), "RGBA")
         transformed.paste(out_region, (bx0 - paste_x, by0 - paste_y))
+
+        # 调试：导出褶皱 Mask 供人工核对（设置环境变量 BT_PS_DEBUG=1 启用）
+        if os.environ.get("BT_PS_DEBUG"):
+            _mvis = (np.clip(m, 0.0, 1.0) * 255).astype(np.uint8)
+            _out = str(output_path).rsplit(".", 1)[0] + "_wrinklemask.png"
+            Image.fromarray(_mvis).save(_out)
 
     # 5) 合成
     canvas = Image.new("RGBA", canvas_size, (255, 255, 255, 255))
