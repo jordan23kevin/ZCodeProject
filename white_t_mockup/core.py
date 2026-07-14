@@ -1202,10 +1202,12 @@ def apply_black_t_ps_transform(
         m_crop = m[by0:by1, bx0:bx1][..., None]          # (rh, rw, 1) 大褶皱软 Mask
         light_crop = light[by0:by1, bx0:bx1][..., None]  # (rh, rw, 1) 衣服光照场
 
-        # 局部明暗融合：仅在大褶皱 Mask 区，以 Soft Light 把衣服光照融进印花
-        sl = _soft_light(rgb, light_crop)
+        # 局部明暗融合：仅在大褶皱 Mask 区，让印花亮度跟随衣服明暗（保留色相，不发黑/不变色）
+        # 比 Soft Light 更强且可控：亮褶提亮、暗褶压暗，三通道同量偏移 → 色相保持、褶皱感明显。
+        shade = light_crop - 0.5                          # 亮褶>0 提亮，暗褶<0 压暗
         amt = m_crop * effect_strength                    # 局部融合强度 0..effect_strength
-        rgb2 = rgb * (1.0 - amt) + sl * amt
+        rgb2 = rgb + shade * amt * 2.0                    # 2.0 = 强度系数（配合 effect 控制整体幅度）
+        rgb2 = np.clip(rgb2, 0.0, 1.0)
 
         # 仅不透明像素生效；透明底/平整区(mask≈0)保持原色
         rgb2 = np.where(alpha > 0.01, rgb2, rgb)
