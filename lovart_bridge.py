@@ -3358,6 +3358,31 @@ def api_batch_upload():
     for dx in valid_dx:
         args.extend(["--only", dx])
 
+    # 重置进度文件：避免前端读到上次任务的完成状态而立即显示"上款完成"
+    try:
+        now_iso = datetime.now().isoformat(timespec="seconds")
+        UPLOAD_PROGRESS_FILE.write_text(
+            json.dumps({
+                "running": True,
+                "started_at": now_iso,
+                "finished_at": None,
+                "selected": valid_dx,
+                "pending": valid_dx,
+                "completed": [],
+                "failed": [],
+                "current": None,
+                "current_start": None,
+                "total_count": len(valid_dx),
+                "done_count": 0,
+                "fail_count": 0,
+                "per_dx": {},
+                "updated_at": now_iso,
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        print(f"[batch-upload] 重置进度文件失败: {e}", flush=True)
+
     try:
         # wait=False: wb_listing.py 运行时间较长，API 立即返回，后台执行
         # no_console=True: 不弹控制台黑窗（wb_listing.py 自己写日志到 D:\Semems WB\_debug）

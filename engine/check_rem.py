@@ -125,7 +125,7 @@
 
 端口 8766（避开 01_CHECK 的 8765）。
 """
-__version__ = "2.3.3"
+__version__ = "2.3.4"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, numpy as np
 from pathlib import Path
@@ -1243,6 +1243,8 @@ class Handler(BaseHTTPRequestHandler):
             self._ps_batch(dx)
         elif path == "/upscale-rem":
             self._upscale_rem(dx, file)
+        elif path == "/resticker":
+            self._resticker(dx, file)
         elif path == "/invert-rem":
             self._invert_rem(dx, file)
         elif path == "/batch-invert-rem":
@@ -1611,6 +1613,11 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .up-thumb {{ width:100%; height:220px; border-radius:6px; overflow:hidden; background:#fff; cursor:pointer; position:relative; border:1px solid #333; }}
 .up-thumb img {{ width:100%; height:100%; object-fit:contain; transition:transform .15s; }}
 .up-thumb:hover img {{ transform:scale(1.06); }}
+.up-thumb .del {{ position:absolute; top:4px; right:4px; width:24px; height:24px; background:#e53935; color:#fff; border:none; border-radius:4px; font-size:16px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; z-index:5; }}
+.up-thumb .del:hover {{ background:#b71c1c; }}
+.up-thumb .resticker {{ position:absolute; top:4px; left:4px; width:24px; height:24px; background:#2196F3; color:#fff; border:none; border-radius:4px; font-size:14px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; z-index:5; }}
+.up-thumb .resticker:hover {{ background:#1565C0; }}
+.up-item.deleted {{ opacity:.3; }}
 .up-label {{ color:#aaa; font-size:13px; margin-top:6px; text-align:center; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 .badge-other {{ background:#424242; color:#fff; }}
 .badge-black {{ background:#111; color:#fff; border:1px solid #555; }}
@@ -2246,9 +2253,12 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                     continue
                 ts = int(f.stat().st_mtime)
                 label = self._up_label(f.name, dx)
+                safe_file = f.name.replace("'", "\\'")
                 thumbs.append(
-                    f'<div class="up-item">'
+                    f'<div class="up-item" id="up-{dx}-{safe_file}">'
                     f'<div class="up-thumb cell">'
+                    f'<button class="del" onclick="event.stopPropagation();delImg(\'{dx}\',\'up\',\'{safe_file}\',\'up-{dx}-{safe_file}\')" title="删除贴图成品">×</button>'
+                    f'<button class="resticker" onclick="event.stopPropagation();resticker(\'{dx}\',\'{safe_file}\',\'up-{dx}-{safe_file}\')" title="重新贴图（仅本张）">↻</button>'
                     f'<img src="/thumb?dx={dx}&kind=up&file={quote(f.name)}&t={ts}" onclick="openFolder(\'{dx}\',\'up\')" loading="lazy" decoding="async">'
                     f'</div>'
                     f'<div class="up-label" title="{f.name}">{label}</div>'
@@ -2319,6 +2329,171 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             self._send_json({"ok": True, "msg": f"\u5df2\u653e\u5927: {w}x{h} \u2192 2046x2046"})
         except Exception as e:
             self._send_json({"ok": False, "msg": f"\u653e\u5927\u5931\u8d25: {e}"})
+
+    # 单独重新生成一张 03_UPLOAD 贴图成品（只覆盖目标文件，不影响同款其他图）
+    def _resticker(self, dx, file):
+        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not file or "/" in file or "\\" in file:
+            self._send_json({"ok": False, "msg": "参数非法"}); return
+        up_dir = BASE / dx / "03_UPLOAD"
+        rem_dir = BASE / dx / "02_REM_BG"
+        target_path = up_dir / file
+        info = wb_naming.classify(dx, file)
+        if not info:
+            self._send_json({"ok": False, "msg": "无法识别成品命名"}); return
+
+        kind = info["kind"]
+        side = info["side"]
+        color = info["color"]
+
+        try:
+            ps_path = r"E:\Claude code\ps"
+            if ps_path not in sys.path:
+                sys.path.insert(0, ps_path)
+            import wb_sticker_ps
+            import config as ps_config
+            import ps_batch
+        except Exception as e:
+            self._send_json({"ok": False, "msg": f"贴图模块导入失败: {e}"}); return
+
+        # BW 合成图：只重生成该 BW 文件，依赖的平铺图必须已存在
+        if kind == "bw":
+            front_name = wb_naming.flat_name(dx, "W", color)
+            back_name = wb_naming.flat_name(dx, "B", color)
+            front_path = up_dir / front_name
+            back_path = up_dir / back_name
+            if not front_path.exists() or not back_path.exists():
+                self._send_json({"ok": False, "msg": f"缺少依赖平铺图：{front_name} / {back_name}"}); return
+            try:
+                ps_batch.compose_bw_pil(str(front_path), str(back_path), str(target_path), shirt_color=color)
+                Handler._clear_upload_thumb(dx, file)
+                Handler._register_uploads(dx)
+                self._send_json({"ok": True, "msg": f"已重新生成 {file}"})
+            except Exception as e:
+                self._send_json({"ok": False, "msg": f"BW合成失败: {e}"})
+            return
+
+        # 平铺图 / 模特图：先定位源去背图
+        prefix = "黑" if color == "黑" else "白" if color == "白" else None
+        candidates = []
+        if prefix:
+            candidates.append(f"{dx}_{prefix}{side}_cut.png")
+        candidates.append(f"{dx}_{side}_cut.png")
+        if side == "W" and (dx.endswith("BW") or dx.endswith("WB")):
+            candidates.append(f"{dx}_BW_cut.png")
+
+        cut_path = None
+        for c in candidates:
+            p = rem_dir / c
+            if p.exists():
+                cut_path = p
+                break
+        if not cut_path:
+            self._send_json({"ok": False, "msg": "缺少源去背图"}); return
+
+        if kind == "flat":
+            try:
+                session = wb_sticker_ps.StickerSession()
+                cut_meta = _meta_for(cut_path)
+                cut_name = cut_path.name
+                if "_黑" in cut_name:
+                    cfg = ps_config.BACK_NEW if side == "B" else ps_config.FRONT_NEW
+                    torso_path = str(Path(ps_config.BASE_TORSO) / cfg["torso_black"])
+                    session.place_design(str(cut_path), torso_path, str(target_path), placement_cfg=cfg, cut_meta=cut_meta)
+                elif "_白" in cut_name:
+                    # 注意：config.py 只有 BACK_NEW/FRONT_NEW（二者均含 torso_white 键），
+                    # 没有单独的 WHITE_BACK/WHITE_FRONT，白图复用同一组配置取 torso_white。
+                    cfg = ps_config.BACK_NEW if side == "B" else ps_config.FRONT_NEW
+                    torso_path = str(Path(ps_config.BASE_TORSO) / cfg["torso_white"])
+                    session.place_design(str(cut_path), torso_path, str(target_path), placement_cfg=cfg, cut_meta=cut_meta)
+                else:
+                    torso_path, meta_path = ps_config.flat_torso(side, color)
+                    full_meta = ps_config.load_meta(meta_path) or {}
+                    meta_set = "bw" if (side == "W" and (dx.endswith("BW") or dx.endswith("WB"))) else "w"
+                    if side == "W" and (rem_dir / f"{dx}_B_cut.png").exists():
+                        meta_set = "bw"
+                    meta = wb_sticker_ps._select_meta(full_meta, meta_set)
+                    session.place_design(str(cut_path), torso_path, str(target_path), meta=meta, cut_meta=cut_meta)
+                session.close()
+                Handler._clear_upload_thumb(dx, file)
+                Handler._register_uploads(dx)
+                self._send_json({"ok": True, "msg": f"已重新生成 {file}"})
+            except Exception as e:
+                self._send_json({"ok": False, "msg": f"平铺图贴图失败: {e}"})
+            return
+
+        if kind == "model":
+            try:
+                ok, msg = Handler._regenerate_one_model(dx, side, color, cut_path, target_path)
+                if ok:
+                    Handler._clear_upload_thumb(dx, file)
+                    Handler._register_uploads(dx)
+                self._send_json({"ok": ok, "msg": msg})
+            except Exception as e:
+                self._send_json({"ok": False, "msg": f"模特图贴图失败: {e}"})
+            return
+
+        self._send_json({"ok": False, "msg": "不支持的成品类型"})
+
+    @staticmethod
+    def _regenerate_one_model(dx, side, color, cut_path, out_path):
+        """用 white_t_mockup 重新生成单张模特图/平铺图（仅覆盖 out_path）。"""
+        from w_mockup_extra import W_MOCKUP_PY, W_MOCKUP_ROOT, _list_material_embryos
+        import wb_naming as naming
+        use_bw = dx.endswith("BW") and side == "W"
+        pool = _list_material_embryos(side, color, use_bw=use_bw)
+        if not pool:
+            return False, f"素材库无可用 {side}{color} 胚衣"
+        out_name = os.path.basename(out_path)
+        info = naming.classify(dx, out_name)
+        is_flat_target = info and info["kind"] == "flat"
+        if is_flat_target:
+            mandatory = naming.FLAT_MANDATORY.get((side, color))
+            candidates = [e for e in pool if e["stem"] == mandatory]
+        else:
+            candidates = [e for e in pool if not naming.is_flat_stem(e["stem"])]
+        if not candidates:
+            return False, f"无可用 {'平铺' if is_flat_target else '模特'}胚衣"
+        embryo = candidates[0]
+        meta = embryo["meta"]
+        cmd = [
+            str(W_MOCKUP_PY), "-m", "white_t_mockup",
+            str(cut_path), str(out_path),
+            "--template", str(embryo["path"]),
+            "--final-w", str(meta["final_w"]),
+            "--final-h", str(meta["final_h"]),
+            "--rotate", str(meta["rotation"]),
+            "--effective-top-y", str(meta["effective_top_y"]),
+            "--effective-center-x", str(meta["effective_center_x"]),
+        ]
+        is_flat = naming.is_flat_stem(embryo["stem"])
+        if (not is_flat) and color == "黑":
+            cmd += ["--black-t-plain"]
+            if embryo["occluder"]:
+                cmd += ["--occluder", embryo["occluder"]]
+        else:
+            cmd += [
+                "--disp-mode", "gradient", "--disp-strength", "0", "--disp-smooth", "40",
+                "--disp-dead-zone", "15", "--shading-blur", "4", "--no-fabric-shading",
+                "--preserve-color", "--shirt-color", ("white" if color == "白" else "black"),
+                "--occlusion-strength", "0.0",
+            ]
+            if embryo["tpl_dir"]:
+                cmd += ["--tpl-dir", embryo["tpl_dir"]]
+            if embryo["occluder"]:
+                cmd += ["--occluder", embryo["occluder"]]
+        proc = run_minimized(cmd, cwd=str(W_MOCKUP_ROOT), capture_output=True, text=True)
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or "")[-400:]
+            return False, f"white_t_mockup 失败: {tail}"
+        return True, f"已重新生成 {out_name}"
+
+    @staticmethod
+    def _clear_upload_thumb(dx, file):
+        for tf in THUMB_DIR.glob(f"{dx}__up__{file}.*"):
+            try:
+                tf.unlink()
+            except Exception:
+                pass
 
     # 反相去背图并自动跑贴图流水线
     def _invert_rem(self, dx, file):
