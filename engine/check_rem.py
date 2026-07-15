@@ -4,6 +4,26 @@
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
 
+功能 v2.3.0（命名规则收口到 wb_naming.py）：
+  - 新增 engine/wb_naming.py：贴图成品命名规则全系统唯一出处。顶部 FLAT_FMT/MODEL_FMT/
+    BW_FMT/FLAT_STEMS 四个配置即全部规则，生成函数(flat_name/model_name/bw_name)与
+    解析函数(classify/group_of/label_of/role_from_name/is_generated/glob)都从格式串
+    自动推导——改命名只改这一个文件，产图与读图全局自动跟随。
+  - 接入方：check_rem(注册/清理/分组/标签)、w_mockup_extra(分类命名)、check_sync(glob)、
+    check_upload_vs_ai、wb_meta(_extract_role_from_name 委托)，以及 ps 仓库
+    wb_sticker_ps/process_black/process_white/ps_batch(产图+_role_from_name 委托)。
+  - 行为与 v2.2.9 完全一致（纯重构），已用 DX0650 实测产出命名不变。
+
+功能 v2.2.9（贴图成品命名规则统一）：
+  - 平铺图命名 ``{dx}_{side}{color}T.jpg``（例 DX0650_W白T.jpg / DX0650_B黑T.jpg），
+    去掉旧的 ``{side}_{color}T`` 中间下划线；模特图命名 ``{dx}_{color}{side}.jpg``
+    （例 DX0650_白W.jpg / DX0650_黑B.jpg）。平铺胚衣=白W11/黑W11(正)/白B12/黑B7(背)，其余为模特。
+  - w_mockup_extra 单面款按平铺/模特分类命名；PS 平铺脚本(wb_sticker_ps/process_black/
+    process_white/ps_batch)去下划线；BW 合成命名 ``{dx}_白BW/_黑BW`` 不变。
+  - 同步所有读取方：_register_uploads 正则、重新贴图前清理(兼容新旧命名)、_up_group/
+    _up_label 分组与标签、ps_batch/wb_sticker_ps 的 _role_from_name、check_sync glob、
+    check_upload_vs_ai 解析。改名不改读处会崩，已全部对齐。
+
 功能 v2.2.8（黑衫白墨打底显色）：
   - 「反黑」（单张 _invert_rem / 批量 batch_invert_rem）改为 black_shirt_print_optimize：
     自适应浓度白墨打底 add_white_underbase（越暗白墨越厚 max0.9/min0.05，阈值130，
@@ -105,7 +125,7 @@
 
 端口 8766（避开 01_CHECK 的 8765）。
 """
-__version__ = "2.2.8"
+__version__ = "2.3.3"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, numpy as np
 from pathlib import Path
@@ -129,6 +149,9 @@ try:
     import wb_meta
 except Exception:
     wb_meta = None
+
+# ── 命名规则（唯一出处 wb_naming.py）────────────────
+import wb_naming
 
 # ── 路径 ────────────────────────────────────────────
 WB_ROOT   = Path(r"D:\Semems WB")
@@ -293,6 +316,7 @@ def _new_uid(path):
 
 def scan_projects(force=False):
     """返回 [{dx, pairs:[...], black_variants:[...]}]。
+    注意：black_variants 现同时包含反黑(_黑*)与反白(_白*)生成的变体。
     优先读内存缓存，再读磁盘缓存，最后才全量扫描。"""
     global _SCAN_PROJECTS_CACHE
     with _SCAN_PROJECTS_CACHE["lock"]:
@@ -440,10 +464,11 @@ def _scan_projects_impl():
                 "role": role,
             })
 
-        # 黑版变体：_黑B/_黑W/_黑BW 等（含版本号 _黑B1），group_id 强制归属到对应 pair 以支持前端分组
+        # 黑/白版变体：_黑B/_黑W/_黑BW / _白B/_白W/_白BW 等（含版本号），
+        # 由反黑/反白生成，没有对应 AI 图，单独展示不显示"缺AI图"。
         black_variants = []
         for rf in sorted(rem_files):
-            if rf in covered_rem or "_黑" not in rf:
+            if rf in covered_rem or ("_黑" not in rf and "_白" not in rf):
                 continue
             stem = rf[:-len("_cut.png")]
             base_stem, version, base_role = _parse_stem(stem, dx)
@@ -642,8 +667,10 @@ def rembg_one_file(dx, ai_file):
     print(f"  [重去背] {dx}/{ai_file}: 暂存1张, 启动美图...", flush=True)
     print(f"  ⚠ 美图将接管屏幕，请勿动键鼠，等待脚本结束。", flush=True)
     try:
+        # 单张重去背：用户已显式指定某张图，跳过 B/W 配对预检（同批量去背的修复），
+        # 否则单面款会被 precheck_pairs 判为"配对不完整"而直接退出、美图不弹。
         proc = run_minimized(
-            [sys.executable, str(MEITU_SCRIPT)],
+            [sys.executable, str(MEITU_SCRIPT), "--skip-precheck"],
             cwd=str(MEITU_SCRIPT.parent),
         )
         ok = proc.returncode == 0
@@ -957,6 +984,32 @@ def black_shirt_print_optimize(design):
     return step2
 
 
+# ── 反黑/反白统一反相（替代旧版白墨打底+伽马显色）────────────────────────
+def invert_design(design):
+    """反黑/反白统一反相（智能反相：LAB 只翻 L 通道、保留 a/b 色相）：仅处理非透明像素，透明背景不动。
+    黑白图干净反转(白→黑/黑→白)；彩色图变同色相的亮/暗版，不变互补色，适合保品牌色。
+    黑衫(反黑)靠反相本身把暗图翻亮即显色，无需白墨打底 —— 与“黑衫不加白墨”一致。
+    """
+    if getattr(design, "mode", None) != "RGBA":
+        design = design.convert("RGBA")
+    arr = np.array(design)
+    rgb = arr[..., :3].astype(np.float32)
+    alpha = arr[..., 3].astype(np.float32)
+    valid = alpha > 0.01
+    if not valid.any():
+        return design
+    rgb_u = rgb.astype(np.uint8)
+    lab = cv2.cvtColor(rgb_u, cv2.COLOR_RGB2LAB).astype(np.float32)
+    L, A, B = lab[..., 0], lab[..., 1], lab[..., 2]
+    L_new = 255.0 - L  # 翻亮度，保留 a/b 色相
+    lab_new = np.stack([L_new, A, B], axis=-1).astype(np.uint8)
+    bgr = cv2.cvtColor(lab_new, cv2.COLOR_LAB2BGR)
+    out_rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).astype(np.float32)
+    out_rgb = np.clip(out_rgb, 0, 255)
+    out = np.dstack([out_rgb, arr[..., 3]])
+    return Image.fromarray(out.astype(np.uint8), "RGBA")
+
+
 # ── 批量反相：对多个 DX 的非黑版 _cut.png 反相并跑贴图流水线 ────────────────────────
 def batch_invert_rem(dx_list, mode="black"):
     """批量反相：对选中 DX 的所有非黑版/非白版 _cut.png 反相生成黑版或白版专用图，
@@ -996,11 +1049,8 @@ def batch_invert_rem(dx_list, mode="black"):
             dest = rem_dir / dest_name
             try:
                 img = Image.open(f).convert("RGBA")
-                # 智能显色：黑版走白墨打底流水线(极暗也显色)+保色；白版压暗亮部+保色
-                if mode == "black":
-                    inv = black_shirt_print_optimize(img)
-                else:
-                    inv = enhance_dark_print_for_black_shirt(img, shirt="white")
+                # 统一智能反相，仅处理非透明像素；黑衫靠反相本身显色，不再垫白墨
+                inv = invert_design(img)
                 role = f"黑{suffix}" if mode == "black" else f"白{suffix}"
                 inv.save(dest)
                 files.append({"src": name, "dest": dest_name})
@@ -1420,27 +1470,22 @@ class Handler(BaseHTTPRequestHandler):
                     <span class="btn-stem">{stem}</span>
                     </div></div>'''
 
+            # — 反相图：同一款所有反相图（黑B/黑W/白B/白W…）放同一行，
+            #    允许混色（特例：02_REM_BG 反相图不同颜色也可同行）—
             black_variants = p.get("black_variants", [])
-            black_by_base = defaultdict(list)
-            for bv in black_variants:
-                black_by_base[bv.get("base_stem", bv["stem"])].append(bv)
-            for base_stem in sorted(black_by_base):
-                bvs = black_by_base[base_stem]
-                role = bvs[0].get("base_role", "黑版")
-                gid = bvs[0].get("group_id", "")
-                blocks = []
-                for bv in _sort_versions(bvs):
-                    v = bv.get("version", "")
-                    v_label = "原" if v == "" else f"v{v}"
-                    blocks.append(
-                        f'<div class="version-block black-variant-block" data-stem="{bv["stem"]}">'
-                        f'<div class="version-label">{v_label}</div>'
-                        f'{_render_black_cell(dx, bv)}</div>'
+            if black_variants:
+                cells = [ _render_black_cell(dx, bv)
+                          for bv in sorted(black_variants, key=lambda x: x["stem"]) ]
+                if cells:
+                    bvar_html = (
+                        f'<div class="up-row">'
+                        f'<div class="up-row-badge"><span class="badge badge-other">反相</span></div>'
+                        f'<div class="up-row-imgs bv-imgs">' + ''.join(cells) + '</div>'
+                        f'</div>'
                     )
-                rows.append(
-                    f'<div class="pair black-variant-row" data-kind="black-variant" data-group-id="{gid}">'
-                    f'<div class="stem"><span class="badge badge-other">{role}</span></div>'
-                    f'<div class="versions-row">{ "".join(blocks) }</div></div>')
+                    rows.append(
+                        f'<div class="pair black-variant-row" data-kind="black-variant">'
+                        f'<div class="up-rows">{ bvar_html }</div></div>')
 
             rows_html = "\n".join(rows)
             up_dir = BASE / dx / "03_UPLOAD"
@@ -1557,16 +1602,19 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .upload-bar .tag-no {{ background:#4d1a1a; color:#f87171; padding:1px 7px; border-radius:3px; font-weight:600; }}
 .up-header {{ display:flex; align-items:center; gap:8px; }}
 .up-count {{ color:#888; font-size:12px; }}
-.up-gallery {{ display:flex; flex-direction:column; gap:12px; }}
-.up-group {{ display:flex; flex-direction:column; gap:5px; }}
-.up-group-header {{ display:flex; align-items:center; }}
-.up-group-imgs {{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }}
+.up-rows {{ display:flex; flex-direction:column; gap:12px; align-items:flex-start; }}
+.up-row {{ display:flex; flex-direction:row; gap:12px; align-items:flex-start; }}
+.up-row-badge {{ flex:0 0 auto; display:flex; align-items:flex-start; padding-top:4px; }}
+.up-row-imgs {{ display:flex; flex-direction:row; flex-wrap:wrap; gap:12px; align-items:flex-start; }}
+.bv-imgs {{ gap:14px; }}
 .up-item {{ display:flex; flex-direction:column; align-items:center; width:auto; }}
 .up-thumb {{ width:100%; height:220px; border-radius:6px; overflow:hidden; background:#fff; cursor:pointer; position:relative; border:1px solid #333; }}
 .up-thumb img {{ width:100%; height:100%; object-fit:contain; transition:transform .15s; }}
 .up-thumb:hover img {{ transform:scale(1.06); }}
 .up-label {{ color:#aaa; font-size:13px; margin-top:6px; text-align:center; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 .badge-other {{ background:#424242; color:#fff; }}
+.badge-black {{ background:#111; color:#fff; border:1px solid #555; }}
+.badge-white {{ background:#e0e0e0; color:#333; }}
 #backToTop {{ position:fixed; right:22px; bottom:28px; z-index:998; width:46px; height:46px; border-radius:50%; border:none; background:#2196F3; color:#fff; font-size:22px; cursor:pointer; box-shadow:0 2px 10px rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; transition:opacity .2s, transform .1s; }}
 #backToTop:hover {{ background:#1976D2; transform:scale(1.08); }}
 #backToTop.show {{ display:flex; }}
@@ -1851,9 +1899,10 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 continue
             name = f.name
             stem = f.stem
+            info = wb_naming.classify(dx, name)  # 命名规则解析（唯一出处 wb_naming）
             # BW 合成图
-            if stem == f"{dx}_白BW" or stem == f"{dx}_黑BW":
-                is_black = stem == f"{dx}_黑BW"
+            if info and info["kind"] == "bw":
+                is_black = info["color"] == "黑"
                 src_names = []
                 src_uids = []
                 suffixes = ("黑B", "黑W") if is_black else ("B", "W")
@@ -1878,13 +1927,17 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                     wb_meta.ensure_meta(f, stage="bw", role="黑BW" if is_black else "白BW")
                 continue
 
-            # 贴图成品：DXxxxx_黑B_黑T.jpg / DXxxxx_B_白T.jpg 等
-            m = re.match(rf"^{re.escape(dx)}_(.+?)_(白T|黑T)$", stem)
-            if m:
-                role, ttype = m.group(1), m.group(2)
-                cut_name = f"{dx}_{role}_cut.png"
-                cut_path = rem_dir / cut_name
-                if cut_path.exists():
+            # 贴图成品（平铺命名）：DXxxxx_W白T.jpg / DXxxxx_B黑T.jpg 等（面+色，无变体前缀）
+            if info and info["kind"] == "flat":
+                side, color = info["side"], info["color"]
+                role = f"{color}{side}"  # 白W/黑W/白B/黑B，用于前端分组展示
+                # 关联源去背图：优先通用版(_W/_B)，其次反色版(_黑W/_白W/_黑B/_白B)
+                registered = False
+                for cut_name in (f"{dx}_{side}_cut.png",
+                                 f"{dx}_黑{side}_cut.png", f"{dx}_白{side}_cut.png"):
+                    cut_path = rem_dir / cut_name
+                    if not cut_path.exists():
+                        continue
                     cut_meta = _meta_for(cut_path)
                     uid = cut_meta.get("uid")
                     group_id = cut_meta.get("group_id") or ""
@@ -1894,7 +1947,10 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                                                      parent_uid=uid, cut_file=cut_name)
                         except Exception as e:
                             print(f"  [贴图流水线] 贴图元数据注册失败 {f}: {e}", flush=True)
-                        continue
+                        registered = True
+                        break
+                if registered:
+                    continue
             # 兜底：至少保证 sidecar/uid_map 有条目
             try:
                 wb_meta.ensure_meta(f, stage="sticker", role=_role_from_name(name, dx))
@@ -1907,8 +1963,8 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
     def _run_one_sticker(dx, skip_black=False):
         """运行单个 DX 的贴图流水线。
         - 单面款（02_REM_BG 里只有 W 或只有 B）：走模特图贴图（white_t_mockup 胚衣）。
-        - 其它（BW / 同时有 B+W / 含黑版）：走平铺图贴图（PS 贴图 + BW 合成）。
-        返回 (ok, msg)。不退出 Photoshop，由外层任务统一控制 PS 生命周期。
+        - 其它（BW / 同时有 B+W / 含黑版）：走平铺图贴图（纯软件 PIL，不再使用 Photoshop）。
+        返回 (ok, msg)。贴图流水线本身不开也不关 Photoshop。
         skip_black=True 时平铺图流程会跳过黑T贴图（用于批量贴图）。"""
         rem_dir = BASE / dx / "02_REM_BG"
         up_dir = BASE / dx / "03_UPLOAD"
@@ -1957,9 +2013,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 name = fp.name
                 low = name.lower()
                 if low.endswith((".png", ".jpg", ".jpeg")):
-                    stem = Path(name).stem
-                    if (re.match(rf"{re.escape(dx)}_.*_(白T|黑T)$", stem) or
-                            re.match(rf"{re.escape(dx)}_(白BW|黑BW)", stem)):
+                    if wb_naming.is_generated(dx, name):  # 新/旧平铺 + 模特 + BW（规则见 wb_naming）
                         try:
                             fp.unlink()
                             print(f"  [贴图流水线] 清理旧文件: {dx}/{name}", flush=True)
@@ -2082,9 +2136,8 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         return ok, msg
 
     def _run_sticker_task(dx_list, skip_black=False):
-        """按顺序跑完一组 DX 的贴图流水线，PS 全程只开一次，全部做完再退出。
+        """按顺序跑完一组 DX 的贴图流水线（纯软件 PIL，不使用 Photoshop）。
         返回 [(dx, ok, msg), ...]。"""
-        quit_ps_script = Path(r"E:\Claude code\ps\quit_ps.py")
         results = []
         acquired = False
         task_name = "批量平铺图贴图" if len(dx_list) > 1 else "平铺图贴图"
@@ -2101,15 +2154,12 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 results.append((dx, ok, msg))
                 status = "✅" if ok else "❌"
                 print(f"  {status} {dx}: {msg}", flush=True)
-            _set_ps_status(True, task_name, "", f"{len(dx_list)}/{len(dx_list)}", "全部完成，正在退出 Photoshop")
-            print(f"[PS任务] 全部完成，准备退出 Photoshop\n", flush=True)
+            _set_ps_status(True, task_name, "", f"{len(dx_list)}/{len(dx_list)}", "全部完成")
+            print(f"[PS任务] 全部完成\n", flush=True)
         finally:
             if acquired:
-                if quit_ps_script.exists():
-                    try:
-                        run_minimized([sys.executable, str(quit_ps_script)], wait=True, timeout=60)
-                    except Exception as e:
-                        print(f"  [PS任务] 退出PS失败: {e}", flush=True)
+                # 贴图流水线已是纯软件（PIL），不再使用 Photoshop，故不再执行退出 PS 的清理，
+                # 否则会误把用户自己打开的 Photoshop 关掉。
                 _clear_ps_status()
                 _PS_TASK_LOCK.release()
         return results
@@ -2134,7 +2184,6 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         if not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
             self._send_json({"ok": False, "msg": "DX号非法"}); return
         ps_script = Path(r"E:\\Claude code\\ps\\ps_batch_one.py")
-        quit_ps_script = Path(r"E:\\Claude code\\ps\\quit_ps.py")
         if not ps_script.exists():
             self._send_json({"ok": False, "msg": "BW合成脚本不存在"}); return
         # 保持立即返回，后台线程获取 PS 锁后再运行，避免与贴图任务冲突
@@ -2150,12 +2199,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 print(f"  [BW合成] 后台注册失败: {e}", flush=True)
             finally:
                 if acquired:
-                    if quit_ps_script.exists():
-                        try:
-                            print(f"  [BW合成] 正在退出 Photoshop...", flush=True)
-                            run_minimized([sys.executable, str(quit_ps_script)], wait=True, timeout=30)
-                        except Exception as e:
-                            print(f"  [BW合成] 退出PS失败: {e}", flush=True)
+                    # BW 合成为纯软件（PIL），不再使用 Photoshop，不再执行退出 PS 清理
                     _clear_ps_status()
                     _PS_TASK_LOCK.release()
         import threading
@@ -2183,12 +2227,13 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         if not files:
             return '<div class="upload-bar empty"><span class="tag-no">\u23f3 \u672a\u8d34\u56fe</span></div>'
 
-        # 按 BW / B / W / 其他 分组
+        # 按 衫色（黑/白）分行：同一行都是同色（白BW 归白行、黑BW 归黑行），
+        #    正(B)/背(W)/BW 横排并排；BW 设计不再单独成组，只按衫色分 —
         groups = {}
         for f in files:
-            g = self._up_group(f.name, dx)
+            g = self._up_color_of(f.name, dx)
             groups.setdefault(g, []).append(f)
-        group_order = ['BW', 'B', 'W', '其他']
+        group_order = ['黑', '白', '其他']
 
         rows = []
         for g in group_order:
@@ -2211,41 +2256,47 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 )
             if not thumbs:
                 continue
-            badge_class = {'BW': 'badge-bw', 'B': 'badge-b', 'W': 'badge-w'}.get(g, 'badge-other')
+            badge_class = {'黑': 'badge-black', '白': 'badge-white'}.get(g, 'badge-other')
             rows.append(
-                f'<div class="up-group">'
-                f'<div class="up-group-header"><span class="badge {badge_class}">{g}</span></div>'
-                f'<div class="up-group-imgs">' + ''.join(thumbs) + '</div>'
+                f'<div class="up-row">'
+                f'<div class="up-row-badge"><span class="badge {badge_class}">{g}</span></div>'
+                f'<div class="up-row-imgs">' + ''.join(thumbs) + '</div>'
                 f'</div>'
             )
 
-        gallery = '<div class="up-gallery">' + ''.join(rows) + '</div>'
+        gallery = '<div class="up-rows">' + ''.join(rows) + '</div>'
         return f'<div class="upload-bar has-up"><div class="up-header"><span class="tag-up">\U0001f4ce \u5df2\u8d34\u56fe</span><span class="up-count">{len(files)} 张</span></div>{gallery}</div>'
 
     def _up_group(self, name, dx):
-        """根据文件名判断成品属于 BW / B / W / 其他；支持 B1/W2/BW1/WB1 等版本号。"""
-        stem = Path(name).stem
-        # 去掉 _白T/_黑T 后提取基础 role
-        role_part = re.sub(r'_(白T|黑T)$', '', stem)
-        role_part = role_part[len(dx)+1:] if role_part.startswith(dx + "_") else role_part
-        role_part = re.sub(r'\d+$', '', role_part)
-        if role_part in ('BW', 'WB'):
-            return 'BW'
-        if role_part == 'B':
-            return 'B'
-        if role_part == 'W':
-            return 'W'
-        return '其他'
+        """根据文件名判断成品属于 BW / B / W / 其他（规则见 wb_naming.group_of）。"""
+        return wb_naming.group_of(dx, name)
+
+    def _up_color_of(self, name, dx):
+        """03_UPLOAD 画廊按衫色分行：只看衫色（黑/白），BW 设计按衫色归行
+        （白BW→白行、黑BW→黑行），不再单独分 BW 组。"""
+        stem = wb_naming.stem_of(name)
+        info = wb_naming.classify(dx, stem)
+        if info and info.get("color") in ("黑", "白"):
+            return info["color"]
+        # 旧命名兼容
+        if "黑" in stem:
+            return "黑"
+        if "白" in stem:
+            return "白"
+        return "其他"
 
     def _up_label(self, name, dx):
-        """生成成品缩略图下方的小标签（如 白T / 黑T / 白 / 黑 / v1）。"""
-        stem = Path(name).stem
-        label = stem[len(dx):] if stem.startswith(dx) else stem
-        label = label.strip('_')
-        # 去掉基础分组标识（含版本号），保留颜色/版型/版本描述
-        label = re.sub(r'^(B|W|BW|WB)\d*_', '', label)
-        label = label.replace('_', ' ').strip()
-        return label if label else '成品'
+        """生成成品缩略图下方的小标签（规则见 wb_naming.label_of）。"""
+        return wb_naming.label_of(dx, name)
+
+    def _bv_color(self, stem):
+        """黑版变体 stem 形如 DXxxxx_黑B / DXxxxx_白W / DXxxxx_黑BW → 取衫色 黑/白。"""
+        suf = stem.split("_", 1)[1] if "_" in stem else ""
+        if suf.startswith("黑"):
+            return "黑"
+        if suf.startswith("白"):
+            return "白"
+        return "其他"
 
     # \u653e\u5927\u53bb\u80cc\u56fe\u52302046x2046
     def _upscale_rem(self, dx, file):
@@ -2306,11 +2357,8 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
         try:
             img = Image.open(src).convert("RGBA")
-            # 智能显色：黑版走白墨打底流水线(极暗也显色)+保色；白版压暗亮部+保色
-            if mode == "black":
-                inv = black_shirt_print_optimize(img)
-            else:
-                inv = enhance_dark_print_for_black_shirt(img, shirt="white")
+            # 统一智能反相，黑衫靠反相本身显色，不再垫白墨打底
+            inv = invert_design(img)
             role = f"黑{suffix}" if mode == "black" else f"白{suffix}"
             inv.save(dest)
         except Exception as e:

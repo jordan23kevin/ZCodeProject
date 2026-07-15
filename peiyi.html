@@ -251,13 +251,66 @@ var META_FIELDS = [
   {k:'highest_y', label:'最高像素点y'},
   {k:'center_x',  label:'中心点x (画布宽1340)', full:true},
 ];
-// 与后端 PEIYI_META_FIELDS 默认值保持一致：中心点x 默认 670（画布中点）
-var META_DEFAULTS = {width:0, height:0, rotation:0, highest_y:0, center_x:670};
+// 前端不再预填默认值：未填写时输入框留空，由后端判断五项是否齐全。
 
 // 图片墙数据缓存 + 低分排前开关 + 抽屉当前状态
 var GALLERY_DATA = {};   // category -> items[]
 var LOW_FIRST = false;   // 低分排前开关
 var DRAWER = {category:null, name:null, stem:null, url:null, versions:[], current:null, sel:null};
+
+// 自动保存防抖：每张素材一个待保存 payload，输入停止 600ms 后落盘；
+// 页面关闭/刷新前强制 flush，避免 change 事件未触发就丢失数据。
+var PENDING_SAVES = {};  // key(category/name) -> {payload, thumbEl, timer}
+
+function debounce(fn, ms){
+  var t;
+  return function(){
+    var args=arguments, self=this;
+    clearTimeout(t);
+    t=setTimeout(function(){ fn.apply(self, args); }, ms);
+  };
+}
+
+function collectMetaPayload(inputs, key, name){
+  var payload={category:key, name:name};
+  inputs.forEach(function(mi){
+    var dk=mi.getAttribute('data-k');
+    if(dk.indexOf('bw.')===0){
+      payload.bw=payload.bw||{};
+      payload.bw[dk.substring(3)]=mi.value;
+    } else {
+      payload[dk]=mi.value;
+    }
+  });
+  return payload;
+}
+
+function saveMetaSync(payload){
+  // 页面关闭前同步落盘，确保数据一定发出去
+  try{
+    var xhr=new XMLHttpRequest();
+    xhr.open('POST','/api/peiyi/meta', false);
+    xhr.setRequestHeader('Content-Type','application/json');
+    xhr.send(JSON.stringify(payload));
+  }catch(e){}
+}
+
+function flushPendingSaves(sync){
+  for(var k in PENDING_SAVES){
+    var p=PENDING_SAVES[k];
+    if(p.timer) clearTimeout(p.timer);
+    if(sync){
+      saveMetaSync(p.payload);
+    } else {
+      saveMeta(p.payload, p.payload.category, p.payload.name, p.thumbEl);
+    }
+  }
+  PENDING_SAVES={};
+}
+
+window.addEventListener('beforeunload', function(e){
+  flushPendingSaves(true);
+});
 
 function log(s){
   var b=document.getElementById('logBox');
@@ -391,7 +444,8 @@ function metaGroupInputs(m, isBw){
   var h='';
   META_FIELDS.forEach(function(f){
     var cls = f.full ? 'mf full' : 'mf';
-    var val = (m[f.k]!=null) ? m[f.k] : META_DEFAULTS[f.k];
+    // 未填写的字段直接留空，不再预填 0 / 670
+    var val = (m[f.k]!=null && m[f.k]!=='') ? m[f.k] : '';
     h += '<div class="'+cls+'"><label title="'+f.label+'">'+f.label+'</label>'+
          '<input type="number" step="any" data-k="'+prefix+f.k+'" value="'+val+'"></div>';
   });
@@ -418,7 +472,7 @@ function buildMetaGroups(key, meta, it){
 // 构建单张胚衣卡片
 function buildThumb(key, it){
   var meta = it.meta || {};
-  for(var mk in META_DEFAULTS){ if(!(mk in meta) || meta[mk]==null) meta[mk]=META_DEFAULTS[mk]; }
+  // 不再用 META_DEFAULTS 预填，未填写字段保持为空
 
   var metaHtml=buildMetaGroups(key, meta, it);
 
@@ -442,7 +496,7 @@ function buildThumb(key, it){
     '<img src="'+it.url+'" loading="lazy" title="点击在文件夹中打开">'+
     '<div class="nm" title="'+it.name+'">'+it.name+'</div>'+
     maskActions +
-    metaHtml;
+    '<div class="meta">'+metaHtml+'</div>';
 
   // 评分角标 → 打开版本抽屉（阻止冒泡，不触发"打开文件夹"）
   t.querySelector('.sbadge').onclick=function(e){ e.stopPropagation(); openDrawer(key, it.name, it.url); };
@@ -466,20 +520,26 @@ function buildThumb(key, it){
   // W白/W黑 有两组（①单面款 / ②双面款W+B）：第二组字段 data-k 以 "bw." 开头，
   // 收集时归入 payload.bw 对象，后端据此写 "bw" 子块。
   var inputs=t.querySelectorAll('.meta input');
+  var saveKey = key + '/' + it.name;
+  var doSave = debounce(function(){
+    var p = PENDING_SAVES[saveKey];
+    if(!p) return;
+    if(p.timer) clearTimeout(p.timer);
+    delete PENDING_SAVES[saveKey];
+    saveMeta(p.payload, p.payload.category, p.payload.name, p.thumbEl);
+  }, 600);
   inputs.forEach(function(inp){
-    inp.addEventListener('change', function(){
-      var payload={category:key, name:it.name};
-      inputs.forEach(function(mi){
-        var dk=mi.getAttribute('data-k');
-        if(dk.indexOf('bw.')===0){
-          payload.bw=payload.bw||{};
-          payload.bw[dk.substring(3)]=mi.value;
-        } else {
-          payload[dk]=mi.value;
-        }
-      });
-      saveMeta(payload, key, it.name, t);
-    });
+    // 输入过程中实时暂存、防抖保存；离开输入框也立即触发一次保存
+    var trigger = function(){
+      PENDING_SAVES[saveKey] = {
+        payload: collectMetaPayload(inputs, key, it.name),
+        thumbEl: t,
+        timer: null
+      };
+      doSave();
+    };
+    inp.addEventListener('input', trigger);
+    inp.addEventListener('change', trigger);
   });
   // 遮罩按钮：生成 / 遮罩版本(抽屉) / 重新生成
   var genBtn = t.querySelector('.genmask');

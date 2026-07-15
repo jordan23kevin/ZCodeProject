@@ -4197,6 +4197,13 @@ def _peiyi_read_meta(dest_dir, name):
         return None
 
 
+def _meta_filled(meta):
+    """判断一组5个贴图参数是否全部已填写（非 None、非空字符串）。"""
+    if not isinstance(meta, dict):
+        return False
+    return all(meta.get(k) not in (None, '') for k, _, _ in PEIYI_META_FIELDS)
+
+
 @app.route('/api/peiyi/list')
 def api_peiyi_list():
     """列出各分类已存素材（用于画廊预览），含每张图的贴图参数 meta。"""
@@ -4222,21 +4229,21 @@ def api_peiyi_list():
                 fp = d / fn
                 try:
                     st = fp.stat()
-                    meta = _peiyi_read_meta(d, fn)
-                    unfilled = (meta is None)   # 尚未填写五项数据
-                    if unfilled:
-                        meta = {k: default for k, _, default in PEIYI_META_FIELDS}
-                    # 保证 bw 第二套字段存在（缺省用默认值），便于前端渲染第二组输入框；
-                    # 对于 W白/W黑 这类需要两组的素材，未填时 bw_missing=True（顶部"待填"逻辑）
+                    meta = _peiyi_read_meta(d, fn) or {}
+                    # 保证顶层与 bw 第二套字段存在（None 表示未填），便于前端渲染空输入框
+                    for k, _, _ in PEIYI_META_FIELDS:
+                        meta.setdefault(k, None)
                     if not isinstance(meta.get('bw'), dict):
-                        meta['bw'] = {k: default for k, _, default in PEIYI_META_FIELDS}
+                        meta['bw'] = {k: None for k, _, _ in PEIYI_META_FIELDS}
+                    else:
+                        for k, _, _ in PEIYI_META_FIELDS:
+                            meta['bw'].setdefault(k, None)
+                    # 只有五项全部填写才算完成；部分填写仍视为待填，排在最前
+                    unfilled = not _meta_filled(meta)
                     # 双面款(W+B)第二组参数缺失标记（仅 W白/W黑 需要两组；B面只一组）
                     bw_missing = False
                     if category in ('W白', 'W黑'):
-                        bw = meta.get('bw') or {}
-                        bw_missing = not all(
-                            (bw.get(k) not in (None, '', 0)) for k, _, _ in PEIYI_META_FIELDS
-                        )
+                        bw_missing = not _meta_filled(meta.get('bw'))
                     # 遮罩状态（body_mask / occluder_mask / occluder / parse）
                     stem, _ = os.path.splitext(fn)
                     occ_mask_path = d / (stem + '_occluder_mask.png')
@@ -4666,23 +4673,25 @@ def api_peiyi_meta():
         except Exception:
             existing = {}
 
-    def _num(v, fallback):
+    def _num(v):
+        """空值/空字符串存为 None；有值则转 float。"""
         if v is None or v == '':
-            return fallback
+            return None
         try:
             return float(v)
         except (TypeError, ValueError):
-            return fallback
+            return None
 
     meta = {}
-    for k, _, default in PEIYI_META_FIELDS:
-        meta[k] = _num(data.get(k), existing.get(k, default))
+    for k, _, _ in PEIYI_META_FIELDS:
+        # payload 中带该字段则按新值存（含空值=清空），未带则保留已有值
+        meta[k] = _num(data.get(k)) if k in data else existing.get(k)
     # 第二组（双面款 W+B）：来自 payload 的 bw 对象；payload 未带则保留原 bw
     bw_in = data.get('bw')
     if isinstance(bw_in, dict):
         bw = {}
-        for k, _, default in PEIYI_META_FIELDS:
-            bw[k] = _num(bw_in.get(k), existing.get('bw', {}).get(k, default))
+        for k, _, _ in PEIYI_META_FIELDS:
+            bw[k] = _num(bw_in.get(k)) if k in bw_in else existing.get('bw', {}).get(k)
         meta['bw'] = bw
     elif isinstance(existing.get('bw'), dict):
         meta['bw'] = existing['bw']
