@@ -232,8 +232,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--black-t-ps",
         action="store_true",
-        help="黑T PS 风格：Normal 100% + Soft Light 布料光影 + Blend If 高光提亮 + 轻位移"
+        help="黑T PS 风格：仅暗谷压暗（折进去的深褶处印花压暗，平整区不变，不偏色）"
              "（设计图须为已反相黑衫版 _黑*_cut.png）",
+    )
+    parser.add_argument(
+        "--black-t-plain",
+        action="store_true",
+        help="黑T 直贴：不分析褶皱、不改任何颜色/明暗，仅按五参定位原色 Normal 贴在黑T上"
+             "（保留手部遮挡 occluder；设计图须为已反相黑衫版 _黑*_cut.png）",
     )
     # ---- 黑T PS 风格：Difference 提取大褶皱 → 软 Mask → 仅大褶皱区局部融合 ----
     parser.add_argument(
@@ -464,6 +470,29 @@ def main() -> None:
                 blur_radius=args.blur,
             )
             mode_tag = " [BlackT PS]"
+        elif args.black_t_plain:
+            # 黑T 直贴：不分析褶皱、不改动任何颜色/明暗，仅按五参定位原色 Normal 贴。
+            # 禁用 tpl_dir（不加载 disp/occlusion/shadow/highlight，关闭全部布料分析），
+            # 仅保留手部遮挡 occluder（遮挡物本身，不改色）。
+            result = apply_mockup_transform(
+                design_path=args.design,
+                output_path=args.output,
+                template_path=template_path,
+                final_w=final_w,
+                final_h=final_h,
+                rotation_degrees=rotate,
+                effective_top_y=top,
+                effective_center_x=center,
+                blend_mode=None,
+                quality=quality,
+                shirt_color="black",
+                prepare_method="unpremultiply",
+                realism=False,
+                tpl_dir=None,
+                disp_strength=0.0,
+                occluder=args.occluder,
+            )
+            mode_tag = " [BlackT Plain]"
         else:
             result = apply_mockup_transform(
                 design_path=args.design,
