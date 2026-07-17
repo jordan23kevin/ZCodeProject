@@ -239,11 +239,20 @@ function invertRem(dx,file,stem,cellId,mode){
   var prefix = mode=='black' ? '黑' : '白';
   var title = mode=='black' ? '黑版白色剪影贴图' : '白版黑色剪影贴图';
   if(!confirm('反相 '+file+' 生成'+title+'？\n将生成 '+dx+'_'+prefix+stem.replace(dx+'_','')+'_cut.png，并自动重跑该款全部贴图+BW合成。'))return;
-  showToast('⏳ 反相并重新贴图/BW合成…');
+  showToast('⏳ 已加入队列，等待后台处理…');
   fetch('/invert-rem?dx='+dx+'&file='+encodeURIComponent(file)+'&mode='+mode).then(function(r){return r.json();}).then(function(d){
+    if(!d.ok){showToast('❌ '+d.msg);return;}
     showToast(d.msg);
-    if(d.ok) setTimeout(function(){location.reload();},3000);
-  });
+    var pollTimer=setInterval(function(){
+      fetch('/invert-queue-status').then(function(r){return r.json();}).then(function(res){
+        if(res.queue_len===0 && !res.running && res.last_result){
+          clearInterval(pollTimer);
+          showToast((res.last_result.ok?'✅':'⚠️')+' '+res.last_result.msg);
+          setTimeout(function(){location.reload();},3000);
+        }
+      });
+    },2000);
+  }).catch(function(e){showToast('❌ 请求失败：'+e);});
 }
 function refreshRem(dx,stem,cellId){
   showToast('🔄 刷新 '+stem+' 去背预览…');

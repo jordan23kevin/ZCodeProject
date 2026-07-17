@@ -125,9 +125,9 @@
 
 端口 8766（避开 01_CHECK 的 8765）。
 """
-__version__ = "2.3.4"
+__version__ = "2.3.6"
 VERSION = __version__
-import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, numpy as np
+import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, numpy as np
 from pathlib import Path
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, quote
@@ -142,6 +142,32 @@ if sys.stdout.encoding != 'utf-8':
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
     except Exception:
         pass
+
+
+class _SafeStream:
+    """防止 stdout/stderr 句柄被桥接进程关闭后，print 抛出 I/O operation on closed file。
+    只拦截写入异常，不影响功能逻辑。"""
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, s):
+        try:
+            self._stream.write(s)
+        except Exception:
+            pass
+
+    def flush(self):
+        try:
+            self._stream.flush()
+        except Exception:
+            pass
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+sys.stdout = _SafeStream(sys.stdout)
+sys.stderr = _SafeStream(sys.stderr)
 
 # ── UID 元数据系统 ──────────────────────────────────
 try:
@@ -1010,6 +1036,106 @@ def invert_design(design):
     return Image.fromarray(out.astype(np.uint8), "RGBA")
 
 
+# ── 反相异步队列（单张反黑/反白自动排队，避免页面刷新打断后续请求）────────────────────────────
+_INVERT_QUEUE = queue.Queue()
+_INVERT_STATUS = {
+    "running": False,
+    "queue_len": 0,
+    "current": "",
+    "last_result": None,
+}
+_INVERT_STATUS_LOCK = threading.Lock()
+_INVERT_WORKER_STARTED = False
+
+
+def _process_invert_task(dx, file, mode):
+    """执行单个反相任务：生成变体去背图，再跑完整贴图流水线。返回 (ok, msg)。"""
+    src = BASE / dx / "02_REM_BG" / file
+    if not src.exists():
+        return False, f"{file} 不存在"
+
+    stem = file[:-len("_cut.png")]
+    suffix = stem[len(dx)+1:] if stem.startswith(dx + "_") else ""
+    if not suffix:
+        return False, "无法解析文件名后缀"
+    prefix = "黑" if mode == "black" else "白"
+    dest_name = f"{dx}_{prefix}{suffix}_cut.png"
+    dest = BASE / dx / "02_REM_BG" / dest_name
+
+    img = Image.open(src).convert("RGBA")
+    inv = invert_design(img)
+    role = f"黑{suffix}" if mode == "black" else f"白{suffix}"
+    inv.save(dest)
+
+    # 注册变体元数据
+    if wb_meta is not None:
+        try:
+            src_meta = _meta_for(src)
+            parent_uid = src_meta.get("uid")
+            gid = src_meta.get("group_id") or ""
+            if parent_uid:
+                wb_meta.register_rembg(dest, uid=_new_uid(dest), group_id=gid,
+                                       role=role, parent_uid=parent_uid,
+                                       ai_file=file)
+            else:
+                wb_meta.ensure_meta(dest, group_id=gid, stage="rembg", role=role)
+        except Exception as e:
+            print(f"  [反相队列] 元数据注册失败 {dest}: {e}", flush=True)
+
+    # 清缩略图缓存
+    for tf in THUMB_DIR.glob(f"{dx}__rem__{dest_name}.*"):
+        try:
+            tf.unlink()
+        except Exception:
+            pass
+
+    # 反相后重跑该款完整贴图+BW合成流水线
+    results = Handler._run_sticker_task([dx])
+    ok, msg = results[0][1], results[0][2]
+    return ok, f"已生成 {dest_name}，{msg}"
+
+
+def _invert_worker():
+    """后台线程：串行处理反相队列里的任务。"""
+    while True:
+        task = _INVERT_QUEUE.get()
+        if task is None:
+            _INVERT_QUEUE.task_done()
+            break
+        dx = task["dx"]
+        file = task["file"]
+        mode = task["mode"]
+        label = "反黑" if mode == "black" else "反白"
+        try:
+            with _INVERT_STATUS_LOCK:
+                _INVERT_STATUS["running"] = True
+                _INVERT_STATUS["queue_len"] = _INVERT_QUEUE.qsize()
+                _INVERT_STATUS["current"] = f"{dx}/{file}({label})"
+                _INVERT_STATUS["last_result"] = None
+            _set_ps_status(True, label, dx, "排队任务", f"处理 {file}")
+            ok, msg = _process_invert_task(dx, file, mode)
+            with _INVERT_STATUS_LOCK:
+                _INVERT_STATUS["last_result"] = {"ok": ok, "msg": msg}
+        except Exception as e:
+            with _INVERT_STATUS_LOCK:
+                _INVERT_STATUS["last_result"] = {"ok": False, "msg": f"异常: {e}"}
+        finally:
+            with _INVERT_STATUS_LOCK:
+                _INVERT_STATUS["running"] = False
+                _INVERT_STATUS["queue_len"] = _INVERT_QUEUE.qsize()
+            _INVERT_QUEUE.task_done()
+
+
+def _start_invert_worker():
+    """确保后台反相 worker 已启动（幂等）。"""
+    global _INVERT_WORKER_STARTED
+    if _INVERT_WORKER_STARTED:
+        return
+    t = threading.Thread(target=_invert_worker, daemon=True, name="InvertWorker")
+    t.start()
+    _INVERT_WORKER_STARTED = True
+
+
 # ── 批量反相：对多个 DX 的非黑版 _cut.png 反相并跑贴图流水线 ────────────────────────
 def batch_invert_rem(dx_list, mode="black"):
     """批量反相：对选中 DX 的所有非黑版/非白版 _cut.png 反相生成黑版或白版专用图，
@@ -1247,6 +1373,8 @@ class Handler(BaseHTTPRequestHandler):
             self._resticker(dx, file)
         elif path == "/invert-rem":
             self._invert_rem(dx, file)
+        elif path == "/invert-queue-status":
+            self._invert_queue_status()
         elif path == "/batch-invert-rem":
             self._batch_invert_rem()
         elif path == "/batch-invert-result":
@@ -2495,7 +2623,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             except Exception:
                 pass
 
-    # 反相去背图并自动跑贴图流水线
+    # 反相去背图并自动跑贴图流水线（异步队列，连续点击自动排队）
     def _invert_rem(self, dx, file):
         from urllib.parse import parse_qs
         if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or "/" in file or "\\" in file:
@@ -2521,48 +2649,20 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         if not src.exists():
             self._send_json({"ok": False, "msg": f"{file} 不存在"}); return
 
-        # 生成目标文件名：DX0255_B_cut.png -> DX0255_黑B_cut.png / DX0255_白B_cut.png
-        stem = file[:-len("_cut.png")]
-        suffix = stem[len(dx)+1:] if stem.startswith(dx + "_") else ""
-        if not suffix:
-            self._send_json({"ok": False, "msg": "无法解析文件名后缀"}); return
-        prefix = "黑" if mode == "black" else "白"
-        dest_name = f"{dx}_{prefix}{suffix}_cut.png"
-        dest = BASE / dx / "02_REM_BG" / dest_name
+        # 加入异步队列，后台串行执行
+        _start_invert_worker()
+        _INVERT_QUEUE.put({"dx": dx, "file": file, "mode": mode})
+        with _INVERT_STATUS_LOCK:
+            _INVERT_STATUS["queue_len"] = _INVERT_QUEUE.qsize()
+        label = "反黑" if mode == "black" else "反白"
+        self._send_json({"ok": True, "queued": True,
+                         "msg": f"已加入{label}队列，等待后台处理 {file}"})
 
-        try:
-            img = Image.open(src).convert("RGBA")
-            # 统一智能反相，黑衫靠反相本身显色，不再垫白墨打底
-            inv = invert_design(img)
-            role = f"黑{suffix}" if mode == "black" else f"白{suffix}"
-            inv.save(dest)
-        except Exception as e:
-            self._send_json({"ok": False, "msg": f"反相失败: {e}"}); return
-
-        # 注册变体元数据
-        if wb_meta is not None:
-            try:
-                src_meta = _meta_for(src)
-                parent_uid = src_meta.get("uid")
-                gid = src_meta.get("group_id") or ""
-                if parent_uid:
-                    wb_meta.register_rembg(dest, uid=_new_uid(dest), group_id=gid,
-                                           role=role, parent_uid=parent_uid,
-                                           ai_file=file)
-                else:
-                    wb_meta.ensure_meta(dest, group_id=gid, stage="rembg", role=role)
-            except Exception as e:
-                print(f"  [反相] 元数据注册失败 {dest}: {e}", flush=True)
-
-        # 清缩略图缓存
-        for tf in THUMB_DIR.glob(f"{dx}__rem__{dest_name}.*"):
-            try: tf.unlink()
-            except: pass
-
-        # 反相后重跑该款完整贴图+BW合成流水线
-        results = Handler._run_sticker_task([dx])
-        ok, msg = results[0][1], results[0][2]
-        self._send_json({"ok": ok, "msg": f"已生成 {dest_name}，{msg}"})
+    # 反相队列状态查询（前端轮询）
+    def _invert_queue_status(self):
+        with _INVERT_STATUS_LOCK:
+            data = dict(_INVERT_STATUS)
+        self._send_json({"done": True, **data})
 
     # 批量反相：对选中 DX 的所有原始 _cut.png 反相，并跑完整贴图流水线
     def _batch_invert_rem(self):
@@ -2841,6 +2941,9 @@ def main():
         except Exception as e:
             print(f"  [warm] 预扫描失败: {e}", flush=True)
     threading.Thread(target=_warm_cache, daemon=True).start()
+
+    # 启动反相异步队列 worker
+    _start_invert_worker()
 
     try:
         ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
