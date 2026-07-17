@@ -5534,6 +5534,12 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
         save_registry(reg)
         log("注册表更新完成（含溯源关系）")
 
+        # 通知 check_rem 刷新缓存，确保新 DX 立即在去背预览页显示
+        try:
+            urlopen("http://127.0.0.1:8766/refresh", timeout=3)
+        except Exception:
+            pass
+
         # ── 6. 完成 ─────────────────────────────────────────────
         task_state["status"] = "completed"
         task_state["completed_at"] = datetime.now().isoformat()

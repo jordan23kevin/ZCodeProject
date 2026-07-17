@@ -137,6 +137,8 @@ function resticker(dx,file,cellId){
         if(img) img.src=img.src.split('&t=')[0]+'&t='+Date.now();
       }
     }
+  }).catch(function(e){
+    showToast('❌ 重新贴图请求失败：'+e);
   });
 }
 function rembg(dx,file){

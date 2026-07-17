@@ -1299,6 +1299,26 @@ def run_minimized(cmd, cwd=None, wait=True, **extra):
     startupinfo.wShowWindow = 7  # SW_SHOWMINNOACTIVE：最小化，不激活前台
     kwargs = {
         "startupinfo": startupinfo,
+    }
+    # 只有在不捕获输出时才创建新控制台（需要用户看到窗口，如美图秀秀）
+    # capture_output=True 时加 CREATE_NEW_CONSOLE 会冲突：stdout/stderr 被重定向到新控制台
+    # 窗口而非 Python 管道，导致 capture_output 无效、subprocess.run 可能挂起。
+    if not extra.get("capture_output"):
+        kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
+    if cwd:
+        kwargs["cwd"] = cwd
+    kwargs.update(extra)
+    if wait:
+        return subprocess.run(cmd, **kwargs)
+    return subprocess.Popen(cmd, **kwargs)
+    """Windows 下以最小化、不抢前台焦点的方式运行外部程序。
+    wait=True 阻塞等待并返回 CompletedProcess；wait=False 立即返回 Popen 对象。
+    extra 可传 capture_output、timeout 等 subprocess 参数。"""
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 7  # SW_SHOWMINNOACTIVE：最小化，不激活前台
+    kwargs = {
+        "startupinfo": startupinfo,
         "creationflags": subprocess.CREATE_NEW_CONSOLE,
     }
     if cwd:
@@ -2609,7 +2629,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 cmd += ["--tpl-dir", embryo["tpl_dir"]]
             if embryo["occluder"]:
                 cmd += ["--occluder", embryo["occluder"]]
-        proc = run_minimized(cmd, cwd=str(W_MOCKUP_ROOT), capture_output=True, text=True)
+        proc = run_minimized(cmd, cwd=str(W_MOCKUP_ROOT), capture_output=True, encoding='utf-8')
         if proc.returncode != 0:
             tail = (proc.stderr or proc.stdout or "")[-400:]
             return False, f"white_t_mockup 失败: {tail}"
