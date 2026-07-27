@@ -1,7 +1,7 @@
 # Y2 控制台 — 复现与回滚指南
 
-> 对应版本: `lovart_bridge.py v2.4.2` + `peiyi_mask.py v1.5.2` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.2` + `check_online_listed.py v1.3.20` + `temu-hengjia-engine v5.2.1` + `temu-activity-engine v4.1.3` + 贴图流水线 `ps v2.0/v2.4/v2.5` + `white_t_mockup v1.8.0` + `04_OS wb_naming v2.3.0`
-> 最后更新: 2026-07-13
+> 对应版本: `lovart_bridge.py v2.5.0`（新增价格申报视角批量处理子系统 order_price）+ `peiyi_mask.py v1.5.2` + `run_official_v53.py v6.1.1` + `wb_listing.py v2.2.2` + `check_online_listed.py v1.3.20` + `temu-hengjia-engine v5.2.1` + `temu-activity-engine v4.1.3` + 贴图流水线 `ps v2.0/v2.4/v2.5` + `white_t_mockup v1.8.0` + `04_OS wb_naming v2.3.0`
+> 最后更新: 2026-07-28
 > 贴图流水线已从 Photoshop 依赖全面转为纯软件（PIL），详见 `E:\Claude code\ps\PIPELINE.md`
 > 遮罩生成子系统（peiyi_mask / peiyi_correct）新增 torch/transformers/scipy/skimage 依赖，详见第 12 节
 
@@ -391,3 +391,45 @@ cd "E:\Claude code\Temu自动化\核价" && git log --oneline -5
 # temu-activity-engine（本地项目）
 cd "E:\Claude code\Temu自动化\报活动" && git log --oneline -5
 ```
+
+---
+
+## 10. 价格申报批量处理（order_price）专用环境
+
+> 子系统文档：`docs/order_price_automation.md`；架构：`ARCHITECTURE.md` v2.5.0 变更；更新日志：`CHANGELOG.md` v2.5.0。
+
+### 10.1 额外依赖
+
+- **Python**：Bridge 运行时为 `C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe`（自带 `playwright` sync_api）。**必须**设置 `PYTHONPATH=E:/python_packages`（本机 `cv2` 等包在此目录；order_price 本身只用 playwright/flask，但共享该环境）。
+- **Playwright（sync_api）**：`from playwright.sync_api import sync_playwright`，通过 `connect_over_cdp("http://127.0.0.1:9222")` 控制共用 Edge。安装：`pip install playwright` + `playwright install chromium`（若需首次下载浏览器内核；本机已复用系统 Edge，通常不另装）。
+- **无其他新依赖**：不引入新的 ML/图像处理包。
+
+### 10.2 Edge 共用调试端口（关键）
+
+- order_price **不自己开浏览器**，而是连已经在跑的、挂在 **9222 端口**的 Edge（用户数据目录 `C:\edge-cdp-profile`，Temu 卖家登录态保留于此）。
+- 启动/确保 Edge 的命令（由 `_ensure_edge_cdp` 在「完全没 Edge」时执行）：
+  ```bat
+  msedge --remote-debugging-port=9222 --user-data-dir=C:\edge-cdp-profile
+  ```
+- **绝不另开第二个 Edge**：若已有 Edge 但没 9222，代码会报错让你手动处理，而不是偷偷再开一个（避免登录态/端口冲突）。
+- 复现前提：**先在 Edge 登录 Temu 卖家后台**，再点 Bridge 的「📉 价格申报」→ 扫描/自动执行/批量拒绝。
+
+### 10.3 核价底价配置
+
+- 字典 `ORDER_PRICE_FLOOR` 位于 `lovart_bridge.py`（~行 4164）。这是**纯数据配置**，与 Temu 核价仓 `PRICE_MAP` 对齐。
+- 当前值：波兰52/匈牙利56/立陶宛56/德国63/捷克65/斯洛伐克67/葡萄牙76/西班牙85/比利时85/法国70/丹麦84/斯洛文尼亚84/奥地利86/荷兰89/罗马尼亚100/瑞典134/芬兰142/**意大利115**。
+- 回退/调整某站底价：改这个字典即可，无副作用。
+
+### 10.4 页面与接口
+
+- 控制台页面：`http://127.0.0.1:8765/order-price`（`order_price.html`）。
+- 后端接口：`/api/order_price/scan`（只读预览）、`/api/order_price/auto`（自动接受）、`/api/order_price/reject`（批量拒绝）、`/api/order_price/status?task_id=`（轮询）。
+- 长任务（auto/reject）异步执行，前端每 600ms 轮询 `status` 拿实时日志与每条通过价格。
+
+### 10.5 操作铁律（避免踩坑）
+
+1. **拒绝前必须填满所有原因框**（统一「价格过低」），否则 Temu 拦截「原因不能为空」。代码已改用 `textarea.fill()` 真实输入 + 轮询验证。
+2. **批量拒绝最终弹窗「全要拒 or 全不拒」**：Temu 可能自动追加额外调价单（如意大利），执行前必须核对追加项是否真低于底价，不要盲目确认。
+3. **拒绝后列表不自动刷新**：处理完按 **F5** 刷新后再复核，否则看到的还是旧数据。
+4. **页面卡住弹窗**：若开工前已堆着 >3 个确认弹窗（上次未关），代码会拒绝执行并提示先 F5 清除。
+

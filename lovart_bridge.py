@@ -1,12 +1,26 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.4.2
+Y2 Bridge Server v2.5.0
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.5.0：
+  - 新增「价格申报视角」批量处理子系统（Temu「待卖家确认」调价单列表）：
+    * 新增 /order-price 页面（order_price.html）+ 导航按钮（lovart_control.html「📉 价格申报」）。
+    * 后端新增 /api/order_price/{scan,auto,reject,status,enter} 端点：scan 只读预览、auto 自动接受(≥底价)、
+      reject 批量拒绝(<底价)、status 后台任务进度轮询。
+    * 复用 _ensure_edge_cdp 连接共用 Edge 调试端口 9222（绝不另开第二个 Edge），自动点「待卖家确认」+ 设每页 200 条。
+    * 扫描预览按核价底价聚合：接受/拒绝/跳过 + 各站「核价底价/接受最低价/拒绝最高价」。
+    * 自动接受：仅对「建议价≥底价」逐条点「调整」→ 弹窗「确认」；attempted 守卫防确认弹窗叠加；低于底价保持原样留人工。
+    * 批量拒绝：逐个勾选低于底价订单（绝不点全选）→ 批量拒绝 → 填原因「价格过低」→ 点面板外「拒绝」→
+      最终「拒绝调价」确认弹窗点「拒绝」真正提交。
+    * 核价底价字典 ORDER_PRICE_FLOOR（权威来源 Temu 核价仓 PRICE_MAP）：波兰52/匈牙利56/立陶宛56/德国63/捷克65/
+      斯洛伐克67/葡萄牙76/西班牙85/比利时85/法国70/丹麦84/斯洛文尼亚84/奥地利86/荷兰89/罗马尼亚100/瑞典134/
+      芬兰142/意大利115。
 
 变更 v2.4.2：
   - 新增遮罩生成子系统（胚衣制作 / 人物前景遮挡）：
@@ -3966,6 +3980,1018 @@ def _start_retail_price_script(label, diagnose=False):
 def activity_page():
     """Temu 报活动页面。"""
     return send_file(str(Path(__file__).parent / 'activity.html'))
+
+
+@app.route('/order-price')
+def order_price_page():
+    """Temu 价格申报视角 —— 单独页面，一键进入并自动点「待卖家确认」+ 设每页200条。"""
+    html_file = Path(__file__).parent / 'order_price.html'
+    if html_file.exists():
+        return send_file(str(html_file))
+    return "<h1>order_price.html not found</h1><p>请确保 order_price.html 与 bridge.py 在同一目录</p>", 404
+
+
+def _edge_running():
+    """是否已有 msedge 进程在运行（避免又开一个 Edge）。"""
+    try:
+        out = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq msedge.exe'],
+                             capture_output=True, text=True, timeout=10).stdout
+        return 'msedge.exe' in out.lower()
+    except Exception:
+        return False
+
+
+def _kill_edge():
+    """关闭所有 Edge 进程（用于把普通 Edge 换成带 9222 的共用 Edge）。"""
+    try:
+        subprocess.run(['taskkill', '/IM', 'msedge.exe', '/F'],
+                       capture_output=True, text=True, timeout=15)
+    except Exception:
+        pass
+
+
+def _ensure_edge_cdp(p, log, timeout=40):
+    """连接本机 Edge CDP(9222)——这是大家共用的调试端口。
+
+    规则：
+    - 9222 可达 → 直接连（使用已开的、带调试端口的 Edge，不新开）。
+    - 9222 不可达但已有其它 Edge 在跑（没带 9222）→ 先关掉它，再用标准
+      端口/配置（9222 + C:\\edge-cdp-profile）重开那「一个」共用的 Edge
+      （关掉旧的再开新的，绝不出现两个 Edge）。
+    - 9222 不可达且无任何 Edge → 同样用标准配置启动那一个共用 Edge。
+
+    返回 (browser, edge_auto_launched)。
+    """
+    import time as _t
+    import urllib.request
+    try:
+        return p.chromium.connect_over_cdp("http://127.0.0.1:9222"), False
+    except Exception:
+        pass
+    if _edge_running():
+        log.append("⚠️ 检测到已有 Edge 在运行但未带 9222 端口，将关闭它并用共用端口(9222)重新打开（只开这一个，不会多开）…")
+        _kill_edge()
+        for _ in range(20):
+            if not _edge_running():
+                break
+            _t.sleep(0.5)
+    log.append("ℹ️ 启动共用的 Edge（端口 9222）…")
+    edge = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+    if not os.path.exists(edge):
+        edge = r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+    if not os.path.exists(edge):
+        raise RuntimeError("未找到 Edge 安装路径，请先安装 Microsoft Edge。")
+    profile = r"C:\edge-cdp-profile"
+    args = [edge, "--remote-debugging-port=9222", f"--user-data-dir={profile}",
+            "--no-first-run", "--no-default-browser-check"]
+    try:
+        # DETACHED_PROCESS(0x8) + CREATE_NEW_PROCESS_GROUP(0x200)：脱离 bridge 独立存活
+        subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         creationflags=0x00000008 | 0x00000200)
+    except Exception as e:
+        raise RuntimeError(f"启动 Edge 失败：{e}")
+    deadline = _t.time() + timeout
+    while _t.time() < deadline:
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:9222/json/version", timeout=2) as r:
+                if r.status == 200:
+                    break
+        except Exception:
+            pass
+        _t.sleep(0.5)
+    else:
+        raise RuntimeError("Edge 已启动，但 CDP 端口 9222 在限定时间内未就绪，请检查是否弹出 Edge 窗口。")
+    log.append("✅ Edge 已启动（端口 9222），CDP 就绪")
+    return p.chromium.connect_over_cdp("http://127.0.0.1:9222"), True
+
+
+@app.route('/api/order_price/enter', methods=['POST'])
+def api_order_price_enter():
+    """连接本机 Edge（CDP 9222），确保打开发价格申报视角标签页，
+    自动点击「待卖家确认」标签并将每页条数设为 200。
+
+    注意：只用 p.stop() 断开 CDP 连接，绝不调用 browser.close()，
+    否则会把用户正在使用的 Edge 整体关掉。
+    """
+    log = []
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return jsonify({"ok": False, "error": "Bridge 环境未安装 playwright，无法控制 Edge。", "log": log})
+
+    TARGET = "agentseller.temu.com/main/adjust-price-manage/order-price"
+    p = sync_playwright().start()
+    try:
+        try:
+            browser, edge_auto = _ensure_edge_cdp(p, log)
+        except Exception as e:
+            return jsonify({"ok": False,
+                            "error": str(e),
+                            "detail": "若 Edge 已开但端口 9222 未启用，请先关闭所有 Edge 再用「start-edge-cdp.bat」启动。",
+                            "log": log})
+
+        # 找已有标签页，没有就新开一个
+        page = None
+        for ctx in browser.contexts:
+            for pg in ctx.pages:
+                if TARGET in pg.url:
+                    page = pg
+                    break
+            if page:
+                break
+        opened_new = False
+        if not page:
+            try:
+                ctx0 = browser.contexts[0] if browser.contexts else browser.new_context()
+                page = ctx0.new_page()
+                page.goto("https://" + TARGET, timeout=30000)
+                opened_new = True
+                log.append("🌐 已新开「价格申报视角」标签页并导航")
+            except Exception as e:
+                return jsonify({"ok": False, "error": f"无法打开价格申报视角页面：{e}", "log": log})
+
+        # 等标签栏/TAB 容器就绪
+        try:
+            page.wait_for_selector("div[class*='TAB_outerWrapper']", timeout=20000)
+            log.append("✅ 页面已加载（识别到标签栏）")
+        except Exception:
+            log.append("⚠️ 未等到标签栏，仍尝试继续操作")
+        page.wait_for_timeout(1500)
+
+        # ① 点击「待卖家确认」
+        try:
+            tab = page.locator("div[class*='TAB_tabItem']", has_text="待卖家确认").first
+            if tab.count() > 0:
+                cls = tab.get_attribute("class") or ""
+                if "TAB_active" in cls:
+                    log.append("ℹ️ 「待卖家确认」已处于选中状态，跳过点击")
+                else:
+                    tab.click(timeout=6000)
+                    log.append("✅ 已点击「待卖家确认」")
+                page.wait_for_timeout(1500)
+            else:
+                log.append("⚠️ 未找到「待卖家确认」标签（页面结构可能变化）")
+        except Exception as e:
+            log.append(f"⚠️ 点击「待卖家确认」失败：{e}")
+
+        # ② 设置每页 200 条
+        try:
+            size_select = page.locator("li[class*='PGT_sizeChanger'] div[class*='PGT_sizeSelect']").first
+            if size_select.count() > 0:
+                cur = (size_select.inner_text() or "").replace("\n", " ").strip()
+                if "200" in cur:
+                    log.append("ℹ️ 每页已是 200 条，跳过设置")
+                else:
+                    size_select.click(timeout=6000)
+                    page.wait_for_timeout(800)
+                    opt = page.locator("li[class*='cIL_item']", has_text="200").first
+                    if opt.count() > 0:
+                        opt.click(timeout=6000)
+                        log.append("✅ 已将每页条数设置为 200")
+                    else:
+                        log.append("⚠️ 未找到「200」选项，请手动选择")
+                    page.wait_for_timeout(1200)
+            else:
+                log.append("⚠️ 未找到每页条数选择器（页面结构可能变化）")
+        except Exception as e:
+            log.append(f"⚠️ 设置每页条数失败：{e}")
+
+        try:
+            url = page.url
+        except Exception:
+            url = ""
+        return jsonify({"ok": True, "log": log, "url": url, "opened_new": opened_new})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "log": log})
+    finally:
+        try:
+            p.stop()
+        except Exception:
+            pass
+
+
+# ─────────────────────────────────────────────────────────────
+# Temu 价格申报视角：按核价底价自动批量确认/拒绝
+# ─────────────────────────────────────────────────────────────
+# 核价底价（站点 -> 核价下限）。权威来源：Temu 核价仓 config/prices.py 的 PRICE_MAP。
+# 意大利站底价 115（2026-07-27 用户确认加入）。
+ORDER_PRICE_FLOOR = {
+    "波兰": 52, "匈牙利": 56, "立陶宛": 56, "德国": 63, "捷克": 65,
+    "斯洛伐克": 67, "葡萄牙": 76, "西班牙": 85, "比利时": 85, "法国": 70,
+    "丹麦": 84, "斯洛文尼亚": 84, "奥地利": 86, "荷兰": 89, "罗马尼亚": 100,
+    "瑞典": 134, "芬兰": 142, "意大利": 115,
+}
+
+# 注入到页面上下文的 JS 助手（window._op_*）。表格用嵌套结构，真实数据行靠
+# 「同时含 调整/不调整 链接」来识别；列索引按表头文本动态定位，扛结构微调。
+ORDER_PRICE_JS = r"""
+window._op_main=function(){
+  const tables=[...document.querySelectorAll('table')];
+  return tables.find(t=>t.querySelector('thead') && /单号/.test(t.querySelector('thead').innerText));
+};
+window._op_cols=function(){
+  const main=window._op_main(); if(!main) return null;
+  const ths=[...main.querySelectorAll('thead th')].map(th=>th.innerText.replace(/\n/g,' ').trim());
+  const find=(kw)=>ths.findIndex(t=>t.includes(kw));
+  return {site:find('站点'), adj:find('调整后申报价格'), order:find('单号')};
+};
+window._op_rows=function(){
+  const main=window._op_main(); if(!main) return [];
+  const cols=window._op_cols(); if(!cols) return [];
+  const rows=[];
+  for(const tr of main.querySelectorAll('tr')){
+    const links=[...tr.querySelectorAll('a')].map(a=>a.innerText.trim());
+    if(links.indexOf('调整')>=0 && links.indexOf('不调整')>=0){
+      const tds=[...tr.querySelectorAll('td')].map(td=>td.innerText.replace(/\n/g,' ').trim());
+      rows.push({order: cols.order>=0?tds[cols.order]:'', site: cols.site>=0?tds[cols.site]:'', adj: cols.adj>=0?tds[cols.adj]:''});
+    }
+  }
+  return rows;
+};
+window._op_pager=function(){
+  const sizeEl=document.querySelector("li[class*='PGT_sizeChanger']");
+  const sizeText=sizeEl?sizeEl.innerText.replace(/\n/g,' ').trim():'';
+  const pageItems=[...document.querySelectorAll('li[class*="PGT_pagerItem"]')].map(li=>li.innerText.trim()).filter(t=>/^\d+$/.test(t));
+  const act=document.querySelector("li[class*='PGT_pagerItemActive']");
+  const activePage=act?act.innerText.trim():'';
+  return {sizeText, pageItems, activePage};
+};
+window._op_click=function(order, action){
+  const main=window._op_main(); if(!main) return false;
+  const cols=window._op_cols(); if(!cols) return false;
+  for(const tr of main.querySelectorAll('tr')){
+    const tds=[...tr.querySelectorAll('td')].map(td=>td.innerText.replace(/\n/g,' ').trim());
+    const o = cols.order>=0 ? tds[cols.order] : '';
+    if(o && o.indexOf(order)>=0){
+      for(const a of tr.querySelectorAll('a')){
+        if(a.innerText.trim()===action){ a.click(); return true; }
+      }
+    }
+  }
+  return false;
+};
+window._op_confirm_modal=function(){
+  // 只找「可见」且含「确认」按钮的 弹窗容器(modal/dialog)，不断覆盖取最后一个(=最顶层)。
+  // 避免点到被堆叠的多个同名弹窗里的隐藏/错误那一个。
+  const modals=[...document.querySelectorAll("div[class*='modal'], div[class*='Modal'], div[class*='dialog'], div[class*='Dialog']")];
+  let target=null;
+  for(const m of modals){
+    const cs=getComputedStyle(m);
+    const r=m.getBoundingClientRect();
+    if(cs.display==='none'||cs.visibility==='hidden'||r.width===0||r.height===0) continue;
+    const hasConfirm=[...m.querySelectorAll('button,a')].some(x=>{const t=x.innerText.trim();return t==='确认'||t==='确认调整';});
+    if(hasConfirm) target=m;   // 最后一个可见且含确认的 → 最顶层
+  }
+  if(!target) return false;
+  const btns=[...target.querySelectorAll('button,a')].filter(x=>{const t=x.innerText.trim();return t==='确认'||t==='确认调整';});
+  if(btns.length){ btns[btns.length-1].click(); return true; }
+  return false;
+};
+window._op_modal_count=function(){
+  const modals=[...document.querySelectorAll("div[class*='modal'], div[class*='Modal'], div[class*='dialog'], div[class*='Dialog']")];
+  return modals.filter(m=>{const cs=getComputedStyle(m);const r=m.getBoundingClientRect();return cs.display!=='none'&&cs.visibility!=='hidden'&&r.width>0&&r.height>0;}).length;
+};
+window._op_dismiss_cancel=function(){
+  // 点最顶层可见弹窗的「取消」，兜底清理关不掉的确认框（避免叠加）。
+  const modals=[...document.querySelectorAll("div[class*='modal'], div[class*='Modal'], div[class*='dialog'], div[class*='Dialog']")];
+  let target=null;
+  for(const m of modals){
+    const cs=getComputedStyle(m); const r=m.getBoundingClientRect();
+    if(cs.display==='none'||cs.visibility==='hidden'||r.width===0||r.height===0) continue;
+    const hasCancel=[...m.querySelectorAll('button,a')].some(x=>x.innerText.trim()==='取消');
+    if(hasCancel) target=m;
+  }
+  if(!target) return false;
+  const cb=[...target.querySelectorAll('button,a')].filter(x=>x.innerText.trim()==='取消');
+  if(cb.length){ cb[cb.length-1].click(); return true; }
+  return false;
+};
+// ── 批量拒绝相关助手 ──
+window._op_check=function(order, want){
+  // 按单号找到行，勾选/取消其勾选框（只动这一行，绝不全选）。
+  const main=window._op_main(); if(!main) return false;
+  const cols=window._op_cols(); if(!cols) return false;
+  for(const tr of main.querySelectorAll('tr')){
+    const tds=[...tr.querySelectorAll('td')].map(td=>td.innerText.replace(/\n/g,' ').trim());
+    const o = cols.order>=0 ? tds[cols.order] : '';
+    if(o && o.indexOf(order)>=0){
+      const cell = tr.querySelector("td[class*='TB_checkCell']");
+      if(!cell) return false;
+      const inp = cell.querySelector("input");
+      const lab = cell.querySelector("label");
+      const cur = inp ? inp.checked : false;
+      if(cur !== want){
+        if(lab){ lab.click(); }            // 点可见 label，触发 React onChange
+        else if(inp){ inp.click(); }
+      }
+      return true;
+    }
+  }
+  return false;
+};
+window._op_checked_count=function(){
+  const main=window._op_main(); if(!main) return 0;
+  let n=0;
+  for(const tr of main.querySelectorAll('tr')){
+    const cell = tr.querySelector("td[class*='TB_checkCell']");
+    if(cell){ const inp=cell.querySelector('input'); if(inp && inp.checked) n++; }
+  }
+  return n;
+};
+window._op_click_batch_reject=function(){
+  // 点操作栏「批量拒绝」按钮（排除已禁用/灰的，以及面板内的「拒绝」）。
+  const els=[...document.querySelectorAll('button,a,div,span')].filter(x=>x.innerText.trim()==='批量拒绝');
+  for(const e of els){
+    const cs=getComputedStyle(e); const r=e.getBoundingClientRect();
+    if(cs.display==='none'||cs.visibility==='hidden'||r.width===0||r.height===0) continue;
+    if(e.disabled) continue;
+    e.click(); return true;
+  }
+  return false;
+};
+window._op_panel_visible=function(){
+  return !!document.querySelector("div[class*='TB_innerRight']");
+};
+window._op_reason_fields=function(){
+  // 只收集「批量拒绝」右侧面板 TB_innerRight 内的真正原因框（textarea）。
+  // 不跨 MDL_ 弹窗收集：最终确认弹窗的 DOM 多层嵌套同名 class，
+  // querySelectorAll 会在每层父级重复匹配同一批 textarea，导致计数虚高、误判「未填满」。
+  const panel=document.querySelector("div[class*='TB_innerRight']");
+  if(!panel) return [];
+  const tas=[...panel.querySelectorAll('textarea')].filter(el=>el.offsetParent!==null);
+  const inp=[...panel.querySelectorAll('input')].filter(el=>{
+    const t=(el.type||'').toLowerCase();
+    const ph=(el.placeholder||'');
+    return t!=='checkbox'&&t!=='radio'&&t!=='hidden'&&t!=='button'&&t!=='submit' && (ph.includes('原因')||ph.includes('请输入'));
+  }).filter(el=>el.offsetParent!==null);
+  return [...tas, ...inp];
+};
+window._op_fill_first_reason=function(text){
+  const f=window._op_reason_fields();
+  if(!f.length) return false;
+  const el=f[0];
+  const proto = el.tagName==='TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  const setter=Object.getOwnPropertyDescriptor(proto,'value').set;
+  // React 受控组件兼容：先重置 valueTracker，使合成 onChange 真正触发（否则值写不进 state）。
+  try { if(el._valueTracker) el._valueTracker.setValue(''); } catch(e){}
+  setter.call(el, text);
+  el.dispatchEvent(new Event('input',{bubbles:true}));
+  el.dispatchEvent(new Event('change',{bubbles:true}));
+  return true;
+};
+window._op_all_reason_filled=function(){
+  const f=window._op_reason_fields();
+  const empty=f.filter(el=>!(el.value||'').trim()).length;
+  return {total:f.length, empty:empty, all: empty===0};
+};
+window._op_click_reject_final=function(){
+  // 点最终确认弹窗（含「拒绝调价」字样，如「已选 N 个调价单，拒绝调价？」）里的「拒绝」提交按钮。
+  // 注意：该弹窗的提交按钮文本是「拒绝」而非「确认」。
+  const modals=[...document.querySelectorAll("div[class*='MDL_'], div[class*='modal'], div[class*='Modal']")];
+  let target=null;
+  for(const m of modals){
+    const cs=getComputedStyle(m); const r=m.getBoundingClientRect();
+    if(cs.display==='none'||cs.visibility==='hidden'||r.width===0||r.height===0) continue;
+    if((m.innerText||'').includes('拒绝调价')) target=m;
+  }
+  if(!target) return false;
+  const btns=[...target.querySelectorAll('button,a')].filter(b=>{
+    const t=b.innerText.trim(); const cs=getComputedStyle(b); const r=b.getBoundingClientRect();
+    return t==='拒绝' && cs.display!=='none' && cs.visibility!=='hidden' && r.width>0 && r.height>0 && !b.disabled;
+  });
+  if(btns.length){ btns[btns.length-1].click(); return true; }
+  return false;
+};
+window._op_final_modal_present=function(){
+  // 检测最终确认弹窗（含「拒绝调价」字样）是否可见。该弹窗为 MDL_ 类，_op_modal_count 不识别，故单独检测。
+  const modals=[...document.querySelectorAll("div[class*='MDL_'], div[class*='modal'], div[class*='Modal']")];
+  for(const m of modals){
+    const cs=getComputedStyle(m); const r=m.getBoundingClientRect();
+    if(cs.display==='none'||cs.visibility==='hidden'||r.width===0||r.height===0) continue;
+    if((m.innerText||'').includes('拒绝调价')) return true;
+  }
+  return false;
+};
+window._op_copy_ready_in_first_block=function(){
+  const fields=window._op_reason_fields(); if(!fields.length) return false;
+  let node=fields[0].parentElement;
+  while(node){
+    const cp=[...node.querySelectorAll('a,span,button,div')].find(x=>x.innerText.trim()==='一键复制');
+    if(cp){ const cs=getComputedStyle(cp); const r=cp.getBoundingClientRect();
+      return cs.display!=='none'&&cs.visibility!=='hidden'&&r.width>0&&r.height>0 && !cp.disabled; }
+    node=node.parentElement;
+  }
+  return false;
+};
+window._op_click_copy_in_first_block=function(){
+  const fields=window._op_reason_fields(); if(!fields.length) return false;
+  let node=fields[0].parentElement;
+  while(node){
+    const cp=[...node.querySelectorAll('a,span,button,div')].find(x=>x.innerText.trim()==='一键复制');
+    if(cp){ const cs=getComputedStyle(cp); const r=cp.getBoundingClientRect();
+      if(cs.display!=='none'&&cs.visibility!=='hidden'&&r.width>0&&r.height>0 && !cp.disabled){ cp.click(); return true; } }
+    node=node.parentElement;
+  }
+  return false;
+};
+window._op_click_reject=function(){
+  // 点可见的「拒绝」提交按钮（排除「批量拒绝」）。该按钮位于面板 TB_innerRight 之外，
+  // 故在 document 范围查找；此时最终确认弹窗尚未出现，不会误点。
+  const els=[...document.querySelectorAll('button,a')].filter(x=>{
+    const t=x.innerText.trim();
+    return (t==='拒绝'||t.startsWith('拒绝')) && !t.startsWith('批量拒绝');
+  });
+  for(const e of els){
+    const cs=getComputedStyle(e); const r=e.getBoundingClientRect();
+    if(cs.display!=='none'&&cs.visibility!=='hidden'&&r.width>0&&r.height>0){ e.click(); return true; }
+  }
+  return false;
+};
+"""
+
+TARGET_ORDER_PRICE = "agentseller.temu.com/main/adjust-price-manage/order-price"
+
+
+def _op_open_tab(browser, log):
+    """找/开「价格申报视角」标签页，返回 page。"""
+    page = None
+    for ctx in browser.contexts:
+        for pg in ctx.pages:
+            if TARGET_ORDER_PRICE in pg.url:
+                page = pg
+                break
+        if page:
+            break
+    if not page:
+        try:
+            ctx0 = browser.contexts[0] if browser.contexts else browser.new_context()
+            page = ctx0.new_page()
+            page.goto("https://" + TARGET_ORDER_PRICE, timeout=30000)
+            log.append("🌐 已新开「价格申报视角」标签页并导航")
+        except Exception as e:
+            raise RuntimeError(f"无法打开价格申报视角页面：{e}")
+    return page
+
+
+def _op_setup(page, log):
+    """① 点「待卖家确认」② 每页 200 条 ③ 注入 JS 助手。"""
+    try:
+        page.wait_for_selector("div[class*='TAB_outerWrapper']", timeout=20000)
+        log.append("✅ 页面已加载（识别到标签栏）")
+    except Exception:
+        log.append("⚠️ 未等到标签栏，仍尝试继续操作")
+    page.wait_for_timeout(1500)
+    # ① 待卖家确认
+    try:
+        tab = page.locator("div[class*='TAB_tabItem']", has_text="待卖家确认").first
+        if tab.count() > 0:
+            cls = tab.get_attribute("class") or ""
+            if "TAB_active" in cls:
+                log.append("ℹ️ 「待卖家确认」已选中，跳过点击")
+            else:
+                tab.click(timeout=6000)
+                log.append("✅ 已点击「待卖家确认」")
+            page.wait_for_timeout(1200)
+        else:
+            log.append("⚠️ 未找到「待卖家确认」标签")
+    except Exception as e:
+        log.append(f"⚠️ 点击「待卖家确认」失败：{e}")
+    # ② 每页 200
+    try:
+        size_select = page.locator("li[class*='PGT_sizeChanger'] div[class*='PGT_sizeSelect']").first
+        if size_select.count() > 0:
+            cur = (size_select.inner_text() or "").replace("\n", " ").strip()
+            if "200" in cur:
+                log.append("ℹ️ 每页已是 200 条，跳过")
+            else:
+                size_select.click(timeout=6000)
+                page.wait_for_timeout(800)
+                opt = page.locator("li[class*='cIL_item']", has_text="200").first
+                if opt.count() > 0:
+                    opt.click(timeout=6000)
+                    log.append("✅ 每页条数设为 200")
+                else:
+                    log.append("⚠️ 未找到 200 选项")
+                page.wait_for_timeout(1200)
+        else:
+            log.append("⚠️ 未找到每页条数选择器")
+    except Exception as e:
+        log.append(f"⚠️ 设置每页条数失败：{e}")
+    # ③ 注入 JS 助手
+    page.evaluate(ORDER_PRICE_JS)
+
+
+def _parse_price(s):
+    """解析价格文本为 float，正确处理欧洲格式：
+    - 逗号小数（如 '60,50' → 60.5）、点小数（'60.50' → 60.5）
+    - 千分位（'1.234,56' / '1,234.56' / '1,234'）
+    """
+    import re
+    s = re.sub(r'[^0-9.,]', '', s or '')
+    if not s:
+        return None
+    if '.' in s and ',' in s:
+        if s.rfind('.') > s.rfind(','):
+            s = s.replace(',', '')          # 点是小数，逗号是千分位
+        else:
+            s = s.replace('.', '').replace(',', '.')  # 逗号是小数，点是千分位
+    elif ',' in s:
+        if re.fullmatch(r'\d{1,3}(,\d{3})+', s):
+            s = s.replace(',', '')          # 纯千分位分组
+        else:
+            s = s.replace(',', '.')         # 逗号作小数位
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+def _op_decide(row):
+    """按核价底价决定 accept/reject/skip。返回 (决策, 原因, 底价, 解析后的价格)。"""
+    site = row.get('site', '') or ''
+    adj_s = row.get('adj', '') or ''
+    adj = _parse_price(adj_s)
+    if adj is None:
+        return ('skip', '价格无法解析', None, None)
+    matched = None
+    for k, v in ORDER_PRICE_FLOOR.items():
+        if k in site:
+            matched = v
+            break
+    if matched is None:
+        return ('skip', '站点未配置(留人工)', None, adj)
+    if adj >= matched:
+        return ('accept', '建议价≥底价', matched, adj)
+    return ('reject', '建议价<底价', matched, adj)
+
+
+def _op_click_next_page(page, seen):
+    """点击比当前激活页更大的下一页，返回是否成功点击。"""
+    info = page.evaluate("()=>({pager:window._op_pager()})")
+    pager = info['pager']
+    active = pager['activePage']
+    nums = sorted(int(x) for x in pager['pageItems'] if str(x).isdigit())
+    nexts = [n for n in nums if (not str(active).isdigit() or n > int(active))]
+    if not nexts:
+        return False
+    target = min(nexts)
+    if str(target) in seen:
+        return False
+    clicked = page.evaluate(
+        """(n)=>{const lis=[...document.querySelectorAll('li[class*="PGT_pagerItem"]')];"""
+        """const li=lis.find(l=>l.innerText.trim()===String(n));if(li){li.click();return true;}return false;}""",
+        target)
+    if clicked:
+        seen.add(str(target))
+        page.wait_for_timeout(1800)
+        return True
+    return False
+
+
+def _op_scan(page, log):
+    """扫描所有页，返回去重后的行列表。"""
+    rows = []
+    seen_pages = set()
+    for _ in range(60):
+        info = page.evaluate("()=>({rows:window._op_rows(), pager:window._op_pager()})")
+        rows.extend(info['rows'])
+        if not _op_click_next_page(page, seen_pages):
+            break
+    # 按 order 去重（翻页时可能重复读到同一行）
+    seen_o, uniq = set(), []
+    for r in rows:
+        if r.get('order') and r['order'] in seen_o:
+            continue
+        seen_o.add(r.get('order'))
+        uniq.append(r)
+    return uniq
+
+
+def _op_dismiss_cancel(page, baseline, max_tries=12):
+    """兜底清理：若仍有未关闭的确认弹窗（弹窗数>基线），点最顶层「取消」直到回到基线。"""
+    for _ in range(max_tries):
+        if page.evaluate("()=>window._op_modal_count()") <= baseline:
+            return True
+        if not page.evaluate("()=>window._op_dismiss_cancel()"):
+            return False
+        page.wait_for_timeout(400)
+    return page.evaluate("()=>window._op_modal_count()") <= baseline
+
+
+def _op_auto(page, log, passed):
+    """自动处理：只对「建议价≥底价」(accept) 的行，按正确顺序逐条处理：
+    点「调整」→ 弹出确认框 → 点「确认」(关掉这一个) → 该条完成 → 再处理下一条。
+    「建议价<底价」(reject) 的行不点击，保持原样（留待人工）。
+    已点过「调整」的订单记入 attempted，下一轮扫描不再重复点击，避免确认弹窗叠加。
+    返回 (accept, skipped, err)。"""
+    def modal_count():
+        return page.evaluate("()=>window._op_modal_count()")
+    # 基线：开工前页面已挂着的确认弹窗数。若已堆着卡住的弹窗(如上次未关闭)，
+    # 遮罩会挡住表格点击，必须先在 Edge 刷新本页面清除，否则无法正常工作。
+    baseline = modal_count()
+    if baseline > 3:
+        raise RuntimeError(
+            f"检测到页面已挂着 {baseline} 个确认弹窗（疑似上次未关闭而堆积）。"
+            f"请先在 Edge 里刷新本页面（按 F5）清除这些卡住的弹窗，再执行自动处理。")
+
+    accept = skipped = err = 0
+    attempted = set()  # 已点过「调整」的订单，避免重复点击导致确认弹窗叠加
+    rejected_seen = set()  # 已计入 skipped 的拒绝订单，避免跨轮扫描重复计数
+    seen_pages = set()
+    for _ in range(80):
+        info = page.evaluate("()=>({rows:window._op_rows(), pager:window._op_pager()})")
+        rows = info['rows']
+        # 本页去重，避免重复点击同一行
+        seen_o, uniq = set(), []
+        for r in rows:
+            if r.get('order') and r['order'] in seen_o:
+                continue
+            seen_o.add(r.get('order'))
+            uniq.append(r)
+        decisions = [(r, _op_decide(r)) for r in uniq]
+        # 本页「拒绝(不调整)」不点击，仅累计计数（按订单去重，避免跨轮扫描重复计数）
+        for r, d in decisions:
+            if d[0] == 'reject' and r.get('order') not in rejected_seen:
+                rejected_seen.add(r.get('order'))
+                skipped += 1
+        # 只处理 accept（≥底价）→ 点「调整」并确认；已尝试过的跳过（防弹窗叠加）
+        config = [(r, d) for r, d in decisions
+                  if d[0] == 'accept' and (r.get('order') not in attempted)]
+        if not config:
+            if not _op_click_next_page(page, seen_pages):
+                break
+            continue
+        for r, d in config:
+            attempted.add(r.get('order'))  # 标记已尝试，下一轮不再点，杜绝反复点击
+            ok = page.evaluate("""(a)=>window._op_click(a.order, a.action)""",
+                               {"order": r.get('order'), "action": "调整"})
+            if not ok:
+                err += 1
+                log.append(f"⚠️ 未找到 {r.get('order')} 的「调整」按钮")
+                continue
+            # 点「调整」后必弹出确认框；轮询：等确认框出现(弹窗数>基线) → 点最顶层「确认」→ 等其关闭。
+            confirmed = False
+            for _k in range(20):
+                mc = modal_count()
+                if mc > baseline:
+                    if page.evaluate("()=>window._op_confirm_modal()"):
+                        confirmed = True
+                    page.wait_for_timeout(500)
+                    if modal_count() <= baseline:  # 已关闭 → 这一条完成
+                        break
+                else:
+                    page.wait_for_timeout(300)
+            if not confirmed:
+                log.append(f"⚠️ {r.get('order')}({r.get('site')}) 点击调整后未弹出确认框，可能需人工处理")
+                err += 1
+                # 兜底：若仍有弹窗未关，点「取消」清理，避免叠加
+                _op_dismiss_cancel(page, baseline)
+                continue
+            page.wait_for_timeout(600)
+            still = page.evaluate("""(o)=>window._op_rows().some(r=>r.order===o)""", r.get('order'))
+            if still:
+                err += 1
+                log.append(f"⚠️ {r.get('order')}({r.get('site')}) 确认后行未消失，可能需人工确认")
+            else:
+                accept += 1
+                passed.append({"order": r.get('order'), "site": r.get('site'),
+                               "price": r.get('adj'), "floor": d[2]})
+                # 实时：每通过一条立刻记录价格（前端会逐条显示，不等待整体结束）
+                log.append(f"✅ 通过(已调整) 订单{r.get('order')} ｜ {r.get('site')} ｜ 通过价格 {r.get('adj')}（≥核价底价 {d[2]}）")
+    return accept, skipped, err
+
+
+def _op_reject(page, log, rejected):
+    """批量拒绝所有「建议价<底价」(reject) 的行：
+    逐个勾选这些行(绝不点全选) → 点「批量拒绝」→ 右侧面板填原因「价格过低」
+    → 点首行「一键复制」→ 确认复制弹窗 → 点面板内「拒绝」(真实改数据)。
+    只勾选 reject 行，accept/skip 行保持未勾选，绝不误拒。
+    返回 (rejected_count, err)。"""
+    baseline = page.evaluate("()=>window._op_modal_count()")
+    if baseline > 3:
+        raise RuntimeError(
+            f"检测到页面已挂着 {baseline} 个确认弹窗（疑似上次未关闭而堆积）。"
+            f"请先在 Edge 里刷新本页面（按 F5）清除这些卡住的弹窗，再执行批量拒绝。")
+
+    # 1) 扫描本页所有行，找出 reject 行，逐个勾选（按单号精确匹配，不点全选）
+    rows = page.evaluate("()=>window._op_rows()")
+    seen_o, uniq = set(), []
+    for r in rows:
+        if r.get('order') and r['order'] in seen_o:
+            continue
+        seen_o.add(r.get('order'))
+        uniq.append(r)
+    targets = [r for r in uniq if _op_decide(r)[0] == 'reject']
+    if not targets:
+        log.append("ℹ️ 当前页没有需要拒绝（低于底价）的订单")
+        return 0, 0
+    log.append(f"📋 计划逐个勾选并拒绝 {len(targets)} 个低于底价的订单（不点全选）")
+
+    err = 0
+    for r in targets:
+        ok = page.evaluate("""(a)=>window._op_check(a.order, true)""", {"order": r.get('order')})
+        if not ok:
+            log.append(f"⚠️ 未找到 {r.get('order')} 的勾选框，跳过")
+            err += 1
+            continue
+        d = _op_decide(r)
+        rejected.append({"order": r.get('order'), "site": r.get('site'),
+                         "price": r.get('adj'), "floor": d[2]})
+        log.append(f"☑️ 已勾选 订单{r.get('order')} ｜ {r.get('site')} ｜ 价格 {r.get('adj')}（<核价底价 {d[2]}）")
+        page.wait_for_timeout(120)
+
+    n = page.evaluate("()=>window._op_checked_count()")
+    log.append(f"🔢 实际已勾选 {n} 行（预期 {len(targets)}）")
+    if n == 0:
+        log.append("⚠️ 没有任何行被勾选，中止（避免误点批量拒绝按钮）")
+        return 0, err
+
+    # 2) 点「批量拒绝」→ 右侧面板
+    if not page.evaluate("()=>window._op_click_batch_reject()"):
+        log.append("⚠️ 未找到/无法点击「批量拒绝」按钮（可能未勾选或按钮不可点）")
+        return 0, err
+    log.append("✅ 已点击「批量拒绝」")
+    try:
+        page.wait_for_selector("div[class*='TB_innerRight']", timeout=8000)
+        log.append("✅ 批量拒绝面板已打开")
+    except Exception:
+        log.append("⚠️ 未检测到批量拒绝面板，可能批量拒绝按钮未生效")
+        return len(targets), err
+
+    # 3)+4) 用 Playwright 真实填充每个原因框（.fill 模拟真实输入，React 受控组件必更新），
+    #        再轮询验证全部填满（不依赖面板「一键复制」，因其对面板 textarea 不生效）。
+    all_ok = False
+    for attempt in range(6):
+        try:
+            tas = page.locator("div[class*='TB_innerRight'] textarea")
+            n = tas.count()
+            for i in range(n):
+                tas.nth(i).fill("价格过低")
+                page.wait_for_timeout(120)
+        except Exception as e:
+            log.append(f"⚠️ 填充原因框异常: {e}")
+        page.wait_for_timeout(400)
+        res = page.evaluate("()=>window._op_all_reason_filled()")
+        if res and res.get('all'):
+            all_ok = True
+            log.append(f"✅ 所有 {res.get('total')} 个原因框已填「价格过低」")
+            break
+        else:
+            tot = (res or {}).get('total'); empt = (res or {}).get('empty')
+            log.append(f"⚠️ 原因框未全填满（空 {empt}/{tot}），重试（第 {attempt+1} 次）")
+            page.wait_for_timeout(400)
+    if not all_ok:
+        log.append("⚠️ 多次重试仍未能填满所有原因框，继续尝试点拒绝（可能失败）")
+
+    # 5) 点面板外「拒绝」提交按钮 → 弹出最终确认弹窗（真实改数据）
+    clicked = False
+    for _k in range(15):
+        if page.evaluate("()=>window._op_click_reject()"):
+            page.wait_for_timeout(900)
+            if page.evaluate("()=>window._op_final_modal_present()"):
+                log.append("✅ 已点击「拒绝」，弹出最终确认弹窗")
+                clicked = True
+                break
+            else:
+                log.append("⚠️ 点了「拒绝」但未弹出最终弹窗，重试")
+        page.wait_for_timeout(300)
+    if not clicked:
+        log.append("⚠️ 未成功点击「拒绝」或弹出最终弹窗，可能需人工点击")
+        return len(targets), err
+
+    # 6) 点最终确认弹窗（「已选 N 个调价单，拒绝调价？」）里的「拒绝」提交按钮
+    page.wait_for_timeout(800)
+    for _k in range(25):
+        if page.evaluate("()=>window._op_final_modal_present()"):
+            if page.evaluate("()=>window._op_click_reject_final()"):
+                log.append("✅ 已点击最终弹窗「拒绝」")
+            else:
+                page.evaluate("()=>window._op_confirm_modal()")
+                log.append("✅ 已确认最终拒绝弹窗（确认按钮）")
+            page.wait_for_timeout(800)
+            if not page.evaluate("()=>window._op_final_modal_present()"):
+                break
+        else:
+            page.wait_for_timeout(300)
+
+    # 7) 验证：被拒订单是否从列表消失
+    page.wait_for_timeout(1500)
+    after = page.evaluate("()=>window._op_rows()")
+    after_orders = {r.get('order') for r in after}
+    still = [r for r in targets if r.get('order') in after_orders]
+    if still:
+        log.append(f"⚠️ 仍有 {len(still)} 个计划拒绝的订单未从列表消失，可能需人工确认（如最终确认弹窗被遮挡）")
+    else:
+        log.append(f"✅ 全部 {len(targets)} 个订单已成功拒绝并从列表消失")
+    return len(targets), err
+
+
+@app.route('/api/order_price/scan', methods=['POST'])
+def api_order_price_scan():
+    """只读扫描：按核价底价给出 接受/拒绝/跳过 预览（不点任何按钮）。"""
+    log = []
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return jsonify({"ok": False, "error": "Bridge 环境未安装 playwright，无法控制 Edge。", "log": log})
+    p = sync_playwright().start()
+    try:
+        try:
+            browser, _ = _ensure_edge_cdp(p, log)
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e), "log": log})
+        try:
+            page = _op_open_tab(browser, log)
+            _op_setup(page, log)
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e), "log": log})
+        if not page.evaluate("()=>!!window._op_main()"):
+            return jsonify({"ok": False,
+                            "error": "未找到价格申报表格，可能未登录 Temu 或页面未加载。请先在 Edge 登录 Temu 卖家后台，再执行。",
+                            "log": log})
+        rows = _op_scan(page, log)
+        accept = reject = skip = 0
+        by_site = {}
+        for r in rows:
+            d = _op_decide(r)
+            decision, floor, adj_val = d[0], d[2], d[3]
+            if decision == 'accept':
+                accept += 1
+            elif decision == 'reject':
+                reject += 1
+            else:
+                skip += 1
+            s = r.get('site') or '未知'
+            bs = by_site.setdefault(
+                s, {"accept": 0, "reject": 0, "skip": 0,
+                    "floor": None, "accept_min": None, "reject_max": None})
+            bs[decision] = bs.get(decision, 0) + 1
+            # 记录该站点的核价底价（非 None 才覆盖，避免被未配置行清空）
+            if floor is not None:
+                bs["floor"] = floor
+            if decision == 'accept' and adj_val is not None:
+                if bs["accept_min"] is None or adj_val < bs["accept_min"]:
+                    bs["accept_min"] = adj_val
+            if decision == 'reject' and adj_val is not None:
+                if bs["reject_max"] is None or adj_val > bs["reject_max"]:
+                    bs["reject_max"] = adj_val
+        return jsonify({"ok": True, "log": log, "total": len(rows),
+                        "accept": accept, "reject": reject, "skip": skip,
+                        "by_site": by_site, "floor": ORDER_PRICE_FLOOR, "rows": rows})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "log": log})
+    finally:
+        try:
+            p.stop()
+        except Exception:
+            pass
+
+
+# ===== 价格申报：自动处理（后台执行 + 前端轮询实时进度） =====
+OP_TASKS = {}
+OP_TASKS_LOCK = threading.Lock()
+
+
+def _op_auto_run(task_id):
+    """后台线程：连接 Edge → 进入页面 → 逐条自动确认/拒绝，进度实时写入 OP_TASKS[task_id]。"""
+    task = OP_TASKS.get(task_id)
+    if not task:
+        return
+    log = task["log"]
+    passed = task["passed"]
+    lock = task["lock"]
+    try:
+        from playwright.sync_api import sync_playwright
+        p = sync_playwright().start()
+        try:
+            try:
+                browser, _ = _ensure_edge_cdp(p, log)
+            except Exception as e:
+                with lock:
+                    task["error"] = str(e)
+                    task["done"] = True
+                return
+            try:
+                page = _op_open_tab(browser, log)
+                _op_setup(page, log)
+            except Exception as e:
+                with lock:
+                    task["error"] = str(e)
+                    task["done"] = True
+                return
+            if not page.evaluate("()=>!!window._op_main()"):
+                with lock:
+                    task["error"] = ("未找到价格申报表格，可能未登录 Temu 或页面未加载。"
+                                     "请先在 Edge 登录 Temu 卖家后台，再执行。")
+                    task["done"] = True
+                return
+            accept, skipped, err = _op_auto(page, log, passed)
+            with lock:
+                task["result"] = {"ok": True, "accept": accept, "skipped": skipped,
+                                  "error_count": err,
+                                  "note": "所有站点(含意大利，底价115)均按核价底价自动判定；未匹配到站点名的行留人工处理。"}
+                task["done"] = True
+        finally:
+            try:
+                p.stop()
+            except Exception:
+                pass
+    except Exception as e:
+        with lock:
+            task["error"] = str(e)
+            task["done"] = True
+
+
+@app.route('/api/order_price/auto', methods=['POST'])
+def api_order_price_auto():
+    """启动后台自动批量处理；立即返回 task_id，前端轮询 /api/order_price/status 获取实时进度与每条价格。"""
+    import uuid
+    task_id = uuid.uuid4().hex
+    with OP_TASKS_LOCK:
+        OP_TASKS[task_id] = {"lock": threading.Lock(), "log": [], "passed": [], "rejected": [],
+                             "done": False, "result": None, "error": None, "kind": "auto"}
+    t = threading.Thread(target=_op_auto_run, args=(task_id,), daemon=True)
+    t.start()
+    return jsonify({"ok": True, "task_id": task_id})
+
+
+@app.route('/api/order_price/status', methods=['GET'])
+def api_order_price_status():
+    """轮询任务进度：返回已产生的日志(实时)、通过价格清单、是否完成、最终结果/错误。"""
+    task_id = request.args.get('task_id')
+    if not task_id or task_id not in OP_TASKS:
+        return jsonify({"ok": False, "error": "无效或已过期的任务ID"})
+    task = OP_TASKS[task_id]
+    with task["lock"]:
+        return jsonify({"ok": True, "done": task["done"], "error": task["error"],
+                        "result": task["result"], "kind": task.get("kind"),
+                        "log": list(task["log"]),
+                        "passed": list(task["passed"]),
+                        "rejected": list(task["rejected"])})
+
+
+def _op_reject_run(task_id):
+    """后台线程：连接 Edge → 进入页面 → 逐个勾选低于底价的订单并批量拒绝，
+    进度实时写入 OP_TASKS[task_id]。"""
+    task = OP_TASKS.get(task_id)
+    if not task:
+        return
+    log = task["log"]
+    rejected = task["rejected"]
+    lock = task["lock"]
+    try:
+        from playwright.sync_api import sync_playwright
+        p = sync_playwright().start()
+        try:
+            try:
+                browser, _ = _ensure_edge_cdp(p, log)
+            except Exception as e:
+                with lock:
+                    task["error"] = str(e)
+                    task["done"] = True
+                return
+            try:
+                page = _op_open_tab(browser, log)
+                _op_setup(page, log)
+            except Exception as e:
+                with lock:
+                    task["error"] = str(e)
+                    task["done"] = True
+                return
+            if not page.evaluate("()=>!!window._op_main()"):
+                with lock:
+                    task["error"] = ("未找到价格申报表格，可能未登录 Temu 或页面未加载。"
+                                     "请先在 Edge 登录 Temu 卖家后台，再执行。")
+                    task["done"] = True
+                return
+            cnt, err = _op_reject(page, log, rejected)
+            with lock:
+                task["result"] = {"ok": True, "rejected_count": cnt,
+                                  "error_count": err,
+                                  "note": "已拒绝所有低于核价底价的订单(含意大利，底价115)；未匹配到站点名的行留人工处理。"}
+                task["done"] = True
+        finally:
+            try:
+                p.stop()
+            except Exception:
+                pass
+    except Exception as e:
+        with lock:
+            task["error"] = str(e)
+            task["done"] = True
+
+
+@app.route('/api/order_price/reject', methods=['POST'])
+def api_order_price_reject():
+    """启动后台批量拒绝（低于底价）任务；立即返回 task_id，前端轮询 /api/order_price/status。"""
+    import uuid
+    task_id = uuid.uuid4().hex
+    with OP_TASKS_LOCK:
+        OP_TASKS[task_id] = {"lock": threading.Lock(), "log": [], "passed": [], "rejected": [],
+                             "done": False, "result": None, "error": None, "kind": "reject"}
+    t = threading.Thread(target=_op_reject_run, args=(task_id,), daemon=True)
+    t.start()
+    return jsonify({"ok": True, "task_id": task_id})
 
 
 @app.route('/api/activity/start', methods=['POST'])

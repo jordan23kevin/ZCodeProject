@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Temu 价格申报视角 · 批量核价</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px;min-height:100vh}
+  h1{text-align:center;font-size:30px;margin:0 0 6px}
+  h1 .v{font-size:14px;color:#666;font-weight:normal;margin-left:8px}
+  .sub{text-align:center;color:#999;font-size:14px;margin-bottom:18px;line-height:1.6}
+  .sub b{color:#ffb74d}
+
+  .toolbar{text-align:center;margin-bottom:18px;position:sticky;top:0;background:#1a1a1a;padding:12px 0;z-index:20;border-bottom:1px solid #333}
+  .toolbar button{padding:13px 22px;font-size:16px;border-radius:6px;border:1px solid #555;background:#2a2a2a;color:#eee;margin-left:8px;cursor:pointer}
+  .toolbar button.primary{background:#2196F3;color:#fff;border:none;font-weight:600}
+  .toolbar button.primary:hover:not(:disabled){background:#1976D2}
+  .toolbar button.danger{background:#e53935;color:#fff;border:none;font-weight:600}
+  .toolbar button.danger:hover:not(:disabled){background:#c62828}
+  .toolbar button:hover:not(:disabled){background:#333}
+  .toolbar button:disabled{opacity:.45;cursor:not-allowed}
+
+  .panel{background:#252525;border:1px solid #444;border-radius:10px;padding:16px 20px;margin:0 auto 22px;max-width:1100px}
+  .panel-title{font-size:18px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
+  .status-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:12px;font-size:13px;font-weight:500;border:1px solid}
+  .status-idle{background:#1b3a1b;color:#7ee787;border-color:#2e7d32}
+  .status-running{background:#3d2e0b;color:#f7c843;border-color:#9e6a03}
+  .status-completed{background:#1b3a1b;color:#7ee787;border-color:#2e7d32}
+  .status-error{background:#3d0f0f;color:#f87171;border-color:#a42c2c}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid #8b949e;border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .log-box{background:#0d0d0d;border:1px solid #333;border-radius:6px;padding:10px 14px;height:300px;overflow-y:auto;font-family:"Cascadia Code",Consolas,monospace;font-size:12px;line-height:1.7;white-space:pre-wrap}
+  .log-box .line{color:#8b949e}
+  .log-box .line.ok{color:#7ee787}
+  .log-box .line.warn{color:#f7c843}
+  .log-box .line.error{color:#f87171}
+
+  .summary{background:#1e1e1e;border:1px solid #3a3a3a;border-radius:8px;padding:12px 16px;margin:6px 0 12px;font-size:14px;line-height:1.8}
+  .summary .ok{color:#7ee787;font-weight:700}
+  .summary .reject{color:#f87171;font-weight:700}
+  .summary .skip{color:#f7c843;font-weight:700}
+
+  table.bysite{width:100%;border-collapse:collapse;margin-top:8px;font-size:13px}
+  table.bysite th,table.bysite td{border:1px solid #3a3a3a;padding:6px 10px;text-align:center}
+  table.bysite th{background:#2a2a2a;color:#ccc}
+  table.bysite td.site{text-align:left;color:#fff}
+
+  .note{background:#2a2113;border:1px solid #5a4a1a;border-radius:8px;padding:12px 16px;color:#e8d9a8;font-size:13px;line-height:1.7;margin:0 auto 18px;max-width:1100px}
+  .note b{color:#ffd479}
+  .floor-note{color:#9fb3c8;font-size:12px;margin-top:6px}
+</style>
+</head>
+<body>
+<h1>Temu 价格申报视角 <span class="v">批量核价处理</span></h1>
+<div class="sub">按你的<b>核价底价</b>自动批量处理降价建议：<br><b>建议价 ≥ 底价</b> → 自动点「调整(接受)」并确认弹窗；<b>建议价 &lt; 底价</b> → 不点击，保持原样。</div>
+
+<div class="note">
+  ⚠️ 本页面会控制你电脑上 <b>Edge 浏览器</b>里已打开（或自动打开）的 Temu「价格申报视角」标签页。<br>
+  使用前请确保：<b>Edge 已登录 Temu 卖家后台</b>（且带调试端口 9222，即大家共用的那个 Edge）。<br>
+  · 若 Edge 没开，点按钮会 <b>自动帮你启动</b> 共用的 Edge（独立配置，Temu 登录会保留）。<br>
+  · 若已有一个不带 9222 的 Edge 在跑，本功能<b>不会又开一个</b>，会提示你改用共用端口打开。<br>
+  · 扫描 / 执行时，会自动确保页面处于「待卖家确认」标签且每页 200 条（无需手动设置）。<br>
+  · 每条「接受」的处理顺序：点「调整」→ 弹出确认框 → 点「确认」→ 完成一条 → 再下一条。<br>
+  · 若页面卡着没关掉的确认弹窗（上次遗留），按 <b>F5 刷新</b> 即可清除（未点「确认」的调整不会生效），再执行自动处理。
+</div>
+
+<div class="panel">
+  <div class="panel-title">
+    <span>① 按核价底价批量处理</span>
+    <span id="batchBadge" class="status-badge status-idle"><span class="spinner" id="batchSpinner" style="display:none"></span><span id="batchLabel">就绪</span></span>
+  </div>
+  <div class="toolbar" style="position:static;text-align:left;border:none;padding:0 0 12px">
+    <button onclick="doScan()" id="btnScan">🔍 扫描预览</button>
+    <button class="danger" onclick="doAuto()" id="btnAuto">▶️ 自动执行(接受≥底价)</button>
+    <button class="danger" onclick="doReject()" id="btnReject">🚫 批量拒绝(&lt;底价)</button>
+  </div>
+  <div class="summary" id="batchSummary" style="display:none"></div>
+  <div id="batchBySite"></div>
+  <div class="log-box" id="batchLog" style="height:320px"></div>
+</div>
+
+<script>
+function setBatchBadge(status, label){
+  const badge = document.getElementById('batchBadge');
+  badge.className = 'status-badge status-' + status;
+  document.getElementById('batchSpinner').style.display = (status==='running') ? 'inline-block' : 'none';
+  document.getElementById('batchLabel').textContent = label;
+}
+function addBatchLog(type, msg){
+  const box = document.getElementById('batchLog');
+  const cls = {ok:'ok', warn:'warn', error:'error'}[type] || '';
+  const div = document.createElement('div');
+  div.className = 'line ' + cls;
+  div.textContent = msg;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+async function doScan(){
+  const btnScan=document.getElementById('btnScan'), btnAuto=document.getElementById('btnAuto');
+  btnScan.disabled=true; btnAuto.disabled=true;
+  document.getElementById('batchLog').innerHTML='';
+  document.getElementById('batchSummary').style.display='none';
+  document.getElementById('batchBySite').innerHTML='';
+  setBatchBadge('running','扫描中…');
+  addBatchLog('info','开始只读扫描（不点击任何按钮）…');
+  try{
+    const res=await fetch('/api/order_price/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const data=await res.json();
+    if(data.log) for(const l of data.log){ const t=l.includes('✅')?'ok':(l.includes('⚠')||l.includes('ℹ'))?'warn':'info'; addBatchLog(t,l); }
+    if(!data.ok){ setBatchBadge('error','❌ 错误'); if(data.error) addBatchLog('error',data.error); return; }
+    // 摘要
+    const sum=document.getElementById('batchSummary');
+    sum.style.display='block';
+    sum.innerHTML=`共扫描 <b>${data.total}</b> 条：`+
+      `<span class="ok">✅ 接受 ${data.accept}</span>（建议价≥底价，将自动调整）&nbsp; `+
+      `<span class="reject">🚫 拒绝 ${data.reject}</span>（建议价&lt;底价，将保持原样）&nbsp; `+
+      `<span class="skip">⚠️ 跳过 ${data.skip}</span>（未配置站点，留人工）`;
+    // 按站点（详细表头：核价底价 / 接受最低价 / 拒绝最高价）
+    let html='<table class="bysite"><tr>'+
+      '<th>站点</th><th>核价底价</th><th>接受</th><th>拒绝</th><th>跳过</th>'+
+      '<th>接受最低价</th><th>拒绝最高价</th></tr>';
+    for(const [s,v] of Object.entries(data.by_site)){
+      const fl  = (v.floor!=null)? Number(v.floor).toFixed(2) : '—';
+      const amin= (v.accept_min!=null)? Number(v.accept_min).toFixed(2) : '—';
+      const rmax= (v.reject_max!=null)? Number(v.reject_max).toFixed(2) : '—';
+      html+=`<tr><td class="site">${s}</td><td>${fl}</td>`+
+        `<td>${v.accept||0}</td><td>${v.reject||0}</td><td>${v.skip||0}</td>`+
+        `<td class="ok">${amin}</td><td class="reject">${rmax}</td></tr>`;
+    }
+    html+='</table>';
+    const fl=data.floor||{};
+    const flStr=Object.entries(fl).map(([k,v])=>`${k}${v}`).join(' / ');
+    html+=`<div class="floor-note">使用的核价底价：<br>${flStr}</div>`;
+    document.getElementById('batchBySite').innerHTML=html;
+    setBatchBadge('completed','✅ 扫描完成');
+    addBatchLog('ok',`预览：接受${data.accept} / 拒绝${data.reject} / 跳过${data.skip}。确认无误后点「自动执行」（只会接受≥底价的，拒绝的保持原样）。`);
+  }catch(e){
+    setBatchBadge('error','❌ 错误'); addBatchLog('error','网络错误：'+e.message);
+  }finally{
+    btnScan.disabled=false; btnAuto.disabled=false; btnReject.disabled=false;
+  }
+}
+
+let autoTaskId = null;
+let autoTimer = null;
+let autoLogShown = 0;
+
+async function doAuto(){
+  if(!confirm('将按核价底价自动处理降价建议。\n\n【每条「接受」的处理顺序】\n  点「调整」→ 弹出确认框 → 点「确认」→ 这一条才算完成 → 再处理下一条\n\n【范围】\n· 建议价 ≥ 核价底价 → 自动点「调整」并点「确认」\n· 建议价 < 核价底价 → 不点击，保持原样（留你稍后人工）\n· 未配置站点(如意大利) → 也不点击\n\n每处理完一条，下方实时日志会立刻列出它的通过价格。确定执行？')) return;
+  const btnScan=document.getElementById('btnScan'), btnAuto=document.getElementById('btnAuto'), btnReject=document.getElementById('btnReject');
+  btnScan.disabled=true; btnAuto.disabled=true; btnReject.disabled=true;
+  document.getElementById('batchLog').innerHTML='';
+  document.getElementById('batchSummary').style.display='none';
+  document.getElementById('batchBySite').innerHTML='';
+  autoLogShown = 0;
+  setBatchBadge('running','执行中… 实时处理');
+  addBatchLog('info','已开始自动处理（后台执行，每完成一条实时显示价格）…');
+  try{
+    const res=await fetch('/api/order_price/auto',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const data=await res.json();
+    if(!data.ok){ setBatchBadge('error','❌ 错误'); if(data.error) addBatchLog('error',data.error); resetAutoButtons(); return; }
+    autoTaskId = data.task_id;
+    startAutoPoll();
+  }catch(e){
+    setBatchBadge('error','❌ 错误'); addBatchLog('error','网络错误：'+e.message);
+    resetAutoButtons();
+  }
+}
+
+async function doReject(){
+  if(!confirm('将把「待卖家确认」里【所有「建议价 < 核价底价」的订单】一次性批量拒绝（真实改数据，不可撤销）。\n\n【处理方式】\n· 逐个勾选这些订单（不会点「全选」）\n· 点「批量拒绝」→ 原因填「价格过低」→ 一键复制 → 确认复制 → 点「拒绝」\n· 未配置站点(如意大利)和 ≥ 底价的订单不会被勾选，绝不误拒\n\n数量按当前页面实际（这次49、下次59都一把处理）。确定执行？')) return;
+  const btnScan=document.getElementById('btnScan'), btnAuto=document.getElementById('btnAuto'), btnReject=document.getElementById('btnReject');
+  btnScan.disabled=true; btnAuto.disabled=true; btnReject.disabled=true;
+  document.getElementById('batchLog').innerHTML='';
+  document.getElementById('batchSummary').style.display='none';
+  document.getElementById('batchBySite').innerHTML='';
+  autoLogShown = 0;
+  setBatchBadge('running','批量拒绝中…');
+  addBatchLog('info','已开始批量拒绝（后台执行，逐个勾选低于底价的订单）…');
+  try{
+    const res=await fetch('/api/order_price/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const data=await res.json();
+    if(!data.ok){ setBatchBadge('error','❌ 错误'); if(data.error) addBatchLog('error',data.error); resetAutoButtons(); return; }
+    autoTaskId = data.task_id;
+    startAutoPoll();
+  }catch(e){
+    setBatchBadge('error','❌ 错误'); addBatchLog('error','网络错误：'+e.message);
+    resetAutoButtons();
+  }
+}
+
+function startAutoPoll(){
+  if(autoTimer) clearInterval(autoTimer);
+  autoTimer = setInterval(async ()=>{
+    if(!autoTaskId) return;
+    try{
+      const res=await fetch('/api/order_price/status?task_id='+encodeURIComponent(autoTaskId));
+      const d=await res.json();
+      if(!d.ok){ setBatchBadge('error','❌ 错误'); addBatchLog('error',d.error||'任务失效'); clearInterval(autoTimer); resetAutoButtons(); return; }
+      // 增量显示日志（只追加新增的行，保证每条通过价格实时出现）
+      const lines=d.log||[];
+      for(let i=autoLogShown;i<lines.length;i++){
+        const l=lines[i];
+        const t=l.includes('✅')?'ok':(l.includes('⚠')||l.includes('ℹ'))?'warn':'info';
+        addBatchLog(t,l); autoLogShown++;
+      }
+      // 实时清单：接受(已调整) 或 已拒绝，按任务类型渲染
+      if(d.kind === 'reject'){
+        renderRejectedLive(d.rejected||[]);
+      } else {
+        renderPassedLive(d.passed||[]);
+      }
+      if(d.error){
+        setBatchBadge('error','❌ 错误');
+        addBatchLog('error',d.error);
+        clearInterval(autoTimer); resetAutoButtons(); return;
+      }
+      if(d.done){
+        clearInterval(autoTimer);
+        setBatchBadge('completed','✅ 执行完成');
+        const r=d.result||{};
+        if(d.kind === 'reject'){
+          const cnt=r.rejected_count||0, err=r.error_count||0;
+          addBatchLog('ok',`结果：已成功拒绝 ${cnt} 个低于底价的订单；异常 ${err} 条。`);
+          if(err>0) addBatchLog('warn',`有 ${err} 条执行异常（未勾选到/面板异常），请检查日志后人工处理。`);
+        } else {
+          const skipped=r.skipped||0, err=r.error_count||0, acc=r.accept||0;
+          addBatchLog('ok',`结果：已接受(调整) ${acc} 条；不调整(保持原样) ${skipped} 条；异常 ${err} 条。`);
+          if(skipped>0) addBatchLog('warn',`有 ${skipped} 条「建议价<底价」未点击，已保持原样，稍后可手动处理。`);
+          if(err>0) addBatchLog('warn',`有 ${err} 条执行异常（未找到按钮或弹窗未确认），请检查日志后人工处理。`);
+        }
+        resetAutoButtons();
+      }
+    }catch(e){ /* 轮询偶发失败不中断，等下次 */ }
+  }, 700);
+}
+
+function renderPassedLive(passed){
+  if(!passed.length) return;
+  let html='<div style="margin:10px 0 4px;color:#7ee787;font-weight:700">✅ 已处理的「接受(已调整)」商品及其通过价格（实时）：</div>';
+  html+='<table class="bysite"><tr><th>#</th><th>订单号</th><th>站点</th><th>通过价格(调整后)</th><th>核价底价</th></tr>';
+  passed.forEach((x,i)=>{
+    const fl=(x.floor!=null)? Number(x.floor).toFixed(2) : '—';
+    html+=`<tr><td>${i+1}</td><td>${x.order||''}</td><td class="site">${x.site||''}</td><td class="ok">${x.price||''}</td><td>${fl}</td></tr>`;
+  });
+  html+='</table>';
+  document.getElementById('batchBySite').innerHTML=html;
+}
+
+function renderRejectedLive(rejected){
+  if(!rejected.length) return;
+  let html='<div style="margin:10px 0 4px;color:#ff7b72;font-weight:700">🚫 已勾选并拒绝的订单（实时，原因：价格过低）：</div>';
+  html+='<table class="bysite"><tr><th>#</th><th>订单号</th><th>站点</th><th>价格</th><th>核价底价</th></tr>';
+  rejected.forEach((x,i)=>{
+    const fl=(x.floor!=null)? Number(x.floor).toFixed(2) : '—';
+    html+=`<tr><td>${i+1}</td><td>${x.order||''}</td><td class="site">${x.site||''}</td><td>${x.price||''}</td><td>${fl}</td></tr>`;
+  });
+  html+='</table>';
+  document.getElementById('batchBySite').innerHTML=html;
+}
+
+function resetAutoButtons(){
+  document.getElementById('btnScan').disabled=false;
+  document.getElementById('btnAuto').disabled=false;
+  document.getElementById('btnReject').disabled=false;
+}
+</script>
+</body>
+</html>

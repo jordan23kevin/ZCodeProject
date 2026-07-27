@@ -1,7 +1,25 @@
-# Y2 系统架构文档 v2.4.2
+# Y2 系统架构文档 v2.5.0
 
-> 工程类型: 图像生产血缘数据库 + 控制面板 + 纯软件贴图成品流水线 + AI 生图对比复审 + Temu 核价集成 + Temu 报活动集成 + 遮罩生成子系统（人物前景遮挡）
+> 工程类型: 图像生产血缘数据库 + 控制面板 + 纯软件贴图成品流水线 + AI 生图对比复审 + Temu 核价集成 + Temu 报活动集成 + 遮罩生成子系统（人物前景遮挡）+ 价格申报视角批量处理子系统（Temu 待卖家确认）
 > 遵循: B+ 四层血缘闭环架构
+
+---
+
+## v2.5.0 变更
+
+本次版本新增**价格申报视角批量处理子系统**，与原有生图/去背/贴图/上款/Temu 流程解耦、互不影响：
+
+- **独立页面**：新增 `/order-price`（`order_price.html`）+ `lovart_control.html` 导航按钮「📉 价格申报」。
+- **后端 API**（均在 `lovart_bridge.py`）：
+  - `/api/order_price/scan`（同步只读）：不点按钮，按核价底价给出 `接受/拒绝/跳过` 汇总 + 各站 `核价底价/接受最低价/拒绝最高价`。
+  - `/api/order_price/auto`（后台线程）：仅对「建议价≥底价」逐条 `点「调整」→ 弹窗「确认」`；`attempted` 守卫防确认弹窗叠加。
+  - `/api/order_price/reject`（后台线程）：**逐个勾选**低于底价订单（绝不点全选）→ 批量拒绝 → 填原因「价格过低」→ 点面板外「拒绝」→ 最终「拒绝调价」确认弹窗点「拒绝」真正提交。
+  - `/api/order_price/status`（GET 轮询）：返回实时日志/通过价格清单/结果，前端每 600ms 拉一次。
+  - 任务状态存 `OP_TASKS` 字典（带 `threading.Lock`），`kind` 区分 `auto`/`reject`。
+- **页面控制层**：复用 `_ensure_edge_cdp` 连接共用 Edge 调试端口 **9222**（绝不另开第二个 Edge）；`_op_open_tab` / `_op_setup` 进页面自动点「待卖家确认」+ 设每页 200 条；`ORDER_PRICE_JS` 注入 `window._op_*` 助手（表格解析 `_op_rows`、勾选 `_op_check`、点击 `_op_click`、确认弹窗 `_op_confirm_modal`、批量拒绝 `_op_click_batch_reject` / `_op_reason_fields` / `_op_click_reject` / `_op_click_reject_final` / `_op_final_modal_present` 等）。
+- **核价底价字典 `ORDER_PRICE_FLOOR`**：与 Temu 核价仓 `PRICE_MAP` 对齐，含意大利 115。
+- **价格解析 `_parse_price`**：兼容欧洲逗号小数（`€ 60,50`→60.5）、千分位、混合格式。
+- 详细方法实现与踩坑记录见 `docs/order_price_automation.md`；运行环境见 `REPRODUCIBILITY.md`。
 
 ---
 
