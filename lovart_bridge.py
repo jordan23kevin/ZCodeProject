@@ -67,6 +67,7 @@ Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件�
   - 新增 `pricing.html` 前端页面，支持完整自动核价 / 仅核价不提交 / 继续提交 / 重试指定页 / 导出结果。
   - 修复长页核价时滚动回顶导致无法完成的问题（联动 temu-hengjia-engine v5.2.1）。
   - 核价结果输出到 `C:/Users/Administrator/Desktop/核价档案`。
+  - 核价页面 `pricing.html` 与 `/api/pricing/start` 支持指定页码范围（如 2-52）：前端新增「页码范围」输入框，后端透传 `--pages=A-B` 给 hengjia.py；`/api/pricing/retry` 同步支持 `2-52` 区间展开（联动 temu-hengjia-engine v5.2.2）。
 
 变更 v2.3.19：
   - `upload.html`（WB 上款页面）新增「📋 复制未上款」按钮。
@@ -3548,12 +3549,18 @@ def api_pricing_start():
     """
     data = request.get_json(silent=True) or {}
     mode = data.get("mode", "full")
+    pages = (data.get("pages") or "").strip()
+    args = [get_python(), str(PRICING_MAIN)]
     if mode == "no-submit":
-        args = [get_python(), str(PRICING_MAIN), "--no-submit"]
-        label = "仅核价不提交"
-    else:
-        args = [get_python(), str(PRICING_MAIN)]
-        label = "完整自动核价"
+        args.append("--no-submit")
+    if pages:
+        import re
+        if not re.match(r'^\d+-\d+$', pages):
+            return jsonify({"error": "页码范围格式应为 起始-结束，如 2-52"}), 400
+        args.append(f"--pages={pages}")
+    label = "仅核价不提交" if mode == "no-submit" else "完整自动核价"
+    if pages:
+        label += f" 页{pages}"
     resp, code = _start_pricing_script(mode, args, label)
     return jsonify(resp), code
 
@@ -3570,17 +3577,31 @@ def api_pricing_continue():
 
 @app.route('/api/pricing/retry', methods=['POST'])
 def api_pricing_retry():
-    """重试指定页。body: {"pages": "2 5"}。"""
+    """重试指定页。body: {"pages": "2 5"} 或 {"pages": "2-52"}（支持区间）。"""
+    import re
     data = request.get_json(silent=True) or {}
-    pages = data.get("pages", "").strip()
-    if not pages:
+    raw = (data.get("pages") or "").strip()
+    if not raw:
+        return jsonify({"error": "请输入页码"}), 400
+    pages_list = []
+    for tok in raw.split():
+        m = re.match(r'^(\d+)-(\d+)$', tok)
+        if m:
+            a, b = int(m.group(1)), int(m.group(2))
+            if a > b:
+                return jsonify({"error": f"页码区间无效: {tok}"}), 400
+            pages_list.extend(str(i) for i in range(a, b + 1))
+        else:
+            if not re.match(r'^\d+$', tok):
+                return jsonify({"error": f"页码格式无效: {tok}"}), 400
+            pages_list.append(tok)
+    if not pages_list:
         return jsonify({"error": "请输入页码"}), 400
     script = PRICING_ENTRYPOINT / "retry_pages.py"
     if not script.exists():
         return jsonify({"error": f"脚本不存在: {script}"}), 404
-    pages_list = pages.split()
     args = [get_python(), str(script)] + pages_list
-    resp, code = _start_pricing_script("retry", args, f"重试页 {pages}")
+    resp, code = _start_pricing_script("retry", args, f"重试页 {raw}")
     return jsonify(resp), code
 
 
@@ -3766,8 +3787,8 @@ def _activity_log_reader(proc):
         activity_task["proc"] = None
 
 
-def _start_activity_script(label):
-    """通用启动 Temu 报活动子进程。"""
+def _start_activity_script(label, extra_env=None):
+    """通用启动 Temu 报活动子进程。extra_env: 透传给引擎的环境变量（如活动类型/折扣门槛）。"""
     with activity_lock:
         if activity_task.get("status") == "running" and activity_task.get("proc") and activity_task["proc"].poll() is None:
             return {"success": False, "message": "已有报活动任务在运行，请先停止"}, 409
@@ -3793,6 +3814,8 @@ def _start_activity_script(label):
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    if extra_env:
+        env.update(extra_env)
 
     try:
         proc = subprocess.Popen(
