@@ -3567,13 +3567,14 @@ def api_pricing_start():
     args = [get_python(), str(PRICING_MAIN)]
     if mode == "no-submit":
         args.append("--no-submit")
-    if pages:
+        # 仅核价不提交：始终只核 1 页并停在提交前供检查，忽略页码范围
+    elif pages:
         import re
         if not re.match(r'^\d+-\d+$', pages):
             return jsonify({"error": "页码范围格式应为 起始-结束，如 2-52"}), 400
         args.append(f"--pages={pages}")
     label = "仅核价不提交" if mode == "no-submit" else "完整自动核价"
-    if pages:
+    if pages and mode != "no-submit":
         label += f" 页{pages}"
     resp, code = _start_pricing_script(mode, args, label)
     return jsonify(resp), code

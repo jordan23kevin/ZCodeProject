@@ -66,7 +66,7 @@
 <h1>Temu 核价 <span class="v">Hermes v5.2</span></h1>
 
 <div class="toolbar">
-  <input type="text" id="startPages" placeholder="页码范围 如 2-52" title="留空=默认1→60页；格式：起始-结束" style="width:130px">
+  <input type="text" id="startPages" placeholder="页码范围 如 2-52" title="仅『完整自动核价』生效；留空=默认核1→5页。格式：起始-结束（如 2-52）。『仅核价不提交』固定核1页，忽略此框" style="width:130px">
   <button class="btn-green" onclick="startPricing(false)" id="btnStart">🚀 完整自动核价</button>
   <button class="btn-orange" onclick="startPricing(true)" id="btnNoSubmit">✋ 仅核价不提交</button>
   <button class="btn-purple" onclick="continueSubmit()" id="btnContinue">▶️ 继续提交</button>
