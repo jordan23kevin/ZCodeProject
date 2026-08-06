@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Temu 流量加速器</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px;min-height:100vh}
+  h1{text-align:center;font-size:30px;margin:0 0 6px}
+  h1 .v{font-size:14px;color:#666;font-weight:normal;margin-left:8px}
+  .sub{text-align:center;color:#999;font-size:14px;margin-bottom:18px;line-height:1.6}
+  .sub b{color:#ffb74d}
+
+  .toolbar{text-align:center;margin-bottom:18px}
+  .toolbar button{padding:13px 22px;font-size:16px;border-radius:6px;border:1px solid #555;background:#2a2a2a;color:#eee;margin-left:8px;cursor:pointer}
+  .toolbar button.primary{background:#2196F3;color:#fff;border:none;font-weight:600}
+  .toolbar button.primary:hover:not(:disabled){background:#1976D2}
+  .toolbar button.go{background:#43a047;color:#fff;border:none;font-weight:600}
+  .toolbar button.go:hover:not(:disabled){background:#2e7d32}
+  .toolbar button.danger{background:#e53935;color:#fff;border:none;font-weight:600}
+  .toolbar button.danger:hover:not(:disabled){background:#c62828}
+  .toolbar button:hover:not(:disabled){background:#333}
+  .toolbar button:disabled{opacity:.45;cursor:not-allowed}
+
+  .panel{background:#252525;border:1px solid #444;border-radius:10px;padding:16px 20px;margin:0 auto 22px;max-width:1100px}
+  .panel-title{font-size:18px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
+  .status-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:12px;font-size:13px;font-weight:500;border:1px solid}
+  .status-idle{background:#1b3a1b;color:#7ee787;border-color:#2e7d32}
+  .status-running{background:#3d2e0b;color:#f7c843;border-color:#9e6a03}
+  .status-completed{background:#1b3a1b;color:#7ee787;border-color:#2e7d32}
+  .status-error{background:#3d0f0f;color:#f87171;border-color:#a42c2c}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid #8b949e;border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .log-box{background:#0d0d0d;border:1px solid #333;border-radius:6px;padding:10px 14px;height:320px;overflow-y:auto;font-family:"Cascadia Code",Consolas,monospace;font-size:12px;line-height:1.7;white-space:pre-wrap}
+  .log-box .line{color:#8b949e}
+  .log-box .line.ok{color:#7ee787}
+  .log-box .line.warn{color:#f7c843}
+  .log-box .line.error{color:#f87171}
+
+  .note{background:#2a2113;border:1px solid #5a4a1a;border-radius:8px;padding:12px 16px;color:#e8d9a8;font-size:13px;line-height:1.7;margin:0 auto 18px;max-width:1100px}
+  .note b{color:#ffd479}
+</style>
+</head>
+<body>
+<h1>Temu 流量加速器 <span class="v">开启流量加速</span></h1>
+<div class="sub">流程和核价一样：<b>① 打开 Temu 后台</b> → <b>② 自己登录并进入「流量加速器」页面</b> → <b>③ 点 👌 好了</b>，脚本接管标签页自动操作。</div>
+
+<div class="note">
+  ⚠️ 本页面会控制你电脑上 <b>Edge 浏览器</b>（大家共用的、带调试端口 9222 的那个）。<br>
+  · 点 <b>① 打开 Temu 后台</b>：若 Edge 没开会自动帮你启动共用的 Edge 并打开卖家后台首页。<br>
+  · 然后你<b>自己登录</b>，并手动进入到 <b>「流量加速器」</b> 页面（停留在那个标签页）。<br>
+  · 准备好后点 <b>👌 好了</b>：脚本会先切到<b>「流量加速器待开启」</b>筛选，然后逐页循环：<b>全选</b> → 点<b>「批量开启流量加速器」</b> → 在抽屉里按<b>核价底价规则</b>逐行选档位，提交后自动翻下一页，直到最后一页：<br>
+  &nbsp;&nbsp;· 申报价 - 让价 ≥ 站点底价 → 选让价最大（最接近底价）的档位<br>
+  &nbsp;&nbsp;· 全部低于底价但在 10 元以内 → 选让价最少的档位<br>
+  &nbsp;&nbsp;· 低于底价 10 元及以上 → 价格不通过，该行留空并记录 SPU<br>
+  · 流量加速时效保持默认不动。<b>整个抽屉全部通过 → 自动点「立即加速」提交</b>；<b>有不通过的行 → 不提交</b>，通过/不通过的 SPU 清单（逗号分隔）会展示在下方，你手动处理。<br>
+  · 每条处理结果（SPU、站点、申报价、所选档位、让价、最终价格、通过与否）会实时追加到本地 <b>E:\Kimi Code\temu分析\流量加速器记录.xlsx</b>（Excel 直接打开）。
+</div>
+
+<div class="panel">
+  <div class="panel-title">
+    <span>🚀 开启流量加速器</span>
+    <span id="badge" class="status-badge status-idle"><span class="spinner" id="spinner" style="display:none"></span><span id="badgeLabel">就绪</span></span>
+  </div>
+  <div class="toolbar" style="text-align:left;margin-bottom:12px">
+    <button class="primary" onclick="doOpen()" id="btnOpen">① 🌐 打开 Temu 后台</button>
+    <button class="go" onclick="doStart()" id="btnGo">② 👌 好了，开始接管</button>
+    <button class="danger" onclick="doStop()" id="btnStop">⏹ 停止</button>
+  </div>
+  <div class="log-box" id="logBox"></div>
+</div>
+
+<script>
+function setBadge(status, label){
+  const badge = document.getElementById('badge');
+  badge.className = 'status-badge status-' + status;
+  document.getElementById('spinner').style.display = (status==='running') ? 'inline-block' : 'none';
+  document.getElementById('badgeLabel').textContent = label;
+}
+function addLog(type, msg){
+  const box = document.getElementById('logBox');
+  const cls = {ok:'ok', warn:'warn', error:'error'}[type] || '';
+  const div = document.createElement('div');
+  div.className = 'line ' + cls;
+  div.textContent = msg;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+function renderLogLines(lines){
+  for(const l of (lines||[])){
+    const t = l.includes('✅') ? 'ok' : (l.includes('⚠')||l.includes('ℹ')||l.includes('⏸')) ? 'warn' : (l.includes('❌')?'error':'info');
+    addLog(t, l);
+  }
+}
+
+async function doOpen(){
+  const btn = document.getElementById('btnOpen');
+  btn.disabled = true;
+  setBadge('running','正在打开…');
+  addLog('info','正在连接共用的 Edge 并打开 Temu 卖家后台…');
+  try{
+    const res = await fetch('/api/traffic/open',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const data = await res.json();
+    renderLogLines(data.log);
+    if(!data.ok){ setBadge('error','❌ 错误'); if(data.error) addLog('error',data.error); return; }
+    setBadge('idle','待登录');
+    addLog('ok','✅ Temu 后台已打开。请登录并进入「流量加速器」页面，然后点 ② 👌 好了。');
+  }catch(e){
+    setBadge('error','❌ 错误'); addLog('error','网络错误：'+e.message);
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+let taskId = null;
+let timer = null;
+let logShown = 0;
+
+async function doStart(){
+  const btnGo = document.getElementById('btnGo'), btnOpen = document.getElementById('btnOpen');
+  btnGo.disabled = true; btnOpen.disabled = true;
+  logShown = 0;
+  setBadge('running','接管中…');
+  addLog('info','收到「好了」信号，开始接管流量加速器页面…');
+  try{
+    const res = await fetch('/api/traffic/start',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const data = await res.json();
+    if(!data.ok){ setBadge('error','❌ 错误'); if(data.error) addLog('error',data.error); resetButtons(); return; }
+    taskId = data.task_id;
+    startPoll();
+  }catch(e){
+    setBadge('error','❌ 错误'); addLog('error','网络错误：'+e.message);
+    resetButtons();
+  }
+}
+
+function startPoll(){
+  if(timer) clearInterval(timer);
+  timer = setInterval(async ()=>{
+    if(!taskId) return;
+    try{
+      const res = await fetch('/api/traffic/status?task_id='+encodeURIComponent(taskId));
+      const d = await res.json();
+      if(!d.ok){ setBadge('error','❌ 错误'); addLog('error',d.error||'任务失效'); clearInterval(timer); resetButtons(); return; }
+      const lines = d.log||[];
+      for(let i=logShown;i<lines.length;i++){
+        const l = lines[i];
+        const t = l.includes('✅') ? 'ok' : (l.includes('⚠')||l.includes('ℹ')||l.includes('⏸')) ? 'warn' : 'info';
+        addLog(t,l); logShown++;
+      }
+      if(d.error){
+        setBadge('error','❌ 错误'); addLog('error',d.error);
+        clearInterval(timer); resetButtons(); return;
+      }
+      if(d.done){
+        clearInterval(timer);
+        setBadge('completed','✅ 完成');
+        const r = d.result||{};
+        if(r.note) addLog('ok', r.note);
+        if(r.passed || r.failed){
+          let box = document.getElementById('sumBox');
+          if(!box){
+            box = document.createElement('div'); box.id = 'sumBox';
+            box.style.cssText = 'background:#1e1e1e;border:1px solid #3a3a3a;border-radius:8px;padding:12px 16px;margin-top:12px;font-size:13px;line-height:1.8;word-break:break-all';
+            document.getElementById('logBox').after(box);
+          }
+          box.innerHTML =
+            '<div style="color:#7ee787;font-weight:700">✅ 价格通过 SPU（'+(r.passed||[]).length+' 个）：</div>'+
+            '<div>'+((r.passed||[]).join(',')||'无')+'</div>'+
+            '<div style="color:#f87171;font-weight:700;margin-top:8px">❌ 价格不通过 SPU（'+(r.failed||[]).length+' 个）：</div>'+
+            '<div>'+((r.failed||[]).join(',')||'无')+'</div>';
+        }
+        resetButtons();
+      }
+    }catch(e){ /* 轮询偶发失败不中断，等下次 */ }
+  }, 700);
+}
+
+function resetButtons(){
+  document.getElementById('btnGo').disabled = false;
+  document.getElementById('btnOpen').disabled = false;
+}
+
+async function doStop(){
+  try{
+    const res = await fetch('/api/traffic/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const data = await res.json();
+    if(data.ok){
+      addLog('warn','⏹ 已发送停止信号，脚本会在当前步骤结束后安全停下…');
+      setBadge('running','停止中…');
+    }
+  }catch(e){
+    addLog('error','停止请求失败：'+e.message);
+  }
+}
+</script>
+</body>
+</html>

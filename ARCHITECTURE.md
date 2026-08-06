@@ -1,7 +1,23 @@
-# Y2 系统架构文档 v2.5.0
+# Y2 系统架构文档 v2.6.0
 
-> 工程类型: 图像生产血缘数据库 + 控制面板 + 纯软件贴图成品流水线 + AI 生图对比复审 + Temu 核价集成 + Temu 报活动集成 + 遮罩生成子系统（人物前景遮挡）+ 价格申报视角批量处理子系统（Temu 待卖家确认）
+> 工程类型: 图像生产血缘数据库 + 控制面板 + 纯软件贴图成品流水线 + AI 生图对比复审 + Temu 核价集成 + Temu 报活动集成 + 遮罩生成子系统（人物前景遮挡）+ 价格申报视角批量处理子系统（Temu 待卖家确认）+ Temu 流量加速器批量开启子系统
 > 遵循: B+ 四层血缘闭环架构
+
+---
+
+## v2.6.0 变更
+
+本次版本新增 **Temu 流量加速器批量开启子系统**（traffic），与原有流程解耦、互不影响：
+
+- **独立页面**：`/traffic`（`traffic.html`）+ `lovart_control.html` 导航按钮「🚀 流量加速」。
+- **后端 API**（均在 `lovart_bridge.py`，traffic 段约 5056 行起）：
+  - `/api/traffic/open`（复用/新开 flux-analysis 标签页）、`/api/traffic/start`（点「好了」后后台线程接管，返回 task_id）、`/api/traffic/stop`（`TRAFFIC_STOP` 全局 Event 安全停止）、`/api/traffic/status`（前端轮询日志）。
+- **页面控制层**：复用 `_ensure_edge_cdp`（共用 Edge 调试端口 9222）；`TRAFFIC_URL_HINTS` 按 URL 含 `flux-analysis` 定位标签页。
+- **每页流程**（`_traffic_batch_enable`）：切「流量加速器待开启」筛选（橙色边框判定选中）→ 全选 → 批量开启（「部分商品不可开启」弹窗自动「过滤并继续」）→ 抽屉内按核价底价规则分析（`_traffic_analyze_rows`：P−L≥floor 选最大让价，否则破价≤10 选最少让价，否则不通过）→ 全过直接提交；部分通过则关抽屉→按 SPU 只勾选通过的→重开抽屉选档提交；全不过跳过。
+- **翻页**：已开启商品不离开列表，每轮必点「下一页」（`PGT_next`），直到最后一页。
+- **僵尸抽屉治理（本版本最关键的架构决策）**：Temu 抽屉关闭后元素带 transform 滑出屏幕右侧**仍留在 DOM**，`querySelector` 第一个匹配会拿到它。所有抽屉操作统一改用「与视口相交像素 >50px 的可见抽屉」（`_TRAFFIC_VISIBLE_DRAWER_FIND_JS` / `_TRAFFIC_HAS_VISIBLE_DRAWER_JS`）；关抽屉三级兜底 = 真实点击（不加 force）→ JS 点击+二次确认弹窗 → 刷新（附弹窗诊断 dump）；弹窗选择器必须含 `[class*='MDL']`（Temu 弹窗非 Modal/Dialog）。
+- **记录**：每条（时间/SPU/站点/申报价/核价底价/选择档位/让价/最终价格/结果）openpyxl 追加到 `E:\Kimi Code\temu分析\流量加速器记录.xlsx`；价格不通过的 SPU 汇总展示在页面上人工处理，不自动提交。
+- 详细方法实现与踩坑记录见 `docs/traffic_accelerator_automation.md`；运行环境见 `REPRODUCIBILITY.md` 第 13 节。
 
 ---
 

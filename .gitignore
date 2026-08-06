@@ -44,3 +44,6 @@ test_design.png
 *.py.bak
 *.bak*
 skill-dist/
+
+# 流量加速运行时记录（已弃用的CSV版，真实记录在 E:/Kimi Code/temu分析/流量加速器记录.xlsx）
+traffic_records.csv

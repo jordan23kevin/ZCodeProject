@@ -1,9 +1,9 @@
 ---
 name: lovart-wb
-description: Y2 控制台 v2.5.0 — 管理 AI 生图、去背、贴图成品、Temu 核价、Temu 报活动、遮罩生成（人物前景遮挡）、价格申报视角批量处理（Temu 待卖家确认，按核价底价自动接受≥底价/批量拒绝<底价，拒绝原因统一「价格过低」）的完整生产流程（批量上款无黑窗 + WB 上款一键复制未上款款号 + UID/group_id 全链路溯源 + AI 生图对比 + DX建立日期分类 + 去背预览守护常驻与预扫描缓存 + 上款进度精准统计 + AI 对比缓存刷新 + wb上款联动 + Lovart v6.1.1 对齐 + 店小秘在线页验证已上款 + 反相任务统一队列 + 反相贴图解耦 + 单张去背修复 + 批量去背BW过滤修复 + 纯软件贴图队列化（去 PS 化） + Bridge 面板限制窗口大小 1400x900 + 同步 wb上款 v2.2.2 / check_online_listed v1.3.20 + Temu 核价控制台 /pricing + Temu 报活动控制台 /activity + 联动 temu-hengjia-engine v5.2.1 + 上款缩略图黑白错位修复 + 文件夹前台打开修复 + 贴图流水线纯软件化：ps v2.0/v2.4/v2.5 + white_t_mockup v1.8.0 + 04_OS wb_naming v2.3.0 + 遮罩生成子系统 peiyi_mask v1.5.2：BiRefNet 人像分割 + LAB 色度聚类 + FASHN 语义分割增强（可选/失败回退）+ 版本归档 + 评分总表 + 手动校正（点选扩散）+ 导入手动 PS 遮罩合并 + 价格申报视角批量处理子系统 order_price：/order-price 页面 + /api/order_price/{scan,auto,reject,status} + 共用 Edge CDP 9222 + ORDER_PRICE_FLOOR 核价底价字典（含意大利115））
+description: Y2 控制台 v2.6.0 — 管理 AI 生图、去背、贴图成品、Temu 核价、Temu 报活动、遮罩生成（人物前景遮挡）、价格申报视角批量处理（Temu 待卖家确认，按核价底价自动接受≥底价/批量拒绝<底价，拒绝原因统一「价格过低」）的完整生产流程（批量上款无黑窗 + WB 上款一键复制未上款款号 + UID/group_id 全链路溯源 + AI 生图对比 + DX建立日期分类 + 去背预览守护常驻与预扫描缓存 + 上款进度精准统计 + AI 对比缓存刷新 + wb上款联动 + Lovart v6.1.1 对齐 + 店小秘在线页验证已上款 + 反相任务统一队列 + 反相贴图解耦 + 单张去背修复 + 批量去背BW过滤修复 + 纯软件贴图队列化（去 PS 化） + Bridge 面板限制窗口大小 1400x900 + 同步 wb上款 v2.2.2 / check_online_listed v1.3.20 + Temu 核价控制台 /pricing + Temu 报活动控制台 /activity + 联动 temu-hengjia-engine v5.2.1 + 上款缩略图黑白错位修复 + 文件夹前台打开修复 + 贴图流水线纯软件化：ps v2.0/v2.4/v2.5 + white_t_mockup v1.8.0 + 04_OS wb_naming v2.3.0 + 遮罩生成子系统 peiyi_mask v1.5.2：BiRefNet 人像分割 + LAB 色度聚类 + FASHN 语义分割增强（可选/失败回退）+ 版本归档 + 评分总表 + 手动校正（点选扩散）+ 导入手动 PS 遮罩合并 + 价格申报视角批量处理子系统 order_price：/order-price 页面 + /api/order_price/{scan,auto,reject,status} + 共用 Edge CDP 9222 + ORDER_PRICE_FLOOR 核价底价字典（含意大利115）+ Temu 流量加速器批量开启子系统 traffic：/traffic 页面 + /api/traffic/{open,start,stop,status} + 核价底价选档规则 + 僵尸抽屉可见性治理 + openpyxl 逐条记录）（批量上款无黑窗 + WB 上款一键复制未上款款号 + UID/group_id 全链路溯源 + AI 生图对比 + DX建立日期分类 + 去背预览守护常驻与预扫描缓存 + 上款进度精准统计 + AI 对比缓存刷新 + wb上款联动 + Lovart v6.1.1 对齐 + 店小秘在线页验证已上款 + 反相任务统一队列 + 反相贴图解耦 + 单张去背修复 + 批量去背BW过滤修复 + 纯软件贴图队列化（去 PS 化） + Bridge 面板限制窗口大小 1400x900 + 同步 wb上款 v2.2.2 / check_online_listed v1.3.20 + Temu 核价控制台 /pricing + Temu 报活动控制台 /activity + 联动 temu-hengjia-engine v5.2.1 + 上款缩略图黑白错位修复 + 文件夹前台打开修复 + 贴图流水线纯软件化：ps v2.0/v2.4/v2.5 + white_t_mockup v1.8.0 + 04_OS wb_naming v2.3.0 + 遮罩生成子系统 peiyi_mask v1.5.2：BiRefNet 人像分割 + LAB 色度聚类 + FASHN 语义分割增强（可选/失败回退）+ 版本归档 + 评分总表 + 手动校正（点选扩散）+ 导入手动 PS 遮罩合并 + 价格申报视角批量处理子系统 order_price：/order-price 页面 + /api/order_price/{scan,auto,reject,status} + 共用 Edge CDP 9222 + ORDER_PRICE_FLOOR 核价底价字典（含意大利115））
 ---
 
-# Y2 控制台 v2.5.0
+# Y2 控制台 v2.6.0
 
 ## 用途
 
@@ -15,6 +15,7 @@ description: Y2 控制台 v2.5.0 — 管理 AI 生图、去背、贴图成品、
 5. **WB 上款（成品整理）** — 输出到 `03_UPLOAD`
 6. **Temu 核价 (`/pricing`)** — 批量扫描、勾选、填价、提交，联动 `temu-hengjia-engine`
 7. **Temu 报活动 (`/activity`)** — 批量活动提取、勾选、生成模板、核价过滤、上传导入
+8. **Temu 流量加速 (`/traffic`)** — 流量加速器批量开启，按核价底价自动选档位提交
 
 ## 使用方式
 
@@ -46,6 +47,7 @@ python D:\Semems WB\04_OS\engine\check_rem.py
 11. 点击「💰 核价」→ 在 Edge 登录 Temu 并打开核价页面 → 点击「好了」→ 自动核价提交
 12. 点击「🎉 报活动」→ 在 Edge 登录 Temu 并打开活动页面 → 点击「启动报活动」→ 自动完成 9 步报名流程
 13. 点击「📉 价格申报」→ 在 Edge 登录 Temu 并打开「待卖家确认」列表 → 先「🔍 扫描预览」核对 接受/拒绝/跳过 与各站底价 → 「▶️ 自动执行」只接受≥底价的（逐条点调整→确认）→ 「🗑️ 批量拒绝」逐个勾选<底价的并填原因「价格过低」拒绝。拒绝后按 F5 刷新复核
+14. 点击「🚀 流量加速」→ ① 打开 Temu 后台（复用 flux-analysis 标签页）→ 登录进入「流量加速器」页面 → ② 点「好了」→ 脚本逐页全选→批量开启→按核价底价选档位→自动提交直到最后一页；价格不通过的 SPU 页面上汇总展示由人工处理；随时可点「⏹ 停止」；每条记录写入 `E:\Kimi Code\temu分析\流量加速器记录.xlsx`
 
 ### 关键功能
 - **AI 生图** — 从 INBOX 勾选图片，一键调用 Lovart API
@@ -70,6 +72,8 @@ python D:\Semems WB\04_OS\engine\check_rem.py
 - **价格申报视角批量处理（`/order-price`）** — 自动按核价底价处理 Temu「待卖家确认」调价单：扫描预览（接受/拒绝/跳过 + 各站底价/接受最低价/拒绝最高价）、自动接受（≥底价逐条点调整→确认，attempted 守卫防弹窗叠加）、批量拒绝（逐个勾选<底价订单→填原因「价格过低」→点拒绝真正提交）
 - **核价底价字典 `ORDER_PRICE_FLOOR`** — 与 Temu 核价仓 PRICE_MAP 对齐（含意大利 115）；纯数据配置，调整某站底价改字典即可
 - **共用 Edge（端口 9222）** — order_price 复用 `_ensure_edge_cdp` 连已在跑的 Edge 调试端口，绝不另开第二个 Edge；进入页面自动点「待卖家确认」+ 设每页 200 条
+- **Temu 流量加速页面 (`/traffic`)** — 流量加速器批量开启：逐页 全选 → 批量开启 → 抽屉内按核价底价规则选档位（P−L≥底价选最大让价；破价≤10 元选最少让价；破价>10 元判不通过记录 SPU）→ 自动提交 → 翻下一页；部分通过时只勾选通过商品重开抽屉提交；支持「⏹ 停止」随时中断
+- **僵尸抽屉治理** — Temu 抽屉关闭后元素滑出屏幕仍留 DOM，所有抽屉操作统一选「与视口相交 >50px 的可见抽屉」（`_TRAFFIC_VISIBLE_DRAWER_FIND_JS`）；弹窗选择器含 `[class*='MDL']`；关抽屉 = 真实点击 → JS 点击 → 刷新兜底三级策略
 
 ## 架构
 
@@ -89,5 +93,5 @@ HTML 控制面板 ←HTTP→ Flask Bridge ←subprocess→ Lovart 管线
 - 去背时美图秀秀接管屏幕，勿动键鼠
 - 贴图/BW合成已纯软件（PIL），不再启动 / 占用 Photoshop，也不占用键鼠，速度更快
 - 从 Bridge 控制面板启动「去背预览」「贴图」「BW合成」时，命令提示行窗口会最小化到任务栏，不抢焦点
-- 首次启动需安装依赖：`pip install flask Pillow requests pywin32 pythoncom numpy`（Bridge / 去背用）；`opencv-python`（white_t_mockup 用，cv2 来自 `E:/python_packages`，需 `PYTHONPATH=E:/python_packages;E:/Kimi Code`）
+- 首次启动需安装依赖：`pip install flask Pillow requests pywin32 pythoncom numpy`（Bridge / 去背用）；`opencv-python`（white_t_mockup 用，cv2 来自 `E:/python_packages`，需 `PYTHONPATH=E:/python_packages;E:/Kimi Code`）；`playwright openpyxl`（Temu 核价/价格申报/流量加速用，均来自 `E:/python_packages`，需 `PYTHONPATH=E:/python_packages`）
 - 贴图流水线已纯软件，无需 Photoshop；去背流程仍用美图秀秀，运行期间会接管屏幕

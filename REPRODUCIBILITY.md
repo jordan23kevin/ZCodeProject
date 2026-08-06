@@ -433,3 +433,38 @@ cd "E:\Claude code\Temu自动化\报活动" && git log --oneline -5
 3. **拒绝后列表不自动刷新**：处理完按 **F5** 刷新后再复核，否则看到的还是旧数据。
 4. **页面卡住弹窗**：若开工前已堆着 >3 个确认弹窗（上次未关），代码会拒绝执行并提示先 F5 清除。
 
+
+## 13. 流量加速器批量开启（traffic）专用环境
+
+> 子系统文档：`docs/traffic_accelerator_automation.md`；架构：`ARCHITECTURE.md` v2.6.0 变更；更新日志：`CHANGELOG.md` v2.6.0。
+
+### 13.1 额外依赖
+
+- 与 order_price 完全同一环境：Python 3.11（`C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe`）+ `PYTHONPATH=E:/python_packages`。
+- **openpyxl**（来自 `E:/python_packages`）：写记录文件用，惰性 import（`from openpyxl import Workbook, load_workbook`）。安装：`pip install openpyxl`。
+- playwright 用法与 10.1 / 10.2 相同（`connect_over_cdp("http://127.0.0.1:9222")` 连共用 Edge，绝不另开第二个）。
+
+### 13.2 页面与接口
+
+- 控制台页面：`http://127.0.0.1:8765/traffic`（`traffic.html`），控制台导航按钮「🚀 流量加速」。
+- 目标页面：`https://agentseller-eu.temu.com/main/flux-analysis`（标签页按 URL 含 `flux-analysis` 定位，`TRAFFIC_URL_HINTS`）。
+- 后端接口：`/api/traffic/open`、`/api/traffic/start`（返回 task_id，后台线程）、`/api/traffic/stop`（`TRAFFIC_STOP` 全局 Event）、`/api/traffic/status?task_id=`（轮询）。
+- 核价底价复用 `ORDER_PRICE_FLOOR`（见 10.3），无新增配置。
+
+### 13.3 记录文件
+
+- `E:\Kimi Code\temu分析\流量加速器记录.xlsx`（常量 `TRAFFIC_RECORD_FILE`，openpyxl 逐行追加，不存在则自动建表头）。
+- 列：`时间 / SPU / 站点 / 申报价(CNY) / 核价底价 / 选择档位 / 让价 / 最终价格 / 结果`。
+- 仓库根目录的 `traffic_records.csv` 是早期 CSV 版遗留，**已弃用**（乱码/单列问题），已加入 `.gitignore`，不要提交。
+
+### 13.4 操作铁律（避免踩坑）
+
+1. **任务在跑时绝不重启 Bridge**（判断依据：`bridge.log` 里 `/api/traffic/status` 轮询是否还在）。要停止用页面上的「⏹ 停止」按钮；重启杀任务会留下僵尸抽屉，需刷新页面恢复。
+2. **Bridge 重启后前端报「无效或已过期的任务ID」**：属正常（旧 task_id 随进程消亡），重新开始任务即可。
+3. **抽屉关闭后元素仍在 DOM（僵尸抽屉）**：任何改抽屉相关代码时，必须用「与视口相交 >50px 的可见抽屉」（`_TRAFFIC_VISIBLE_DRAWER_FIND_JS`），绝不用 `querySelector` 第一个匹配；弹窗选择器必须含 `[class*='MDL']`。
+4. **翻页铁律**：每轮处理完必点「下一页」，绝不留在当前页重复全选（会触发「部分商品不可开启」弹窗）。
+
+### 13.5 回滚
+
+- 回滚本子系统：`git checkout v2.5.0 -- lovart_bridge.py lovart_control.html` 并删除 `traffic.html`（或直接回退到 tag `v2.5.0`）。
+- 回到本版本：`git checkout v2.6.0`，然后双击 `lovart_bridge.bat` 重启（bat 会先杀旧进程再启动，保证加载新代码）。

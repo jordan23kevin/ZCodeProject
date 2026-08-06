@@ -7,7 +7,7 @@ if /I not "%~1"=="minimized" (
     exit /b 0
 )
 
-title Y2 Bridge v2.3.23
+title Y2 Bridge v2.6.0
 setlocal enabledelayedexpansion
 
 set PYTHON=C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe
@@ -56,27 +56,34 @@ if not exist "%PYTHON%" (
 
 cd /d "%SCRIPT_DIR%"
 
-:: Check if Bridge is already running
+:: Kill any stale check_rem (port 8766) so its guardian re-launches it with fresh code
+echo [startup] Checking for stale check_rem on port 8766...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8766" ^| findstr "LISTENING"') do (
+    if not "%%a"=="0" (
+        echo [startup] Killing stale check_rem PID %%a
+        taskkill /PID %%a /F >nul 2>&1
+    )
+)
+timeout /t 1 /nobreak >nul
+
+:: Check if Bridge is already running —— 若端口被旧进程占用，先强行杀掉再启动（确保加载最新代码）
 curl -s http://%HOST%:%PORT%/api/inbox >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
-    echo [WARN] Bridge already running at http://%HOST%:%PORT%
-    if "%OPEN_BROWSER%"=="1" (
-        echo Opening Chrome...
-        if exist "%CHROME%" (
-            start "" cmd /c ""%CHROME%" --new-window --window-size=1400,900 "http://%HOST%:%PORT%" >nul 2>&1"
-        ) else (
-            start "" cmd /c "start http://%HOST%:%PORT% >nul 2>&1"
+    echo [INFO] 检测到 %HOST%:%PORT% 已有进程，先杀掉旧进程以确保加载最新代码...
+    for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":%PORT%" ^| findstr "LISTENING"') do (
+        if not "%%a"=="0" (
+            echo [INFO] Killing stale bridge PID %%a
+            taskkill /PID %%a /F >nul 2>&1
         )
     )
-    pause
-    exit /b 0
+    timeout /t 1 /nobreak >nul
 )
 
 :: Rotate old log before starting
 call :rotate_log
 
 echo ========================================
-echo   Y2 Bridge v2.3.23
+echo   Y2 Bridge v2.6.0
 echo   Panel: http://%HOST%:%PORT%
 echo   INBOX: D:\Semems WB\01_INBOX\
 echo   Lovart: E:\Claude code\lovart-official\
