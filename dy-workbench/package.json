@@ -1,0 +1,9 @@
+{
+  "name": "petdesk-dy-workbench",
+  "version": "1.0.0",
+  "private": true,
+  "description": "抖音宠物电商主图提示词工作台",
+  "scripts": {
+    "dev": "node server.js"
+  }
+}

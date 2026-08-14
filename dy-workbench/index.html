@@ -1,0 +1,1757 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PETDESK · 抖音宠物电商主图工作台</title>
+<style>
+:root{
+  --bg:#FAFAF8; --card:#FFFFFF; --ink:#14141A; --ink2:#55555E; --ink3:#9B9BA3;
+  --line:#E4E2DA; --line2:#EFEEE7;
+  --accent:#5541EA; --accent-soft:#EFEDFD; --accent-deep:#3F2FBC;
+  --gold:#FCCF00; --gold-soft:#FFF7D6;
+  --danger:#E5484D; --ok:#1F9D61;
+  --term:#15151D; --term-line:#26262F;
+  --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+  --r-s:6px; --r-m:10px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{font-size:13px}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+::selection{background:var(--accent);color:#fff}
+button{font-family:inherit;cursor:pointer}
+input,select,textarea{font-family:inherit;font-size:13px;color:var(--ink)}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent)}
+
+/* ── 顶栏 ─────────────────────────── */
+header{height:50px;flex:none;display:flex;align-items:center;gap:16px;padding:0 18px;
+  background:var(--card);border-bottom:1px solid var(--line);z-index:10}
+.brand{display:flex;align-items:baseline;gap:9px}
+.brand b{font-size:15px;letter-spacing:.04em;font-weight:800}
+.brand b i{font-style:normal;color:var(--accent)}
+.brand span{color:var(--ink3);font-size:12px}
+.hd-flow{display:flex;align-items:center;gap:6px;color:var(--ink3);font-size:11.5px;margin-left:8px}
+.hd-flow b{color:var(--ink2);font-weight:600}
+.hd-flow em{font-style:normal;color:var(--line);margin:0 2px}
+.hd-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.ratio-switch{display:flex;border:1px solid var(--line);border-radius:99px;overflow:hidden}
+.ratio-switch button{border:0;background:transparent;padding:5px 14px;font-size:12px;color:var(--ink2);font-weight:600}
+.ratio-switch button.on{background:var(--ink);color:#fff}
+.api-btn{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);
+  border-radius:99px;padding:5px 13px;font-size:11.5px;font-weight:600;color:var(--ink2)}
+.api-btn:hover{border-color:var(--accent);color:var(--accent)}
+.api-dot{width:7px;height:7px;border-radius:50%;background:#C9C9CF}
+.api-dot.ok{background:var(--ok);box-shadow:0 0 0 3px rgba(31,157,97,.15)}
+.ver{font-family:var(--mono);font-size:10.5px;color:var(--ink3)}
+
+/* ── 主三栏 ───────────────────────── */
+main{flex:1;display:flex;min-height:0}
+main > section.col{flex:none;width:380px}
+main > section.col:nth-of-type(2){width:320px}
+main > section.col:last-of-type{flex:1;min-width:400px;width:auto}
+.col-drag{flex:none;width:5px;cursor:col-resize;border-left:1px solid var(--line);background:transparent;transition:background .15s}
+.col-drag:hover,.col-drag.on{background:var(--accent-soft)}
+.col{overflow-y:auto;padding:16px 16px 40px;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.col::-webkit-scrollbar{width:6px}
+.col::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+.col-h{display:flex;align-items:baseline;gap:8px;margin-bottom:12px}
+.col-h h2{font-size:12px;font-weight:800;letter-spacing:.14em}
+.col-h .step{font-family:var(--mono);font-size:10px;color:var(--accent);background:var(--accent-soft);
+  border-radius:4px;padding:1px 6px;font-weight:700}
+.col-h small{color:var(--ink3);font-size:11px;margin-left:auto}
+
+.sec{margin-bottom:20px}
+.sec-t{font-size:11px;font-weight:700;color:var(--ink2);letter-spacing:.1em;margin-bottom:8px;
+  display:flex;align-items:center;gap:6px}
+.sec-t::after{content:"";flex:1;height:1px;background:var(--line2)}
+.sec-t .opt{font-size:10px;color:var(--ink3);font-weight:400;letter-spacing:0}
+.req{color:var(--danger);font-weight:800}
+
+/* ── 上传槽位 ─────────────────────── */
+.slot-main{position:relative;border:1.5px dashed var(--accent);border-radius:var(--r-m);
+  background:var(--accent-soft);aspect-ratio:1/1;max-height:236px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:6px;cursor:pointer;transition:.15s;overflow:hidden}
+.slot-main:hover{background:#E6E2FC}
+.slot-main .badge{position:absolute;top:8px;left:8px;background:var(--accent);color:#fff;
+  font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;letter-spacing:.05em;z-index:2}
+.slot-main .ic{font-size:26px;line-height:1}
+.slot-main p{font-size:11.5px;color:var(--accent-deep);font-weight:600}
+.slot-main small{font-size:10.5px;color:var(--ink3);text-align:center;padding:0 18px}
+.slot-main img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#fff}
+.slot-logo{position:relative;border:1.5px dashed var(--line);border-radius:var(--r-s);height:58px;
+  background:var(--card);display:flex;align-items:center;gap:10px;padding:0 12px;cursor:pointer;
+  transition:.15s;overflow:hidden;color:var(--ink3)}
+.slot-logo:hover{border-color:var(--accent);color:var(--accent)}
+.slot-logo .lg-ic{font-size:18px;flex:none}
+.slot-logo p{font-size:11.5px;font-weight:600;color:var(--ink2)}
+.slot-logo small{font-size:10px;color:var(--ink3);display:block}
+.slot-logo img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#fff;padding:6px}
+.slot-ref{position:relative;border:1.5px dashed var(--line);border-radius:var(--r-s);aspect-ratio:1/1;
+  background:var(--card);display:flex;align-items:center;justify-content:center;cursor:pointer;
+  transition:.15s;overflow:hidden;color:var(--ink3);font-size:16px}
+.slot-ref:hover{border-color:var(--accent);color:var(--accent)}
+.slot-ref.filled{border-style:solid;border-color:var(--line)}
+.slot-ref img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.slot-ref .idx{position:absolute;top:3px;left:5px;font-family:var(--mono);font-size:9px;
+  color:#fff;background:rgba(20,20,26,.55);border-radius:3px;padding:0 4px;z-index:2}
+.slot-ref .st{position:absolute;bottom:3px;left:5px;font-family:var(--mono);font-size:8.5px;
+  border-radius:3px;padding:0 4px;z-index:2}
+.slot-ref .st.ok{background:rgba(31,157,97,.85);color:#fff}
+.slot-ref .st.ing{background:rgba(85,65,234,.85);color:#fff}
+.slot-ref .del{position:absolute;top:2px;right:2px;z-index:3}
+.slot-ref.slot-ing{border-color:var(--accent);border-style:dashed}
+.slot-ref .ing-tip{font-size:10px;color:var(--accent);font-weight:700;text-align:center;line-height:1.3;padding:2px}
+.slot-main .del{position:absolute;top:8px;right:8px;z-index:3}
+.slot-logo .del{position:absolute;top:6px;right:6px;z-index:3}
+.ref-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(66px,1fr));gap:8px;margin-top:8px}
+.del{width:18px;height:18px;border:0;border-radius:50%;background:rgba(20,20,26,.65);color:#fff;
+  font-size:10px;line-height:1;display:flex;align-items:center;justify-content:center}
+.del:hover{background:var(--danger)}
+.hint{font-size:10.5px;color:var(--ink3);margin-top:6px;line-height:1.5}
+.hint b{color:var(--ink2)}
+/* 解析结果 */
+.ana-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.ana-item{background:var(--card);border:1px solid var(--line);border-radius:var(--r-s);padding:7px 10px;font-size:11px}
+.ana-item .ai-h{display:flex;gap:6px;align-items:center;margin-bottom:4px}
+.ana-item .ai-h b{font-family:var(--mono);font-size:10px;color:var(--accent)}
+.ana-item .tags{display:flex;flex-wrap:wrap;gap:4px}
+.ana-item .tags i{font-style:normal;background:var(--accent-soft);color:var(--accent-deep);
+  border-radius:3px;padding:1px 7px;font-size:10px}
+.ana-item .sps{margin-top:4px;color:var(--ink2);line-height:1.5}
+.ana-item .sps b{color:var(--ink)}
+.ana-sum{background:var(--gold-soft);border:1px solid var(--gold);border-radius:var(--r-s);
+  padding:7px 10px;font-size:11px;color:#6B5300;margin-top:8px;line-height:1.55}
+.ana-sum b{color:var(--ink)}
+
+/* ── 产品档案 ─────────────────────── */
+.pills{display:flex;flex-wrap:wrap;gap:6px}
+.pill{border:1px solid var(--line);background:var(--card);border-radius:var(--r-s);padding:6px 13px;
+  font-size:12px;font-weight:600;color:var(--ink2);transition:.12s}
+.pill:hover{border-color:var(--accent);color:var(--accent)}
+.pill.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:11px;font-weight:700;color:var(--ink2);margin-bottom:4px;letter-spacing:.05em}
+.field input,.field select{width:100%;border:1px solid var(--line);border-radius:var(--r-s);
+  background:var(--card);padding:8px 10px}
+.field .sub{font-size:10.5px;color:var(--ink3);margin-top:3px}
+.auto-note{background:var(--accent-soft);border:1px solid #DDD6FA;border-radius:var(--r-m);
+  padding:12px 14px;font-size:11.5px;color:var(--accent-deep);line-height:1.7}
+.auto-note b{color:var(--accent-deep)}
+.auto-note .row{display:flex;gap:8px;align-items:baseline}
+.auto-note .row::before{content:"▸";color:var(--accent);flex:none}
+
+/* ── 策略 ─────────────────────────── */
+.strat{display:flex;gap:8px;align-items:flex-start;border:1px solid var(--line);border-radius:var(--r-m);
+  background:var(--card);padding:10px 12px;margin-bottom:8px;cursor:pointer;transition:.13s;position:relative}
+.strat:hover{border-color:var(--accent)}
+.strat.on{border-color:var(--accent);background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.strat .dot{flex:none;width:15px;height:15px;border-radius:50%;border:1.5px solid var(--ink3);margin-top:2px;
+  display:flex;align-items:center;justify-content:center;transition:.13s}
+.strat.on .dot{border-color:var(--accent);box-shadow:0 0 0 3px rgba(85,65,234,.15)}
+.strat.on .dot::after{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent)}
+.strat b{font-size:12.5px;display:block}
+.strat p{font-size:11px;color:var(--ink2);margin-top:1px}
+.strat .tag{position:absolute;top:9px;right:10px;font-size:9.5px;font-weight:700;padding:1px 7px;
+  border-radius:3px;letter-spacing:.05em}
+.tag-cmp{background:var(--accent-soft);color:var(--accent-deep)}
+.tag-pro{background:var(--gold);color:var(--ink)}
+.btn-main{width:100%;border:0;border-radius:var(--r-m);background:var(--accent);color:#fff;
+  font-size:14px;font-weight:800;padding:12px;letter-spacing:.12em;transition:.15s;margin:6px 0 4px}
+.btn-main:hover{background:var(--accent-deep);transform:translateY(-1px)}
+.btn-main:active{transform:translateY(0)}
+.btn-main.busy{background:var(--ink3);pointer-events:none;animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.65}}
+.btn-ghost{border:1px solid var(--line);background:var(--card);border-radius:var(--r-s);
+  padding:6px 12px;font-size:11.5px;font-weight:600;color:var(--ink2)}
+.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+.warn-strip{display:none;background:var(--gold-soft);border:1px solid var(--gold);border-radius:var(--r-s);
+  padding:7px 10px;font-size:11px;color:#7A5D00;margin-top:8px}
+.warn-strip.show{display:block}
+.ver-warn{display:none;background:#FFF1F1;border-bottom:1px solid #F3C2C4;color:var(--danger);
+  font-size:12px;font-weight:600;padding:8px 18px;line-height:1.5}
+.ver-warn.show{display:block}
+.ver-warn b{font-weight:800}
+
+/* ── 输出区 ───────────────────────── */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:12px}
+.tabs button{border:0;background:transparent;padding:7px 13px;font-size:12px;font-weight:600;
+  color:var(--ink3);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:800}
+.term-card{background:var(--term);border-radius:var(--r-m);overflow:hidden;margin-bottom:12px}
+.term-h{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--term-line)}
+.term-h .dots{display:flex;gap:4px}
+.term-h .dots i{width:8px;height:8px;border-radius:50%;background:#3A3A46}
+.term-h .dots i:first-child{background:var(--accent)}
+.term-h span{font-family:var(--mono);font-size:10.5px;color:#8B8B99;letter-spacing:.05em}
+.term-h button{margin-left:auto;border:1px solid #3A3A46;background:transparent;color:#C9C9D4;
+  border-radius:4px;font-size:10.5px;padding:2.5px 10px;font-family:var(--mono)}
+.term-h button:hover{border-color:var(--accent);color:#fff;background:var(--accent)}
+.term-b{padding:11px 13px;font-family:var(--mono);font-size:11.5px;line-height:1.75;color:#D9D9E2;
+  white-space:pre-wrap;word-break:break-word}
+.term-b .k{color:#9D8CFF;font-weight:700}
+.term-b .neg{color:#8B8B99}
+.term-b[contenteditable]{cursor:text}
+.term-b[contenteditable]:focus{outline:1.5px solid var(--accent);outline-offset:-1px}
+.term-b[contenteditable]:empty::before{content:"生成后可在此直接编辑提示词";color:#5A5A66}
+.copy-line{display:flex;gap:8px;margin-bottom:14px}
+.copy-line .btn-ghost{flex:1}
+/* Lovart 出图 */
+.lovart-box{margin-top:4px;border:1px dashed var(--accent);border-radius:var(--r-m);padding:10px 12px;background:var(--accent-soft)}
+.lovart-box .btn-main{margin:2px 0 6px}
+.lovart-box .lv-status{font-size:11px;color:var(--ink2);min-height:14px}
+.lv-img{margin-top:8px}
+.lv-img img{width:100%;border-radius:var(--r-s);border:1px solid var(--line);display:block}
+.lv-acts{display:flex;gap:8px;margin-top:6px}
+.lv-acts a{flex:1;text-align:center;border:1px solid var(--line);border-radius:var(--r-s);background:var(--card);
+  padding:6px 0;font-size:11.5px;font-weight:600;color:var(--ink2);text-decoration:none}
+.lv-acts a:hover{border-color:var(--accent);color:var(--accent)}
+.lv-dir{display:flex;align-items:center;gap:8px;margin-top:6px}
+.lv-dir .btn-ghost{flex:none;font-size:11px}
+.lv-dir-txt{font-size:10.5px;color:var(--ink3)}
+.lv-dir-txt.ok{color:var(--ok)}
+/* 策略卡 */
+.strat-card{background:var(--card);border:1px solid var(--accent);border-radius:var(--r-m);padding:12px 14px;margin-bottom:10px}
+.strat-card .cc-t{font-size:10.5px;font-weight:800;letter-spacing:.1em;color:var(--accent);margin-bottom:8px}
+.st-row{display:flex;gap:8px;font-size:11.5px;line-height:1.6;margin-bottom:4px}
+.st-k{flex:none;width:64px;color:var(--ink3);font-weight:700}
+.st-v{color:var(--ink)}
+.st-qc{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.st-qc span{font-size:10.5px;padding:2px 8px;border-radius:99px;background:#EDFBF0;color:var(--ok)}
+.st-qc span.bad{background:#FFF1F1;color:var(--danger)}
+/* 悬停放大预览 */
+#zoomView{position:fixed;z-index:98;pointer-events:none;display:none;background:#fff;
+  border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 40px rgba(20,20,26,.28);padding:6px}
+#zoomView img{width:400px;height:400px;object-fit:contain;border-radius:8px;display:block;background:var(--accent-soft)}
+.copy-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-m);
+  padding:12px 14px;margin-bottom:10px}
+.copy-card .cc-t{font-size:10.5px;font-weight:800;letter-spacing:.1em;color:var(--ink3);margin-bottom:8px}
+.copy-item{display:flex;align-items:baseline;gap:9px;padding:5px 0;border-bottom:1px dashed var(--line2)}
+.copy-item:last-child{border-bottom:0}
+.copy-item .ci-k{flex:none;font-family:var(--mono);font-size:9.5px;color:var(--accent);background:var(--accent-soft);
+  border-radius:3px;padding:1px 6px;font-weight:700}
+.copy-item p{flex:1;font-size:13.5px;font-weight:700;letter-spacing:.02em}
+.copy-item .len{flex:none;font-family:var(--mono);font-size:9.5px;color:var(--ink3)}
+.copy-item .cp{flex:none;border:0;background:transparent;color:var(--ink3);font-size:11px;padding:2px 6px;border-radius:4px}
+.copy-item .cp:hover{color:var(--accent);background:var(--accent-soft)}
+.copy-item.bad p{color:var(--danger)}
+.risk-note{font-size:10.5px;color:var(--danger);margin-top:6px}
+.empty-out{border:1.5px dashed var(--line);border-radius:var(--r-m);padding:34px 20px;text-align:center;color:var(--ink3)}
+.empty-out .ic{font-size:24px;margin-bottom:6px}
+.empty-out p{font-size:11.5px}
+
+/* ── API 弹窗 ─────────────────────── */
+.modal-mask{position:fixed;inset:0;background:rgba(20,20,26,.42);display:none;align-items:center;
+  justify-content:center;z-index:50;backdrop-filter:blur(2px)}
+.modal-mask.show{display:flex}
+.modal{background:var(--card);border-radius:14px;width:420px;padding:22px 24px;box-shadow:0 18px 60px rgba(20,20,26,.25)}
+.modal h3{font-size:14px;font-weight:800;margin-bottom:4px}
+.modal .m-sub{font-size:11px;color:var(--ink3);margin-bottom:14px;line-height:1.6}
+.modal .field label{font-size:10.5px}
+.modal .field input{font-size:12px;padding:7px 10px}
+.modal .m-acts{display:flex;gap:8px;margin-top:6px}
+.modal .m-acts .btn-main{flex:1;margin:0;padding:10px;font-size:12.5px}
+.modal .m-acts .btn-ghost{flex:none}
+.m-note{font-size:10.5px;color:var(--ink3);margin-top:10px;line-height:1.6;border-top:1px dashed var(--line);padding-top:9px}
+.m-note b{color:var(--ink2)}
+#toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);
+  color:#fff;font-size:12px;font-weight:600;padding:8px 18px;border-radius:99px;opacity:0;pointer-events:none;
+  transition:.25s;z-index:99}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+footer{flex:none;height:26px;display:flex;align-items:center;padding:0 18px;border-top:1px solid var(--line);
+  background:var(--card);font-family:var(--mono);font-size:10px;color:var(--ink3);gap:14px}
+footer b{color:var(--accent);font-weight:700}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><b>PET<i>DESK</i></b><span>抖音宠物电商 · 主图提示词工作台</span></div>
+  <div class="hd-flow"><b>① 传图</b><em>→</em><b>② 填品名</b><em>→</em><b>③ 一键生成</b></div>
+  <div class="hd-right">
+    <button class="api-btn" id="histBtn">🕘 历史记录</button>
+    <button class="api-btn" id="apiBtn"><span class="api-dot" id="apiDot"></span><span id="apiBtnTxt">视觉解析 API</span></button>
+    <div class="ratio-switch" id="ratioSwitch">
+      <button class="on" data-r="1:1">主图 1:1</button>
+      <button data-r="3:4">主图 3:4</button>
+    </div>
+    <span class="ver">v2.6 · 2026-08</span>
+  </div>
+</header>
+<div class="ver-warn" id="verWarn"></div>
+
+<main>
+  <!-- ═══ 左栏：素材 ═══ -->
+  <section class="col">
+    <div class="col-h"><span class="step">STEP 1</span><h2>传图</h2><small>1–9 张</small></div>
+
+    <div class="sec">
+      <div class="sec-t">产品白底图 <span class="req">*</span></div>
+      <div class="slot-main" id="slotMain">
+        <span class="badge">必传 · 白底图</span>
+        <div class="ic">⬆</div>
+        <p>点击上传产品白底图</p>
+        <small>AI 直接以此图锁定产品主体<br>包装、颜色、图案不跑偏</small>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">品牌 LOGO <span class="opt">可选</span></div>
+      <div class="slot-logo" id="slotLogo">
+        <span class="lg-ic">✦</span>
+        <div><p>上传品牌 LOGO（可选）</p><small>LOGO 将直接生成进画面</small></div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">成分表 + 细节图（0–7 张）<span class="opt">第 1 张传成分表 · 其余传细节图</span></div>
+      <div class="ref-grid" id="refGrid"></div>
+      <p class="hint">丢进来就行：<b>第 1 张请传成分表/配料表</b>（AI 专项战略分析，原料信息的最高依据）；<b>其余传颗粒特写、质地、包装角度、使用场景等细节图</b>——出图时直接传给 Lovart 锁定产品真实细节，AI 同时提取图上卖点与排版风格。支持<b>一次多选</b>、<b>直接拖拽图片到窗口任意位置</b>。</p>
+      <div class="ana-list" id="anaList"></div>
+      <div id="anaSum"></div>
+    </div>
+  </section>
+  <div class="col-drag" data-drag="0" title="拖动调整栏宽"></div>
+
+  <!-- ═══ 中栏：商品信息 ═══ -->
+  <section class="col">
+    <div class="col-h"><span class="step">STEP 2</span><h2>商品信息</h2><small>类目由 AI 按商品名+参考图自动判断</small></div>
+
+    <div class="sec">
+      <div class="sec-t">商品名称 <span class="req">*</span></div>
+      <div class="field">
+        <input id="fName" placeholder="例：喵鲜谷 全价冻干双拼猫粮 1.5kg">
+      </div>
+      <div class="field">
+        <label>促销信息 <span style="font-weight:400;color:var(--ink3)">（选填，用于促销型主图与角标）</span></label>
+        <input id="fPrice" placeholder="例：¥89 到手 · 第2件半价">
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">剩下的交给引擎</div>
+      <div class="auto-note">
+        <div class="row"><span><b>成分</b>：第 1 张成分表 AI 战略分析，定首图成交角度</span></div>
+        <div class="row"><span><b>细节</b>：其余细节图传给 Lovart 锁定产品真实颗粒/质地，AI 提取图上卖点与排版</span></div>
+        <div class="row"><span><b>策略</b>：成交角度 → 购买障碍 → 钩子 → 视觉层级，先策略后画面</span></div>
+        <div class="row"><span><b>文案</b>：自动生成主图大字、副标、角标，广告法敏感词标红</span></div>
+      </div>
+    </div>
+  </section>
+  <div class="col-drag" data-drag="1" title="拖动调整栏宽"></div>
+
+  <!-- ═══ 右栏：主图引擎 ═══ -->
+  <section class="col">
+    <div class="col-h"><span class="step">STEP 3</span><h2>生成</h2><small>爆款策略引擎 · 提示词 + 文案</small></div>
+
+    <button class="btn-main" id="btnGen">⚡ 生成主图提示词</button>
+    <div class="warn-strip" id="warnStrip"></div>
+
+    <div class="sec" style="margin-top:14px">
+      <div class="tabs" id="outTabs">
+        <button class="on" data-t="zh">中文提示词</button>
+        <button data-t="en">英文提示词</button>
+        <button data-t="copy">主图文案</button>
+      </div>
+
+      <div id="outEmpty" class="empty-out">
+        <div class="ic">🐾</div>
+        <p>传好白底图、选好类目、填好商品名<br>点击「生成主图提示词」</p>
+      </div>
+
+      <div class="tab-pane" id="pane-zh" style="display:none">
+        <div class="strat-card" id="stratCard" style="display:none"></div>
+        <div class="term-card">
+          <div class="term-h"><div class="dots"><i></i><i></i><i></i></div><span id="zhTitle">prompt_zh · 即梦/通义万相/可灵</span><button id="cpZh">复制</button></div>
+          <div class="term-b" id="zhBody" contenteditable="plaintext-only" spellcheck="false"></div>
+        </div>
+        <p class="hint" id="useTrace" style="margin:-4px 0 10px"></p>
+        <p class="hint">提示词<b>可直接点击编辑</b>（如把「不怕蚊咬」改成「不怕虫咬」），复制 / 导出 / Lovart 出图均使用编辑后的内容。即梦/万相选择<b>参考图生图</b>，上传白底图（有 LOGO 图就一起传）作为主体参考后粘贴提示词。<b>文案已直接写入提示词，出图即成品</b>；中文文字渲染以即梦/万相效果最佳，MJ/Flux 渲染中文易乱码，慎用英文提示词出中文版主图。</p>
+        <div class="lovart-box" id="lovartBox" style="display:none">
+          <button class="btn-main" id="btnLovart">🎨 Lovart 一键出图</button>
+          <div class="lv-status" id="lovartStatus">用上方中文提示词 + 白底图（有 LOGO 一起传，<b>不传参考图</b>）调 Lovart 生成成品主图，约 1-3 分钟，消耗 Lovart 积分。</div>
+          <div class="lv-dir">
+            <button class="btn-ghost" id="btnLvDir">📁 白底图文件夹</button>
+            <span class="lv-dir-txt" data-lvdir>未设置：成品图存 lovart_out/；设置后自动存入所选文件夹</span>
+          </div>
+          <div id="lovartPreview"></div>
+        </div>
+
+        <div class="term-card" style="margin-top:12px">
+          <div class="term-h"><div class="dots"><i></i><i></i><i></i></div><span id="zhTitleB">prompt_zh · 方案B · Lovart 自由设计版</span><button id="cpZhB">复制</button></div>
+          <div class="term-b" id="zhBodyB" contenteditable="plaintext-only" spellcheck="false"></div>
+        </div>
+        <p class="hint" style="margin:-4px 0 10px">方案B = 把<b>商品图 + 全部信息图</b>（除成分表）直接交给 Lovart，一句话任务 + 版式构图全由 Lovart 自由发挥冲点击率；提示词只管控<b>信息准确度</b>（数字卖点必须来自图片、产品包装以第1张为准）与<b>广告合规</b>。与方案A（策略引擎精控版）对比出图，哪张好用哪张。</p>
+        <div class="lovart-box" id="lovartBoxB" style="display:none">
+          <button class="btn-main" id="btnLovartB">🎨 Lovart 一键出图（方案B）</button>
+          <div class="lv-status" id="lovartStatusB">用方案B简报 + 商品图 + 全部信息图（除成分表）调 Lovart 生成，约 1-3 分钟，消耗 Lovart 积分。</div>
+          <div id="lovartPreviewB"></div>
+        </div>
+      </div>
+
+      <div class="tab-pane" id="pane-en" style="display:none">
+        <div class="term-card">
+          <div class="term-h"><div class="dots"><i></i><i></i><i></i></div><span id="enTitle">prompt_en · Midjourney / Flux</span><button id="cpEn">复制</button></div>
+          <div class="term-b" id="enBody" contenteditable="plaintext-only" spellcheck="false"></div>
+        </div>
+        <p class="hint">MJ：白底图链接放最前 + <b>--iw 2</b> 锁定主体；风格参考图用 <b>--sref</b>。Flux：配合 Redux 传入白底图。</p>
+        <div class="lovart-box" id="lovartBoxEn" style="display:none">
+          <button class="btn-main" id="btnLovartEn">🎨 Lovart 一键出图（英文提示词）</button>
+          <div class="lv-status" id="lovartStatusEn">用上方英文提示词 + 白底图（有 LOGO 一起传，<b>不传参考图</b>）调 Lovart 生成，约 1-3 分钟，消耗 Lovart 积分。中文文案在英文提示词中保留原文，但 Lovart 渲染中文以中文提示词通道更稳。</div>
+          <div class="lv-dir">
+            <button class="btn-ghost" id="btnLvDirEn">📁 白底图文件夹</button>
+            <span class="lv-dir-txt" data-lvdir>未设置：成品图存 lovart_out/；设置后自动存入所选文件夹</span>
+          </div>
+          <div id="lovartPreviewEn"></div>
+        </div>
+
+        <div class="term-card" style="margin-top:12px">
+          <div class="term-h"><div class="dots"><i></i><i></i><i></i></div><span id="enTitleB">prompt_en · Plan B · Lovart free-design brief</span><button id="cpEnB">复制</button></div>
+          <div class="term-b" id="enBodyB" contenteditable="plaintext-only" spellcheck="false"></div>
+        </div>
+        <div class="lovart-box" id="lovartBoxEnB" style="display:none">
+          <button class="btn-main" id="btnLovartEnB">🎨 Lovart 一键出图（方案B · English）</button>
+          <div class="lv-status" id="lovartStatusEnB">Plan B brief + main image + reference images to Lovart, ~1-3 min, costs Lovart credits.</div>
+          <div id="lovartPreviewEnB"></div>
+        </div>
+      </div>
+
+      <div class="tab-pane" id="pane-copy" style="display:none">
+        <div id="copyOut"></div>
+      </div>
+
+      <div class="copy-line" id="exportLine" style="display:none">
+        <button class="btn-ghost" id="btnExport">⬇ 导出全部（.txt）</button>
+        <button class="btn-ghost" id="btnReset">↺ 清空重来</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span><b>PETDESK</b> v2.9</span>
+  <span>抖音主图规范：1:1 ≥ 800×800 · 3:4 ≥ 750×1000 · 首图无牛皮癣</span>
+  <span style="margin-left:auto">参考图 AI 解析 · 类目片段库 v3 · localStorage 自动保存</span>
+</footer>
+
+<div id="toast"></div>
+<div id="zoomView"><img id="zoomViewImg" alt=""></div>
+<input type="file" id="fileMain" accept="image/*" hidden>
+<input type="file" id="fileLogo" accept="image/*" hidden>
+<input type="file" id="fileRef" accept="image/*" multiple hidden>
+
+<!-- API 设置弹窗 -->
+<div class="modal-mask" id="apiMask">
+  <div class="modal">
+    <h3>视觉解析 API 设置</h3>
+    <p class="m-sub">用于自动读取参考图的场景 / 构图 / 色调 / 卖点。兼容 OpenAI 协议的多模态端点均可（Kimi、豆包、通义千问等）。<b>不配置也能生成</b>，只是参考图按类目默认风格处理。</p>
+    <div class="field"><label>协议类型</label>
+      <select id="apiProto" style="width:100%;border:1px solid var(--line);border-radius:var(--r-s);background:var(--card);padding:7px 10px;font-size:12px">
+        <option value="anthropic">Kimi 编程网关（Anthropic 协议 · sk-kimi- 开头）</option>
+        <option value="openai">OpenAI 兼容协议（Kimi开放平台 / 豆包 / 通义，sk- 开头）</option>
+      </select>
+    </div>
+    <div class="field"><label>API 端点</label><input id="apiEndpoint" placeholder="https://api.kimi.com/coding"></div>
+    <div class="field"><label>模型</label><input id="apiModel" placeholder="k3"></div>
+    <div class="field"><label>API Key</label><input id="apiKey" type="password" placeholder="sk-..."></div>
+    <div class="m-acts">
+      <button class="btn-ghost" id="apiCancel">取消</button>
+      <button class="btn-ghost" id="apiTest">测试连接</button>
+      <button class="btn-main" id="apiSave">保存设置</button>
+    </div>
+    <div id="apiTestOut" style="display:none;margin-top:10px;font-size:11px;line-height:1.7"></div>
+    <p class="m-note">Key 仅保存在本机浏览器 localStorage，请求经本地 dev 服务器代理转发（避免浏览器跨域），不会上传至任何第三方。Kimi 编程 Key（sk-kimi-）选 Anthropic 协议，端点 <b>api.kimi.com/coding</b>；开放平台 / 豆包 / 通义选 OpenAI 协议。</p>
+  </div>
+</div>
+<script>
+/* ══════════════════════════════════════════════
+   PETDESK v2 · 提示词引擎
+   输入只需：白底图 + 类目 + 商品名（+可选 logo/参考图）
+   参考图由视觉 API 自动解析：场景/构图/色调/光影/卖点
+   ══════════════════════════════════════════════ */
+
+/* ── 片段库 ── */
+const LIB = {
+  scene: {
+    '客厅家居':   {zh:'温馨明亮的现代客厅，浅色布艺沙发与原木茶几',en:'cozy modern living room, light fabric sofa, natural wood coffee table'},
+    '厨房餐桌':   {zh:'原木餐桌场景，自然窗光洒落，干净厨房背景虚化',en:'natural wood dining table, soft window light, blurred clean kitchen background'},
+    '原木自然':   {zh:'原木纹理背景台，绿植叶片点缀，自然气息',en:'natural wood texture surface, green plant leaves accent, organic feel'},
+    '户外草地':   {zh:'阳光下的绿色草地，背景浅景深虚化，活力户外感',en:'sunlit green grass field, blurred background, vibrant outdoor mood'},
+    '奶油ins风':  {zh:'奶油色纯色背景，柔和投影，简约ins风布景',en:'cream pastel seamless backdrop, soft shadow, minimal instagram styling'},
+    '深色高级感': {zh:'深灰黑背景，聚光打在主体上，高级质感氛围',en:'dark charcoal backdrop, spotlight on subject, premium moody atmosphere'},
+    '成分实验室': {zh:'洁净浅色台面，新鲜原料食材环绕摆放（原料种类以商品卖点中明确提及的为准，禁止虚构），成分可视化',en:'clean bright counter, fresh raw ingredients arranged around (only ingredient types explicitly stated in the selling points, never invented), ingredient visualization'},
+    '手绘插画风': {zh:'扁平手绘插画背景，可爱涂鸦元素点缀，年轻活泼',en:'flat hand-drawn illustration backdrop, cute doodle accents, playful youthful style'}
+  },
+  comp: {
+    '居中特写':   {zh:'产品居中构图，特写视角，主体占画面60%',en:'product centered, close-up shot, subject fills 60% of frame'},
+    '俯拍平铺':   {zh:'90度俯拍平铺构图，产品与配料整齐排布',en:'top-down 90 degree flat lay, product and ingredients neatly arranged'},
+    '45°立体':    {zh:'45度角立体展示产品，展现包装厚度与质感',en:'45-degree angle dimensional shot showing packaging depth and texture'},
+    '宠物互动':   {zh:'{pet}在产品旁边自然互动，神态可爱，视线朝向产品',en:'a cute {petEn} interacting naturally beside the product, looking toward it'},
+    '手持展示':   {zh:'一只人手自然手持产品展示，生活化真实感',en:'a hand holding the product naturally, authentic lifestyle feel'},
+    '场景前后对比':{zh:'左右分屏对比构图，视觉张力强',en:'split-screen before-and-after composition, strong visual tension'}
+  },
+  tone: {
+    '暖黄温馨':   {zh:'暖黄色调，温馨治愈氛围',en:'warm yellow color tone, cozy healing mood'},
+    '冷白干净':   {zh:'冷白色调，干净通透，专业感',en:'cool white tone, clean and crisp, professional look'},
+    '马卡龙浅色': {zh:'马卡龙浅色系，柔和可爱',en:'macaron pastel palette, soft and adorable'},
+    '高饱和撞色': {zh:'高饱和撞色配色，视觉冲击力强，促销氛围',en:'high-saturation color blocking, strong visual impact, promotional energy'},
+    '深色金点缀': {zh:'深色基调，金色元素点缀，高端感',en:'dark base tone with gold accents, high-end luxury feel'},
+    '大地色系':   {zh:'大地色系，自然质朴，原生感',en:'earth tone palette, natural and rustic'}
+  },
+  light: {
+    '自然柔光':   {zh:'自然柔和光线',en:'soft natural lighting'},
+    '影棚硬光':   {zh:'影棚硬光，明暗对比分明，阴影锐利',en:'studio hard light, defined contrast, crisp shadows'},
+    '逆光氛围':   {zh:'逆光轮廓光，氛围感强',en:'backlit rim light, atmospheric glow'},
+    '明亮通透':   {zh:'明亮通透高调光，画面清爽',en:'bright airy high-key lighting, fresh and clean'}
+  }
+};
+
+/* ── 类目库 ── */
+const CATS = {
+  '猫主粮': {pet:'一只健康漂亮的猫咪', petEn:'cat',
+    def:{scene:'厨房餐桌', comp:'宠物互动', tone:'暖黄温馨', light:'自然柔光'},
+    extra:{zh:'猫粮颗粒与冻干特写可见，新鲜原料点缀画面',en:'visible kibble and freeze-dried pieces macro detail, fresh ingredients accent'},
+    sceneGuide:'进食场景：原木餐桌或干净厨房台面，一只装满猫粮/冻干的陶瓷碗（碗里必须有粮），猫咪正在进食或低头闻香，碗边散落几粒猫粮',
+    tpl:['86%鲜肉含量 0谷物','冻干双拼 适口性好','添加益生菌 呵护肠胃'],
+    pain:'猫咪挑食、软便', persona:'成分党铲屎官'},
+  '犬主粮': {pet:'一只活泼健康的狗狗', petEn:'dog',
+    def:{scene:'户外草地', comp:'宠物互动', tone:'暖黄温馨', light:'明亮通透'},
+    extra:{zh:'狗粮颗粒饱满特写，鲜肉原料可见',en:'plump kibble macro detail, real meat ingredients visible'},
+    sceneGuide:'进食场景：客厅地板或阳台的食盆里装满狗粮（盆里必须有粮），狗狗开心进食或期待地望向食盆，背景温馨居家',
+    tpl:['鲜肉占比75% 高蛋白','低敏配方 呵护泪痕','关节养护 添加软骨素'],
+    pain:'狗狗挑食、泪痕重', persona:'新手养狗人'},
+  '猫玩具': {pet:'一只玩耍中的猫咪', petEn:'playful cat',
+    def:{scene:'客厅家居', comp:'宠物互动', tone:'马卡龙浅色', light:'明亮通透'},
+    extra:{zh:'捕捉猫咪玩耍动态瞬间，动感自然',en:'capturing dynamic play moment, natural motion'},
+    sceneGuide:'玩耍场景：客厅地板或地毯上，猫咪正在扑咬、拍打、追逐玩具的动态瞬间，玩具是互动中心，猫咪肌肉线条和专注神态清晰',
+    tpl:['自嗨解闷 不怕拆家','猫薄荷内置 上头神器','静音设计 半夜不吵'],
+    pain:'猫咪无聊、半夜跑酷', persona:'上班族铲屎官'},
+  '犬玩具': {pet:'一只玩耍中的狗狗', petEn:'playful dog',
+    def:{scene:'户外草地', comp:'宠物互动', tone:'高饱和撞色', light:'自然柔光'},
+    extra:{zh:'狗狗咬合玩耍瞬间，张力十足',en:'dog biting and playing moment, full of energy'},
+    sceneGuide:'玩耍场景：户外草地或客厅，狗狗正在咬合、拉扯、抛接玩具，动感十足，玩具处于咬合受力状态展现耐用性',
+    tpl:['耐咬耐磨 大力犬专用','发声设计 越咬越嗨','洁齿磨牙 清新口气'],
+    pain:'狗狗拆家、精力过剩', persona:'中大型犬家庭'},
+  '猫用品': {pet:'一只乖巧的猫咪', petEn:'cat',
+    def:{scene:'客厅家居', comp:'45°立体', tone:'奶油ins风', light:'明亮通透'},
+    extra:{zh:'产品细节质感特写，使用场景自然融入',en:'product detail texture close-up, naturally integrated usage scene'},
+    sceneGuide:'按商品名推断功能后呈现真实使用状态：除臭/清洁类→猫砂盆旁、猫窝、沙发等异味源环境，喷雾正对异味源喷出细腻水雾，猫咪在旁正常活动体现"有宠环境也能用"；窝垫类→猫咪正在窝内踩奶或酣睡；食具类→盛放食物/水正在使用；猫砂盆类→猫咪正在使用或刚跳出',
+    tpl:['强力除臭 持久清新','结团快 不粘底','静音设计 不扰眠'],
+    pain:'异味重、清理麻烦', persona:'精致养猫新手'},
+  '狗用品': {pet:'一只乖巧的狗狗', petEn:'dog',
+    def:{scene:'客厅家居', comp:'45°立体', tone:'大地色系', light:'自然柔光'},
+    extra:{zh:'产品细节质感特写，使用场景自然融入',en:'product detail texture close-up, naturally integrated usage scene'},
+    sceneGuide:'按商品名推断功能后呈现真实使用状态：牵引/胸背类→户外遛狗行进场景；窝垫类→狗狗正在窝内休息；清洁除臭类→狗窝/沙发等使用环境，展示使用中状态；食具类→盛放食物/水正在使用',
+    tpl:['加厚耐磨 经久耐用','一键折叠 收纳不占地','防爆冲设计 遛狗安心'],
+    pain:'不耐用、难清洁', persona:'新手养狗人'}
+};
+
+/* 类目推断：仅用于无 Key 时的模板兜底与文案引擎；AI 路径由策略师自行判断类目 */
+function inferCat(name){
+  const n = String(name || '');
+  const has = (...ws) => ws.some(w => n.includes(w));
+  const isDog = has('狗','犬','汪') && !has('猫');
+  if(has('玩具','逗猫','猫抓','磨爪','咬胶','飞盘','球')) return isDog ? '犬玩具' : '猫玩具';
+  if(has('粮','冻干','罐头','零食','猫条','鲜粮','生骨','主粮')) return isDog ? '犬主粮' : '猫主粮';
+  return isDog ? '狗用品' : '猫用品';
+}
+
+/* ── 策略库 ── */
+/* 策略卡已移除（v2.5）：固定一条爆款路线——AI 策略师全权推理，不锁风格维度。
+   保留单条 STRATS 仅为模板兜底引擎提供 zhExtra/enExtra 与导出名。 */
+const STRATS = [
+  {id:'scene', name:'爆款策略引擎', tag:'默认', tagCls:'tag-cmp',
+   desc:'AI 策略师全权推理：成交角度→购买障碍→钩子→场景→文案，不锁风格。',
+   override:{scene:null, comp:null, tone:null, light:null},
+   zhExtra:'画面生活化自然，像真实养宠日常抓拍',
+   enExtra:'natural lifestyle feel, like a candid pet daily moment'}
+];
+
+/* ── 文案引擎语料 ── */
+const COPY_TPL = {
+  pain:   ['还在愁{pain}？','{pain}，一包搞定','别再将就！{sp1}'],
+  result: ['{sp1}','吃出来的好状态','{persona}都在回购'],
+  number: ['{sp1}','实测有效 才敢说','回购率说明一切'],
+  ident:  ['{persona}闭眼入','专为{persona}设计','懂行的都选它']
+};
+const BADGES = ['顺丰包邮','第2件半价','新客立减10元','0诱食剂','抖音专享价','买就送试吃装'];
+const RISKY = /最|第一|首个|首选|唯一|无二|顶级|极品|巅峰|极致|国家级|世界级|领先|100%|百分百|绝对|彻底|万能|治疗|疗效|根治|治愈|消炎|防病|治病|康复|药用|包治|冠军|零风险/;
+/* 广告合规红线：广告法第九条 + 《广告绝对化用语执法指南》+ 平台审核规则（违者罚款20万-100万/平台拒审限流）
+   INGREDIENT_PROMPT 与 WRITER_PROMPT 共用此单一词库 */
+const COMPLIANCE_TXT = [
+'【广告合规红线】《广告法》第九条（禁止使用"国家级""最高级""最佳"等绝对化用语，违者罚款20万-100万）及市场监管总局《广告绝对化用语执法指南》、电商平台审核规则，以下词语严禁出现在任何文案（主标题/副标题/角标/促销条/画面文字）中：',
+'A. 绝对化用语：最、最佳、最好、最优、最爱、最先进、最受欢迎、第一、首个、首选、唯一、顶级、极品、巅峰、极致、国家级、世界级、全球领先、销量第一、排名第一、冠军；',
+'B. 无法证明的承诺：100%、百分百、绝对、彻底、完全、永久、万能、绝无仅有、零风险；',
+'C. 医疗功效宣称（宠物食品严禁）：治疗、根治、治愈、疗效、消炎、防病、治病、康复、药用、药到病除、改善疾病；',
+'D. 虚假保证：包治、包爱吃、保证有效、无副作用。',
+'合规替代写法：用可证明的事实（成分占比、配料表排序、营养保证值检测值）+ 克制动词（有助于/帮助维持/支持/助力）表达。'
+].join('\n');
+
+/* ── 参考图解析指令 ── */
+const ANALYZE_PROMPT = `你是电商主图分析师。分析这张产品细节图片，只输出JSON，不要任何其他文字：
+{"content":"一句话说明图中展示的是什么（如：猫粮颗粒特写/包装侧面/产品使用场景/质地细节）",
+"selling_points":["图上出现的卖点文案原文，最多3条，没有则为空数组"],
+"text_style":"一句话描述图上文案排版风格，无文案则留空"}`;
+
+/* 参考图第 1 槽专用：成分表分析（商品战略分析师 → 爆款首图决策，与通用图分析分离） */
+const INGREDIENT_PROMPT = `你是资深宠物营养师，同时是头部宠物品牌的商品战略分析师与广告合规审核员。
+你的任务不是写成分分析报告，而是输出一份"爆款首图决策"：100个成分点 → 淘汰99个 → 留下1个首图成交理由。根据提供的宠物食品成分表/配料表/营养保证值图片分析，必须遵循：
+
+1. 成分真实性优先：不虚构图上没有的成分；普通营养成分不得夸大为治疗效果；严格遵守文末【广告合规红线】。
+2. 市场竞争分级：每个重点成分判断 A=常规基础配置 / B=常见升级配置 / C=稀缺差异配置（可作主卖点）。
+3. 双评分：consumer_impact_score（1-10 用户听得懂/在意/愿意付钱）与 visual_expression_score（1-10 能否拍出画面）。
+4. 主卖点淘汰机制：列出被排除的卖点及原因——爆款是排除普通卖点。
+5. 唯一首图决策（primary_claim_decision）：从候选路线中只选1个，并说明它为什么赢（稀缺性/一秒可理解/可视觉化/记忆点/情绪驱动）。
+6. 卖点三层翻译（claim_translation）：技术语言（兔肉52%）→ 消费者语言（少见兔肉第一位）→ 情绪语言（给挑嘴猫换个新选择）。消费者不是买成分比例，是买"为什么重要"。
+7. 消费者反对理由（consumer_objection）：用户为什么不买？（如新肉源怕猫不接受）并给出消除方式且标注位置——适合首图的视觉证明（如猫主动进食，position=main_image）与只能进详情页的文字说明（如换粮指南，position=detail_page）；首图只要视觉证明。
+8. 视觉可执行拆解（visual_execution）：卖点→镜头语言——hero_shot 第一视觉（如开袋瞬间冻干兔肉块露出）、support_shot 辅助视觉（猫靠近闻味/碗中颗粒结构）、product_display（包装正面占比与无遮挡要求）。
+9. 主图/详情页分工（detail_page_plan）：5张图各打一个点（首图=唯一决策点，第2-5张分述冻干/高肉/蛋白/换粮指南类），防止首图塞满。换粮指南、使用说明、注意事项类信息只能出现在第4-5张，严禁以任何形式进入首图（首图每个元素都必须为点击率服务）。
+10. 视觉符号库（visual_symbols）：每个核心卖点对应可拍的视觉符号（兔肉→兔肉块原料感；冻干→断面/颗粒/手拿；高肉→肉粒堆积）。
+11. buying_trigger：购买按钮——不是卖点，是触发时刻的动机（如"猫粮换新时，主人想尝试更高肉含量、更有新鲜感的选择"）。
+12. 配方故事压缩为一句话（brand_story_angle）。
+13. 表达边界（claim_boundary）：每个宣称的允许表达与禁止表达。
+
+${COMPLIANCE_TXT}
+
+只输出JSON，不要任何其他文字：
+{"product_understanding":{"category":"...","target_pet":"...","target_stage":"..."},
+"ingredient_analysis":[{"ingredient":"...","scientific_value":"...","consumer_benefit":"...","consumer_impact_score":8,"visual_expression_score":9,"market_position":"C"}],
+"core_advantages":["..."],
+"discarded_claims":[{"claim":"...","reason":"..."}],
+"competitive_position":"...",
+"purchase_barrier":"...",
+"creative_routes":[{"angle":"...","score":9.2}],
+"primary_claim_decision":{"claim":"...","score":9.2,"reason":"..."},
+"claim_translation":{"technical":"...","consumer":"...","emotional":"..."},
+"consumer_objection":{"question":"...","solution":"..."},
+"buying_trigger":"...",
+"claim_boundary":{"allowed":"...","forbidden":"..."},
+"brand_story_angle":"...",
+"visual_symbols":[{"claim":"...","symbol":"..."}],
+"visual_execution":{"hero_shot":"...","support_shot":"...","product_display":"..."},
+"main_image":{"one_second_message":"...","headline":"...","proof_element":"..."},
+"detail_page_plan":["首图：...","第2张：...","第3张：...","第4张：...","第5张：..."]}
+图上不是成分表或文字无法辨认时，所有数组留空、字符串留空。禁止猜测图上没有的内容。`;
+
+/* ═══ 状态 ═══ */
+const S = {
+  ratio:'1:1', mainImg:null, logo:null, refs:[], strat:'scene',
+  anaMap:{},   // 图片签名 -> 解析结果
+  out:null,
+  api:{proto:'anthropic', endpoint:'', model:'', key:''}
+};
+const $ = id => document.getElementById(id);
+const sig = url => url.length + ':' + url.slice(60, 110);
+
+/* ═══ 三栏拖拽调宽（宽度存 localStorage，元素随栏宽自适应） ═══ */
+function initColDrag(){
+  const cols = document.querySelectorAll('main > section.col');
+  // 恢复上次宽度
+  try{
+    const w = JSON.parse(localStorage.getItem('petdesk_cols') || 'null');
+    if(w){ if(w[0]) cols[0].style.width = w[0] + 'px'; if(w[1]) cols[1].style.width = w[1] + 'px'; }
+  }catch(e){}
+  const save = ()=>{
+    try{ localStorage.setItem('petdesk_cols', JSON.stringify([cols[0].offsetWidth, cols[1].offsetWidth])); }catch(e){}
+  };
+  document.querySelectorAll('.col-drag').forEach(h=>{
+    h.addEventListener('mousedown', e=>{
+      e.preventDefault();
+      const col = cols[+h.dataset.drag];
+      const startX = e.clientX, startW = col.getBoundingClientRect().width;
+      h.classList.add('on');
+      const move = ev=>{
+        const maxW = window.innerWidth - 620;   // 给另外两栏留最小空间
+        const w = Math.max(220, Math.min(startW + ev.clientX - startX, maxW));
+        col.style.width = w + 'px';
+      };
+      const up = ()=>{
+        h.classList.remove('on');
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        save();
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+  });
+}
+
+/* ═══ 初始化 ═══ */
+function init(){
+  initColDrag();
+  renderRefGrid();
+  $('slotMain').addEventListener('click', e=>{ if(!e.target.closest('.del')) $('fileMain').click(); });
+  $('slotLogo').addEventListener('click', e=>{ if(!e.target.closest('.del')) $('fileLogo').click(); });
+  $('fileMain').addEventListener('change', e=>{
+    const f = e.target.files[0]; if(!f) return;
+    toDataURL(f, url=>{ S.mainImg = url; paintMainSlot(); toast('白底图已上传 ✓'); });
+    e.target.value = '';
+  });
+  $('fileLogo').addEventListener('change', e=>{
+    const f = e.target.files[0]; if(!f) return;
+    toDataURL(f, url=>{ S.logo = url; paintLogoSlot(); toast('LOGO 已上传 ✓'); });
+    e.target.value = '';
+  });
+  $('ratioSwitch').addEventListener('click', e=>{
+    const b = e.target.closest('button'); if(!b) return;
+    S.ratio = b.dataset.r;
+    document.querySelectorAll('#ratioSwitch button').forEach(x=>x.classList.toggle('on', x===b));
+    save();
+  });
+  $('outTabs').addEventListener('click', e=>{
+    const b = e.target.closest('button'); if(!b) return;
+    document.querySelectorAll('#outTabs button').forEach(x=>x.classList.toggle('on', x===b));
+    ['zh','en','copy'].forEach(t=>{
+      const p = $('pane-'+t);
+      p.style.display = (b.dataset.t===t && $('outEmpty').style.display==='none') ? 'block':'none';
+    });
+  });
+  $('btnGen').addEventListener('click', generate);
+  $('cpZh').addEventListener('click', ()=>copyText(S.out?.zhRaw,'中文提示词已复制'));
+  $('cpEn').addEventListener('click', ()=>copyText(S.out?.enRaw,'英文提示词已复制'));
+  $('cpZhB').addEventListener('click', ()=>copyText(S.out?.zhRawB,'方案B中文提示词已复制'));
+  $('cpEnB').addEventListener('click', ()=>copyText(S.out?.enRawB,'方案B英文提示词已复制'));
+  // 提示词可编辑：编辑实时同步回 S.out，复制/导出/Lovart 出图均使用编辑后内容
+  $('zhBody').addEventListener('input', ()=>{ if(S.out) S.out.zhRaw = $('zhBody').innerText; });
+  $('enBody').addEventListener('input', ()=>{ if(S.out) S.out.enRaw = $('enBody').innerText; });
+  $('zhBodyB').addEventListener('input', ()=>{ if(S.out) S.out.zhRawB = $('zhBodyB').innerText; });
+  $('enBodyB').addEventListener('input', ()=>{ if(S.out) S.out.enRawB = $('enBodyB').innerText; });
+  $('btnExport').addEventListener('click', exportAll);
+  $('btnLovart').addEventListener('click', ()=>lovartGen('zh'));
+  $('btnLovartEn').addEventListener('click', ()=>lovartGen('en'));
+  $('btnLovartB').addEventListener('click', ()=>lovartGen('zhB'));
+  $('btnLovartEnB').addEventListener('click', ()=>lovartGen('enB'));
+  $('btnLvDir').addEventListener('click', pickSaveDir);
+  $('btnLvDirEn').addEventListener('click', pickSaveDir);
+  restoreSaveDir();
+  $('btnReset').addEventListener('click', ()=>{ if(confirm('清空所有素材与填写内容？')){ localStorage.removeItem('petdesk2'); location.reload(); }});
+  ['fName','fPrice'].forEach(id=>$(id).addEventListener('input', save));
+  // API 弹窗
+  $('apiBtn').addEventListener('click', openApiModal);
+  $('histBtn').addEventListener('click', ()=>window.open('/history.html', '_blank'));
+  $('apiCancel').addEventListener('click', ()=>$('apiMask').classList.remove('show'));
+  $('apiMask').addEventListener('click', e=>{ if(e.target===$('apiMask')) $('apiMask').classList.remove('show'); });
+  $('apiSave').addEventListener('click', ()=>{
+    const proto = $('apiProto').value;
+    S.api = {proto, endpoint:normalizeEndpoint(proto, $('apiEndpoint').value), model:normalizeModel(proto, $('apiModel').value.trim()), key:$('apiKey').value.trim()};
+    save(); paintApiState();
+    $('apiMask').classList.remove('show');
+    toast(S.api.key ? 'API 已保存 ✓ 参考图将自动解析' : '已保存（未填 Key，参考图按默认风格处理）');
+  });
+  $('apiProto').addEventListener('change', ()=>{
+    const p = $('apiProto').value;
+    if(p==='anthropic'){ $('apiEndpoint').value='https://api.kimi.com/coding'; $('apiModel').value='k3'; }
+    else { $('apiEndpoint').value='https://api.moonshot.cn/v1'; $('apiModel').value='moonshot-v1-32k-vision-preview'; }
+  });
+  $('apiTest').addEventListener('click', async ()=>{
+    const out = $('apiTestOut');
+    out.style.display = 'block';
+    const lines = [];
+    const push = (ok, txt) => lines.push(`<span style="color:${ok?'var(--ok)':'var(--danger)'}">${ok?'✓':'✕'}</span> ${txt}`);
+    // ① 本地代理
+    let proxyOk = false;
+    try{
+      const r = await fetch('/api/ping');
+      const j = await r.json();
+      proxyOk = r.ok && j.ver === APP_VER;
+      push(proxyOk, proxyOk ? `本地服务器正常（v${j.ver}）` : `服务器版本过旧（v${j.ver||'?'}，需 v${APP_VER}）——请关闭旧服务器窗口后重新双击桌面图标`);
+    }catch(e){ push(false, '连不上本地服务器——请通过桌面图标打开工作台'); }
+    // ② 上游模型
+    if(proxyOk){
+      const proto = $('apiProto').value;
+      const endpoint = normalizeEndpoint(proto, $('apiEndpoint').value);
+      const model = $('apiModel').value.trim() || (proto==='openai' ? 'moonshot-v1-32k-vision-preview' : 'k3');
+      const key = $('apiKey').value.trim();
+      const fullUrl = endpoint + (proto==='openai' ? '/chat/completions' : '/v1/messages');
+      push(true, '请求地址：' + fullUrl);
+      if(!key){ push(false, '未填写 API Key'); }
+      else{
+        const payload = proto==='openai'
+          ? {model, max_tokens:16, messages:[{role:'user', content:'只回复OK'}]}
+          : {model, max_tokens:256, messages:[{role:'user', content:'只回复OK'}]};
+        try{
+          const r = await fetch('/api/vision', {method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({endpoint, key, proto, payload})});
+          if(r.ok){ push(true, `模型 ${model} 连接成功，Key 有效`); }
+          else{ push(false, `上游返回 ${r.status}：` + (await r.text()).slice(0,120)); }
+        }catch(e){ push(false, '请求失败：' + e.message); }
+      }
+    }
+    out.innerHTML = lines.join('<br>');
+  });
+  restore();
+  serverCheck();
+}
+
+function toDataURL(f, cb){ const r = new FileReader(); r.onload = ()=>cb(r.result); r.readAsDataURL(f); }
+
+/* ═══ 参考图槽位 ═══ */
+function renderRefGrid(){
+  const g = $('refGrid'); g.innerHTML = '';
+  for(let i=0;i<7;i++){
+    const d = document.createElement('div');
+    d.className = 'slot-ref' + (S.refs[i]?' filled':'') + (i===0?' slot-ing':'');
+    d.dataset.i = i;
+    if(S.refs[i]){
+      const ana = S.anaMap[sig(S.refs[i])];
+      const st = ana === 'ing' ? '<span class="st ing">解析中</span>' : ana ? '<span class="st ok">已解析</span>' : '';
+      d.innerHTML = `<img src="${S.refs[i]}"><span class="idx">${i===0?'成分表':'#'+(i+2)}</span>${st}<button class="del" data-del="${i}">✕</button>`;
+    } else { d.innerHTML = i===0 ? '<span class="ing-tip">成分表</span>' : '+'; }
+    g.appendChild(d);
+  }
+}
+document.addEventListener('click', e=>{
+  const del = e.target.closest('[data-del]');
+  if(del){ e.stopPropagation();
+    if(del.closest('#slotMain')){ S.mainImg=null; paintMainSlot(); }
+    else if(del.closest('#slotLogo')){ S.logo=null; paintLogoSlot(); }
+    else { S.refs.splice(+del.dataset.del, 1); renderRefGrid(); renderAnaList(); }
+    return;
+  }
+  const slot = e.target.closest('.slot-ref');
+  if(slot && !slot.classList.contains('filled')){
+    $('fileRef').dataset.slot = slot.dataset.i;
+    $('fileRef').click();
+  }
+});
+/* 批量加入参考图（多选/拖拽共用）：填满 7 个槽位为止 */
+function addRefFiles(files){
+  const imgs = [...files].filter(f => f.type && f.type.startsWith('image/'));
+  if(!imgs.length) return;
+  const room = 7 - S.refs.length;
+  if(room <= 0){ toast('参考图已满（最多 7 张）'); return; }
+  const use = imgs.slice(0, room);
+  let done = 0;
+  use.forEach(f => toDataURL(f, url=>{
+    if(S.refs.length < 7){ S.refs.push(url); }
+    if(++done === use.length){
+      renderRefGrid();
+      toast(`已加入 ${done} 张参考图（共 ${S.refs.length}/7），生成时自动解析`);
+    }
+  }));
+  if(imgs.length > room) toast(`参考图最多 7 张，已忽略 ${imgs.length - room} 张`);
+}
+$('fileRef').addEventListener('change', e=>{
+  addRefFiles(e.target.files);
+  e.target.value = '';
+});
+/* 整窗口拖拽上传参考图 */
+window.addEventListener('dragover', e=>{ e.preventDefault(); });
+window.addEventListener('drop', e=>{
+  e.preventDefault();
+  if(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) addRefFiles(e.dataTransfer.files);
+});
+
+/* ═══ 悬停放大预览（白底图 / LOGO / 参考图） ═══ */
+document.addEventListener('mouseover', e=>{
+  const img = e.target.closest('#slotMain img, #slotLogo img, .slot-ref img');
+  if(!img) return;
+  $('zoomViewImg').src = img.src;
+  $('zoomView').style.display = 'block';
+});
+document.addEventListener('mousemove', e=>{
+  const z = $('zoomView');
+  if(z.style.display !== 'block') return;
+  const w = 414, h = 414;
+  let x = e.clientX + 18, y = e.clientY + 18;
+  if(x + w > window.innerWidth) x = e.clientX - w - 10;
+  if(y + h > window.innerHeight) y = e.clientY - h - 10;
+  z.style.left = Math.max(4, x) + 'px';
+  z.style.top = Math.max(4, y) + 'px';
+});
+document.addEventListener('mouseout', e=>{
+  if(e.target.closest('#slotMain img, #slotLogo img, .slot-ref img')) $('zoomView').style.display = 'none';
+});
+
+/* ═══ 历史记录（localStorage 持久化，history.html 展示） ═══ */
+function loadHist(){ try{ return JSON.parse(localStorage.getItem('petdesk_history') || '[]'); }catch(e){ return []; } }
+function saveHist(h){ try{ localStorage.setItem('petdesk_history', JSON.stringify(h.slice(0, 50))); }catch(e){} }
+function pushHistory(rec){
+  const h = loadHist();
+  rec.id = Date.now();
+  h.unshift(rec);
+  saveHist(h);
+  S.histId = rec.id;
+}
+function attachLovart(url, lang){
+  if(!S.histId) return;
+  const h = loadHist();
+  const r = h.find(x => x.id === S.histId);
+  if(r){ (r.lovart = r.lovart || []).push({url, lang}); saveHist(h); }
+}
+
+function paintMainSlot(){
+  $('slotMain').innerHTML = S.mainImg
+    ? `<span class="badge">必传 · 白底图</span><img src="${S.mainImg}"><button class="del" data-del="0">✕</button>`
+    : `<span class="badge">必传 · 白底图</span><div class="ic">⬆</div><p>点击上传产品白底图</p><small>AI 直接以此图锁定产品主体<br>包装、颜色、图案不跑偏</small>`;
+}
+function paintLogoSlot(){
+  $('slotLogo').innerHTML = S.logo
+    ? `<img src="${S.logo}"><button class="del" data-del="0">✕</button>`
+    : `<span class="lg-ic">✦</span><div><p>上传品牌 LOGO（可选）</p><small>LOGO 将直接生成进画面</small></div>`;
+}
+function paintApiState(){
+  const ok = !!(S.api.key && S.api.endpoint);
+  $('apiDot').classList.toggle('ok', ok);
+  $('apiBtnTxt').textContent = ok ? '视觉解析已开启' : '视觉解析 API';
+}
+
+/* ═══ 解析结果展示 ═══ */
+function renderAnaList(){
+  const items = S.refs.map((url,i)=>({i, ana:S.anaMap[sig(url)]}))
+    .filter(x=>x.ana && x.ana!=='ing');
+  $('anaList').innerHTML = items.map(({i,ana})=> ana.__ing ? `
+    <div class="ana-item">
+      <div class="ai-h"><b>成分表</b>
+        <div class="tags"><i>首图决策</i><i>${ana.product_understanding.target_stage || ''}</i></div>
+      </div>
+      ${ana.primary_claim_decision.claim ? `<div class="sps">首图决策：<b>${ana.primary_claim_decision.claim}</b>${ana.primary_claim_decision.score != null ? `（${ana.primary_claim_decision.score}分）` : ''}</div>` : ''}
+      ${ana.main_image.headline ? `<div class="sps">建议标题：<b>「${ana.main_image.headline}」</b>${ana.main_image.one_second_message ? ` · 一秒信息：${ana.main_image.one_second_message}` : ''}</div>` : ''}
+      ${ana.consumer_objection.question ? `<div class="sps" style="color:var(--ink3)">反对理由：${ana.consumer_objection.question} → ${ana.consumer_objection.solution}</div>` : ''}
+      ${ana.creative_routes.length ? `<div class="sps" style="color:var(--ink3)">候选路线：${ana.creative_routes.map(r=>`${r.angle}${r.score!=null?' '+r.score+'分':''}`).join(' · ')}</div>` : ''}
+      ${ana.ingredient_analysis.map(x=>`<div class="sps" style="color:var(--ink3)">${x.ingredient}｜感知${x.consumer_impact_score ?? '-'} 视觉${x.visual_expression_score ?? '-'} 市场${x.market_position || '-'} → ${x.consumer_benefit}</div>`).join('')}
+      ${ana.discarded_claims.length ? `<div class="sps" style="color:var(--ink3)">已淘汰：${ana.discarded_claims.map(d=>`${d.claim}（${d.reason}）`).join(' · ')}</div>` : ''}
+    </div>` : `
+    <div class="ana-item">
+      <div class="ai-h"><b>#${i+2}</b>
+        <div class="tags"><i>${ana.content || '细节图'}</i></div>
+      </div>
+      ${ana.selling_points?.length ? `<div class="sps">提取卖点：<b>${ana.selling_points.join(' · ')}</b></div>` : ''}
+      ${ana.text_style ? `<div class="sps" style="color:var(--ink3)">排版：${ana.text_style}</div>` : ''}
+    </div>`).join('');
+  const allSps = collectSps();
+  $('anaSum').innerHTML = allSps.length
+    ? `<div class="ana-sum">✦ 已从 ${items.length} 张参考图聚合 <b>${allSps.length} 条卖点</b>，将用于提示词与主图文案</div>`
+    : '';
+}
+function collectSps(){
+  const seen = new Set(); const out = [];
+  S.refs.forEach(url=>{
+    const a = S.anaMap[sig(url)];
+    if(a && a!=='ing' && a.selling_points) a.selling_points.forEach(s=>{
+      const k = s.replace(/\s/g,'');
+      if(!seen.has(k) && out.length<3){ seen.add(k); out.push(s); }
+    });
+  });
+  return out;
+}
+
+/* ═══ 视觉 API ═══ */
+function compressImage(dataUrl, max=640){
+  return new Promise(res=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const scale = Math.min(1, max/Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width*scale); c.height = Math.round(img.height*scale);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      res(c.toDataURL('image/jpeg', 0.8));
+    };
+    img.onerror = ()=>res(dataUrl);
+    img.src = dataUrl;
+  });
+}
+/* ── 统一 LLM 调用（Anthropic / OpenAI 双协议，代理优先） ── */
+const APP_VER = '2.17';
+/* 端点规范化：anthropic 协议（sk-kimi 编程 Key）只认 api.kimi.com/coding，
+   其他任何主机（如误存的 moonshot 开放平台地址）一律重置 */
+function normalizeEndpoint(proto, endpoint){
+  let e = (endpoint||'').trim().replace(/\/+$/,'');
+  if(proto !== 'openai'){
+    if(!/^https:\/\/api\.kimi\.com(\/|$)/i.test(e)) return 'https://api.kimi.com/coding';
+    if(/^https:\/\/api\.kimi\.com$/i.test(e)) return 'https://api.kimi.com/coding';
+  }
+  return e;
+}
+/* 模型规范化：anthropic 协议下误存的 moonshot 开放平台模型名一律重置 */
+function normalizeModel(proto, model){
+  if(proto !== 'openai'){
+    if(!model || /moonshot/i.test(model)) return 'k3';
+  }
+  return model;
+}
+/* 带超时的 fetch */
+function fetchTimeout(url, opts, ms){
+  const c = new AbortController();
+  const t = setTimeout(()=>c.abort(), ms||60000);
+  return fetch(url, Object.assign({}, opts, {signal:c.signal})).finally(()=>clearTimeout(t));
+}
+/* 运行日志：前端关键步骤写入服务器 petdesk.log */
+function slog(msg){
+  try{ fetch('/api/log', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({msg})}); }catch(e){}
+}
+async function serverCheck(){
+  const w = $('verWarn');
+  try{
+    const r = await fetch('/api/ping');
+    if(!r.ok) throw new Error('bad');
+    const j = await r.json();
+    if(j.ver !== APP_VER){
+      w.innerHTML = '⚠ <b>本地服务器版本过旧</b>（页面 v'+APP_VER+' / 服务器 v'+(j.ver||'?')+'）：AI 功能会调用失败。请关闭任务栏里的 "PETDESK Server" 黑窗口，然后<b>重新双击桌面图标</b>。';
+      w.classList.add('show');
+    }
+  }catch(e){
+    w.innerHTML = '⚠ <b>连不上本地服务器</b>：AI 解析与撰写不可用。请<b>双击桌面「PETDESK 主图工作台」图标</b>打开（不要直接双击 index.html，也不要用旧的浏览器标签页）。';
+    w.classList.add('show');
+  }
+}
+async function sendLLM(body){
+  const isAnt = S.api.proto !== 'openai';
+  const endpoint = normalizeEndpoint(S.api.proto, S.api.endpoint);
+  let resp;
+  try{
+    resp = await fetchTimeout('/api/vision', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({endpoint, key:S.api.key, proto:S.api.proto, payload:body})
+    }, 170000);
+    if(resp.status === 404) throw new Error('no-proxy');
+    if(!resp.ok){
+      const t = (await resp.text()).slice(0,160);
+      throw new Error('代理上游错误 '+resp.status+'：'+t);
+    }
+    return await resp.json();
+  }catch(e){
+    if(e.message && (e.message.startsWith('代理上游错误') || e.message.startsWith('API '))) throw e;
+    if(e.name === 'AbortError') throw new Error('请求超时（170秒）：模型响应过慢，请重试');
+    // 代理不可达（直接打开 html / 预览卡片拦截 POST / 服务器未运行）→ 尝试浏览器直连
+    let directErr = '本地代理不可达';
+    try{
+      const url = endpoint + (isAnt ? '/v1/messages' : '/chat/completions');
+      const headers = isAnt
+        ? {'Content-Type':'application/json', 'x-api-key':S.api.key, 'anthropic-version':'2023-06-01'}
+        : {'Content-Type':'application/json', 'Authorization':'Bearer '+S.api.key};
+      resp = await fetchTimeout(url, {method:'POST', headers, body:JSON.stringify(body)}, 170000);
+      if(!resp.ok){
+        const t = (await resp.text()).slice(0,160);
+        throw new Error('上游错误 '+resp.status+'：'+t);
+      }
+      return await resp.json();
+    }catch(e2){
+      directErr = e2.name === 'AbortError' ? '请求超时（170秒）' : (e2.message || '直连失败（跨域或网络）');
+    }
+    throw new Error('请求失败：'+directErr+'。请确认是通过桌面图标打开的工作台');
+  }
+}
+function llmText(data){
+  return S.api.proto !== 'openai'
+    ? (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('')
+    : (data.choices?.[0]?.message?.content || '');
+}
+function extractJson(txt){
+  const m = txt.replace(/```json|```/g,'').match(/\{[\s\S]*\}/);
+  if(!m) throw new Error('parse');
+  return JSON.parse(m[0]);
+}
+async function callVision(imageDataUrl, ing){
+  const isAnt = S.api.proto !== 'openai';
+  const prompt = ing ? INGREDIENT_PROMPT : ANALYZE_PROMPT;
+  const body = isAnt ? {
+    model: normalizeModel(S.api.proto, S.api.model),
+    max_tokens: 4000,
+    think_effort: 'low',
+    messages: [{role:'user', content:[
+      {type:'image', source:{type:'base64', media_type:'image/jpeg', data: imageDataUrl.split(',')[1]}},
+      {type:'text', text: prompt}
+    ]}]
+  } : {
+    model: S.api.model || 'moonshot-v1-32k-vision-preview',
+    temperature: 0.2,
+    messages: [{role:'user', content:[
+      {type:'text', text: prompt},
+      {type:'image_url', image_url:{url: imageDataUrl}}
+    ]}]
+  };
+  const txt = llmText(await sendLLM(body));
+  let a;
+  try{ a = extractJson(txt); }
+  catch(e){ a = ing ? {} : fieldExtract(txt); }  // 整段 JSON 损坏时逐字段兜底
+  if(ing){
+    const strArr = (v, n) => Array.isArray(v) ? v.filter(s=>typeof s==='string'&&s.trim()).slice(0, n) : [];
+    const str = v => String(v == null ? '' : v);
+    const ingArr = v => Array.isArray(v) ? v.filter(x=>x && typeof x==='object' && x.ingredient).slice(0, 4).map(x=>({
+      ingredient:str(x.ingredient), scientific_value:str(x.scientific_value),
+      consumer_benefit:str(x.consumer_benefit),
+      consumer_impact_score:x.consumer_impact_score ?? null,
+      visual_expression_score:x.visual_expression_score ?? null,
+      market_position:str(x.market_position)})) : [];
+    const disArr = v => Array.isArray(v) ? v.filter(x=>x && typeof x==='object' && x.claim).slice(0, 4).map(x=>({
+      claim:str(x.claim), reason:str(x.reason)})) : [];
+    const routeArr = v => Array.isArray(v) ? v.filter(x=>x && typeof x==='object' && x.angle).slice(0, 3).map(x=>({
+      angle:str(x.angle), score:x.score ?? null})) : [];
+    const symArr = v => Array.isArray(v) ? v.filter(x=>x && typeof x==='object' && x.symbol).slice(0, 4).map(x=>({
+      claim:str(x.claim), symbol:str(x.symbol)})) : [];
+    const obj = v => (v && typeof v==='object') ? v : {};
+    const pu = obj(a.product_understanding), cb = obj(a.claim_boundary);
+    const pcd = obj(a.primary_claim_decision), ct = obj(a.claim_translation);
+    const co = obj(a.consumer_objection), ve = obj(a.visual_execution), mi = obj(a.main_image);
+    const r = {__ing:true,
+      product_understanding:{category:str(pu.category), target_pet:str(pu.target_pet), target_stage:str(pu.target_stage)},
+      ingredient_analysis:ingArr(a.ingredient_analysis),
+      core_advantages:strArr(a.core_advantages, 4),
+      discarded_claims:disArr(a.discarded_claims),
+      competitive_position:str(a.competitive_position),
+      purchase_barrier:str(a.purchase_barrier),
+      creative_routes:routeArr(a.creative_routes),
+      primary_claim_decision:{claim:str(pcd.claim), score:pcd.score ?? null, reason:str(pcd.reason)},
+      claim_translation:{technical:str(ct.technical), consumer:str(ct.consumer), emotional:str(ct.emotional)},
+      consumer_objection:{question:str(co.question), solution:str(co.solution)},
+      buying_trigger:str(a.buying_trigger),
+      claim_boundary:{allowed:str(cb.allowed), forbidden:str(cb.forbidden)},
+      brand_story_angle:str(a.brand_story_angle),
+      visual_symbols:symArr(a.visual_symbols),
+      visual_execution:{hero_shot:str(ve.hero_shot), support_shot:str(ve.support_shot), product_display:str(ve.product_display)},
+      main_image:{one_second_message:str(mi.one_second_message), headline:str(mi.headline), proof_element:str(mi.proof_element)},
+      detail_page_plan:strArr(a.detail_page_plan, 6)};
+    if(!r.ingredient_analysis.length && !r.primary_claim_decision.claim && !r.core_advantages.length) throw new Error('parse');
+    return r;
+  }
+  const r = {
+    content: typeof a.content==='string' ? a.content.trim() : '',
+    selling_points: Array.isArray(a.selling_points) ? a.selling_points.filter(s=>typeof s==='string'&&s.trim()).slice(0,3) : [],
+    text_style: typeof a.text_style==='string' ? a.text_style : ''
+  };
+  if(!r.content && !r.selling_points.length && !r.text_style) throw new Error('parse');
+  return r;
+}
+function fieldExtract(txt){
+  const g = k => { const m = txt.match(new RegExp('"' + k + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"')); return m ? m[1] : null; };
+  const sp = txt.match(/"selling_points"\s*:\s*\[([\s\S]*?)\]/);
+  return {
+    content: g('content') || '',
+    selling_points: sp ? (sp[1].match(/"((?:[^"\\]|\\.)*)"/g) || []).map(s=>s.slice(1,-1)) : [],
+    text_style: g('text_style') || ''
+  };
+}
+
+/* ── AI 提示词撰写：上下文 → 商用级主图方案 ── */
+const WRITER_PROMPT = [
+'你是服务过头部宠物品牌的爆款主图策略师。你的目标不是"漂亮的图"，而是"让用户在0.5秒内停下、点击、并最终下单的图"。',
+'根据商品信息、画面设定与参考图逐张解析结果，先定策略，再写提示词，最后自检。',
+'',
+'═══ 第一步：定策略（按顺序思考，写进 strategy 字段）═══',
+'【strategy_priority 决策优先级（任何冲突必须遵守）】',
+'L0 产品真实性 > L1 成交角度 > L2 产品展示 > L3 第一秒钩子 > L4 场景美感。钩子不能遮挡产品，禁止为了视觉冲击牺牲产品真实性。',
+'【main_image_job 首图任务】让第一次看到商品的陌生用户产生点击欲望。画面中每个元素（文字/道具/宠物/场景）都必须回答"它如何帮助完成这个任务"，答不上的一律删除。',
+'【首图信息准入】首图只允许三类内容：A. 第一购买理由（为什么点进去）、B. 信任证明（为什么相信）、C. 情绪触发（为什么想买）。禁止进入首图：教用户怎么用/怎么喂、解释产品知识、降低使用门槛的信息、详情页说明内容——这些默认进详情图。',
+'【首图杀手规则】只能帮助"已经想买的人"决策、不能帮助陌生用户停留的元素，禁止出现在首图。（例：7日换粮对已决定购买的人有价值，但刷到首图的人还没决定买——杀死）',
+'【购买障碍的消除方式】purchase_barrier 不等于画面内容，它只是寻找最强消除方式的起点。优先级：视觉证明（如猫主动进食证明接受度）> 情绪证明 > 信任符号 > 文字说明；文字说明类解决方案只能进详情页，禁止以任何形式出现在首图。',
+'【道具准入】任何不能直接证明核心卖点的物件（量杯/勺子/说明册/检测报告/信息卡/小卡片），不得占用首图空间。',
+'1.【conversion_path 转化路径】一句话串起用户决策链：0.5秒看到什么 → 3秒理解什么 → 为什么相信 → 为什么购买。',
+'2.【product_fidelity 产品保真】包装保真是硬约束：禁止AI重新设计包装，禁止修改品牌、LOGO、文字、颜色、比例。CTR再高，产品不像真品就没有转化。',
+'3.【conversion_angle 成交角度】本张主图唯一的成交角度，一个具体购买理由，必须能用"我买它是因为____"补全成句，不允许出现"和/以及/同时/兼顾"。若输入的"成分表解析"给出了首图决策/候选创意路线/首图方案，优先以首图决策为基础（可优化措辞，不得偏离其营养依据），其建议标题与一秒信息可直接用于画面文案；其已淘汰卖点禁止再启用，表达边界必须遵守，消费者反对理由必须按【购买障碍的消除方式】选择视觉证明回应。',
+'4.【purchase_barrier 购买障碍】目标用户下单前最大的顾虑，参考六类：不吃/不健康/不安全/不方便/不值得/不好玩；可选最接近的，也可生成新的，但必须具体。',
+'5.【proof_element 购买证明】不只说卖点，要用画面证明卖点：claim（功能宣称，如"根源分解异味"）、visual_proof（能证明该宣称的画面证据或视觉符号，如"水雾覆盖猫砂盆异味源"）、trust_signal（建立信任的信号，如"猫咪安心靠近刚喷过的区域"）。若"成分表解析"给出了主图方向与支撑证据，优先落实。',
+'6.【visual_tension 视觉张力】画面中引起停留的反差瞬间，一句话。反常才有停留：除臭→猫咪主动靠近刚喷过的异味源；主粮→挑食猫主动抢食；玩具→懒散猫突然扑咬。张力必须与购买障碍相关，禁止无关猎奇。',
+'7.【scroll_stop_hook 第一秒钩子】不是画面类型，是点击机制：type（宠物情绪/利益点冲击/使用瞬间/前后变化 四选一）；visual（用户瞬间看到什么，具体画面）；psychology（用户联想到什么痛点、为什么继续看）；strength（视觉强度1-5，必须≥4）；reason（强度评分理由，说明为什么不是5分，如"有互动但缺前后变化"）。',
+'8.【scene_elements 场景元素】画面道具清单，每件写明：object、reason（存在理由）、necessity（must必须/support辅助/remove禁止出现——remove 用于明确排除易混入的装饰元素如绿植摆件）。原料类道具的种类只能来自商品名、成分表解析与参考图卖点中明确提及的（成分表解析优先级最高），禁止虚构具体原料（如成分表只写兔肉，就不得出现牛肉/胡萝卜/西兰花等）。',
+'9.【visual_hierarchy 视觉层级】L1=钩子（视觉中心）> L2=产品（完整清晰，永不被遮挡）> L3=环境（虚化最狠、饱和度最低）；并给出画面权重百分比（如"L1宠物动作45% > L2包装40% > L3环境15%"）。',
+'10.【product_scale 产品占屏】产品占画面比例：包装类25-40%，工具类35-50%，小商品20-35%。',
+'11.【consumer_psychology 购买心理】目标人群 + 情绪触发 + 消除的恐惧（对应购买障碍）。宠物用户买的不是产品，是健康、安全、爱它、不亏待它。',
+'12.【visual_differentiation 视觉差异化】禁止默认行业模板（奶油风客厅+木桌+绿植+阳光窗户的Pinterest风）；差异化必须来自产品功能，不来自无关创意，禁止戏剧化但与购买无关的元素。',
+'13.【creative_route 创意路线】本方案所属路线：pain_point（痛点）/ emotion（情感）/ function（功能），三选一。',
+'',
+'═══ 第二步：zh_prompt（300-400字左右，把策略翻译成画面）═══',
+'按以下要素依次展开，用连贯自然的中文写成2-3段（不要列表、不要出现要素名）：',
+'1. 主体锁定（固定第一句）：主体严格参照所附白底产品图，包装形状、颜色、图案、文字与原图完全一致，不变形不扭曲，禁止重新设计包装。',
+'2. 钩子画面：把 scroll_stop_hook 的 visual 与 visual_tension 的反差落成具体画面（表情/动作/视线/动态定格），达到 strength≥4 的强度，它是视觉中心。',
+'3. 购买证明：把 proof_element 的 visual_proof 落成可看见的画面证据（动态/特写/视觉符号），让用户"看到"卖点成立，trust_signal 自然融入。',
+'4. 场景与道具：按商品功能推理真实使用场景，只包含 scene_elements 中 must/support 的道具，remove 元素禁止出现；落实 visual_differentiation 的独特视觉符号。信息边界：产品的物理细节（具体原料名称、颗粒/冻干的形状颜色质地、包装结构）只能使用商品名、成分表解析与参考图解析中明确出现的信息，输入未提及的一律禁止虚构具体化——需要泛指时用通用词（如"猫粮颗粒""新鲜肉类原料"），不做颗粒形态特写；宁可省略，不可编造。',
+'5. 宠物模特：只用纯种品种猫犬（如英短/布偶/金渐层/美短/银渐层/暹罗/柴犬/金毛/柯基/边牧/比熊/泰迪等，按品类气质选择并写明具体品种），禁止橘猫、狸花猫、田园猫犬、串串混血；品种/神态/动作，与产品的互动必须符合使用逻辑（食品→进食；玩具→玩耍；环境用品→在使用环境中自然活动），情绪与钩子呼应；宠物毛发要有真实质感（可见毛发层次与细微杂乱），禁止塑料感/玩偶感。',
+'6. 构图：机位/景深/产品占屏比例（按 product_scale），严格按视觉层级百分比分配清晰度与权重。',
+'7. 色调与光影：主色系 + 1-2个点缀色（用具体色名）；光源方向与软硬，光影引向 L1。实拍感硬要求：整图必须是真实相机拍出来的照片质感——自然光或真实布光，允许轻微过曝/暗部/阴影不均等真实拍摄痕迹；禁止AI感的完美均匀打光、塑料高光、过度柔焦磨皮、发光感/HDR感/油画感。',
+'8. 画面文案（出图即成品，禁止留白预留）：主标题（≤12字，从标题公式生成：痛点型"解决XX烦恼"如「挑食猫也爱吃」/ 情绪型"因为爱所以XX" / 场景型"XX瞬间发生"如「开饭秒变积极」）、副标题（≤16字）、促销条（如有促销信息）、角标1-2个（≤6字）；每条标题必须对应画面中的一个视觉证据（标题不空喊，如标题写酶解→画面必须有水雾覆盖异味源）；写明每处文案的准确文字（用「」括起来）、位置、字号层级、颜色与排版风格；文案必须放在无遮挡安全区，不覆盖产品、宠物脸与核心动作；强调文字渲染清晰端正、无乱码无错别字。文案必须与 headlines/badges 选用条目一致。主图寸土寸金：每处文案必须通过点击/信任/成交三价值检验（「兔肉第一位」=高点击高信任高成交→保留；「7日换粮」=点击1分→淘汰），每处文字与道具都必须能回答"它如何促进点击或下单"，答不上的一律删除；禁止说明书式信息上画面（换粮指南、使用方法、注意事项、喂养量、成分表罗列、二维码）；回应消费者反对理由只用视觉证明（主动进食、接受度信号），禁止用信息卡、小卡片、说明文字回应。',
+'9. 如"需要画面呈现LOGO"为true：画面左上角放置品牌LOGO（参照所附LOGO参考图），清晰不变形。',
+'10. 收尾：真实相机实拍质感（如商业摄影师用全画幅相机拍摄），细节锐利，色彩真实，无AI生成痕迹 + 主图规格。',
+'',
+'【en_prompt】zh_prompt 的忠实英文翻译版，同等详细度。必须忠实翻译，不允许重新创作，不允许改变成交角度、钩子和构图；文案部分保留中文原文并注明 rendered in Chinese。',
+'',
+'【negative】18-22个负面约束，必须包含：文字乱码、错别字、产品变形、包装被重新设计、包装文字被篡改、额外产品、重复包装、虚假规格、不存在的配件、虚构的原料食材、与实物不符的颗粒形态、水印、低分辨率、过曝、宠物遮挡产品正面、宠物肢体畸形、杂乱背景、背景比产品更抢眼、与产品功能无关的道具、错误的产品使用方式、错误的宠物互动方式、违反真实生活逻辑的画面、说明书式文字卡、使用指南类内容、橘猫/田园猫/串串等非纯种宠物、塑料质感、玩偶感宠物、毛发过度顺滑如假发、AI式均匀完美打光、磨皮感、发光感/HDR感/油画感、过度饱和。',
+COMPLIANCE_TXT,
+'',
+'【headlines】4-6条（每条≤12字）：全部围绕 conversion_angle，必须覆盖不同心理入口——至少2条痛点型、至少1条情绪型、至少1条场景型；每条标题必须能对应画面中的一个视觉证据；禁止空泛品牌词（高品质、臻选、升级、呵护、优选、匠心、品质生活、宠爱升级、给它最好的），除非参考图文案原文明确存在；严禁触碰【广告合规红线】中的任何词语。第1条必须是已写入 zh_prompt 的主标题。',
+'',
+'【badges】3-5条（每条≤6字）：信任状或促销类，直接回应 purchase_barrier。前1-2条必须是已写入 zh_prompt 的角标。',
+'',
+'═══ 第三步：第一眼测试与自检（写进 instant_read_test 与 quality_check 字段）═══',
+'【instant_read_test】模拟真实用户第一眼：pass（用户0.5秒能否看懂这张图在卖什么、为什么值得点，true/false）；answer（一句话写出用户第一眼的理解，如"猫敢靠近刚喷过的猫砂盆→这喷雾安全且真除臭"）。pass 必须为 true 才输出。',
+'【quality_check】四项全部必须为 true 才输出：hook_matches_angle（钩子是否服务于成交角度）；product_visible（产品是否完整清晰、未被遮挡、未被重新设计）；scene_has_reason（每个道具是否有存在理由）；headline_matches_barrier（主标题是否回应了购买障碍）。',
+'',
+'只输出JSON，不要任何其他文字：',
+'{"strategy":{"strategy_priority":"L0产品真实>L1成交角度>L2产品展示>L3钩子>L4场景美感","conversion_path":"...","product_fidelity":"...","conversion_angle":"...","purchase_barrier":"...","proof_element":{"claim":"...","visual_proof":"...","trust_signal":"..."},"visual_tension":"...","scroll_stop_hook":{"type":"...","visual":"...","psychology":"...","strength":5,"reason":"..."},"scene_elements":[{"object":"...","reason":"...","necessity":"must"}],"visual_hierarchy":"L1=... 45% > L2=... 40% > L3=... 15%","product_scale":"...","consumer_psychology":"...","visual_differentiation":"...","creative_route":"pain_point"},"zh_prompt":"...","en_prompt":"...","negative":"...","headlines":["..."],"badges":["..."],"instant_read_test":{"pass":true,"answer":"..."},"quality_check":{"hook_matches_angle":true,"product_visible":true,"scene_has_reason":true,"headline_matches_barrier":true}}'
+].join('\n');
+async function callWriter(ctx){
+  const isAnt = S.api.proto !== 'openai';
+  const content = WRITER_PROMPT + '\n\n商品信息与画面设定：\n' + JSON.stringify(ctx, null, 1);
+  const body = isAnt
+    ? {model: normalizeModel(S.api.proto, S.api.model), max_tokens: 10000, think_effort: 'low', messages:[{role:'user', content}]}
+    : {model: S.api.model || 'moonshot-v1-32k-vision-preview', temperature: 0.7, messages:[{role:'user', content}]};
+  let lastErr = null;
+  for(let attempt = 1; attempt <= 2; attempt++){
+    try{
+      const a = extractJson(llmText(await sendLLM(body)));
+      if(!a.zh_prompt || !a.en_prompt) throw new Error('parse');
+      const strArr = v => Array.isArray(v) ? v.filter(s=>typeof s==='string'&&s.trim()).map(s=>s.trim()) : [];
+      return {
+        zh:String(a.zh_prompt).trim(), en:String(a.en_prompt).trim(), neg:String(a.negative||'').trim(),
+        headlines:strArr(a.headlines).slice(0,6), badges:strArr(a.badges).slice(0,5),
+        strategy:(a.strategy && typeof a.strategy==='object') ? a.strategy : null,
+        qcheck:(a.quality_check && typeof a.quality_check==='object') ? a.quality_check : null,
+        iread:(a.instant_read_test && typeof a.instant_read_test==='object') ? a.instant_read_test : null
+      };
+    }catch(e){
+      lastErr = e;
+      slog(`AI 撰写第${attempt}次尝试失败：${e.message}`);
+    }
+  }
+  throw lastErr;
+}
+async function analyzeRefs(onProgress){
+  const targets = S.refs.map((url,i)=>({url,i})).filter(x=>!S.anaMap[sig(x.url)]);
+  const errs = [];
+  let done = 0;
+  const runOne = async ({url, i}) => {
+    S.anaMap[sig(url)] = 'ing'; renderRefGrid();
+    const isIng = i === 0;   // 第 1 槽 = 成分表，走专用分析
+    try{
+      const small = await compressImage(url);
+      slog(`${isIng ? '成分表' : '参考图'} #${i+2} 压缩完成，请求已发出（${isIng ? '成分专项分析' : '通用分析'}）`);
+      const r = await callVision(small, isIng);
+      S.anaMap[sig(url)] = r;
+      slog(`${isIng ? '成分表解析成功' : '参考图解析成功'} #${i+2}：${JSON.stringify(r)}`);
+    }catch(e){
+      delete S.anaMap[sig(url)];
+      errs.push(e.message || '解析失败');
+      slog(`${isIng ? '成分表解析失败' : '参考图解析失败'} #${i+2}：${e.message}`);
+    }
+    done++; onProgress(done, targets.length); renderRefGrid();
+  };
+  // 全量并发：所有参考图同时解析，总耗时 ≈ 最慢的一张
+  await Promise.all(targets.map(runOne));
+  return errs;
+}
+/* 聚合：众数取值 */
+function modeOf(dim){
+  const cnt = {};
+  S.refs.forEach(url=>{
+    const a = S.anaMap[sig(url)];
+    if(a && a!=='ing' && a[dim]) cnt[a[dim]] = (cnt[a[dim]]||0)+1;
+  });
+  const best = Object.entries(cnt).sort((x,y)=>y[1]-x[1])[0];
+  return best ? best[0] : null;
+}
+
+/* ═══ 生成主流程 ═══ */
+async function generate(){
+  if(!$('fName').value.trim()){ toast('请填写商品名称'); $('fName').focus(); return; }
+  const btn = $('btnGen');
+  const warn = [];
+  if(!S.mainImg) warn.push('未上传产品白底图：建议上传以保证主体还原');
+  slog(`generate 开始 | 类目推断=${inferCat($('fName').value.trim())} 策略=${S.strat} 参考图=${S.refs.length} logo=${!!S.logo} 白底图=${!!S.mainImg}`);
+
+  // 参考图 AI 解析
+  const hasKey = !!(S.api.key && S.api.endpoint);
+  slog(`API 配置 | proto=${S.api.proto} endpoint=${normalizeEndpoint(S.api.proto,S.api.endpoint)||'(空)'} model=${S.api.model||'(默认)'} key=${S.api.key?'已填':'未填'}`);
+  const unAna = S.refs.filter(url=>!S.anaMap[sig(url)]);
+  if(S.refs.length && hasKey && unAna.length){
+    btn.classList.add('busy');
+    btn.textContent = '⏳ AI 解析参考图中…';
+    const anaErrs = await analyzeRefs((done,total)=>{ btn.textContent = `⏳ AI 解析参考图中 ${done}/${total}…`; });
+    btn.classList.remove('busy');
+    btn.textContent = '⚡ 生成主图提示词';
+    renderAnaList();
+    if(anaErrs.length) warn.push(anaErrs.length + ' 张参考图解析失败（' + anaErrs[0] + '）');
+  } else if(S.refs.length && !hasKey){
+    warn.push('未配置视觉解析 API：参考图暂按类目默认风格处理。点顶栏「视觉解析 API」配置后可自动读取参考图的场景与卖点');
+  }
+
+  const st = STRATS.find(s=>s.id===S.strat);
+  const price = $('fPrice').value.trim();
+  const name = $('fName').value.trim();
+  const catName = inferCat(name);   // 类目由商品名+参考图推断（仅用于兜底默认值与文案引擎）
+  const cat = CATS[catName];
+  const hasAna = S.refs.some(url=>{const a=S.anaMap[sig(url)]; return a && a!=='ing';});
+
+  // 维度优先级：策略锁定 > 参考图AI解析 > 类目默认
+  const dim = {};
+  ['scene','comp','tone','light'].forEach(d=>{
+    if(st.override[d]) dim[d] = {v:st.override[d], src:'strat'};
+    else {
+      const m = modeOf(d);
+      dim[d] = m ? {v:m, src:'ana'} : {v:cat.def[d], src:'cat'};
+    }
+  });
+
+  const ratioTxt = S.ratio==='1:1' ? '1:1正方形，≥800×800像素' : '3:4竖版，≥750×1000像素';
+  const seg = d => LIB[d][dim[d].v];
+  const compZh = seg('comp').zh.replace('{pet}', cat.pet);
+  const compEn = seg('comp').en.replace('{petEn}', cat.petEn);
+  const sps = collectSps();
+  const textStyles = [...new Set(S.refs.map(u=>{const a=S.anaMap[sig(u)]; return a&&a!=='ing'&&a.text_style?a.text_style:null;}).filter(Boolean))];
+
+  // ── 优先：AI 撰写商用级提示词 ──
+  // 第 1 槽成分表：独立字段进 ctx，不进逐张解析
+  const ingAna = S.refs[0] ? S.anaMap[sig(S.refs[0])] : null;
+  const ingInfo = (ingAna && ingAna !== 'ing' && ingAna.__ing) ? {
+    商品理解:ingAna.product_understanding, 成分卖点拆解:ingAna.ingredient_analysis,
+    核心优势:ingAna.core_advantages, 已淘汰卖点:ingAna.discarded_claims,
+    市场竞争位置:ingAna.competitive_position, 购买障碍:ingAna.purchase_barrier,
+    候选创意路线:ingAna.creative_routes,
+    首图决策:ingAna.primary_claim_decision, 卖点三层翻译:ingAna.claim_translation,
+    消费者反对理由:ingAna.consumer_objection, 购买触发:ingAna.buying_trigger,
+    表达边界:ingAna.claim_boundary, 配方故事:ingAna.brand_story_angle,
+    视觉符号库:ingAna.visual_symbols, 视觉执行:ingAna.visual_execution,
+    首图方案:ingAna.main_image, 主图详情分工:ingAna.detail_page_plan
+  } : null;
+  const refDetails = S.refs.map((u,i)=>{
+    if(i === 0) return null;   // 成分表走独立字段
+    const a = S.anaMap[sig(u)];
+    return a && a!=='ing' && !a.__ing ? `#${i+2} 内容:${a.content || '细节图'} 卖点:[${(a.selling_points||[]).join('、')}] 排版:${a.text_style}` : null;
+  }).filter(Boolean);
+  let ai = null;
+  if(hasKey){
+    const ctx = {
+      商品名称:name,
+      宠物类目判断:'请根据商品名称与参考图解析，自行判断宠物类目（猫/狗 × 主粮/玩具/用品/清洁等）与合适的宠物模特，并推断该类目的画面细节与使用场景',
+      主图策略:st.name + '｜' + st.desc,
+      主图规格:ratioTxt,
+      促销信息:price || '无',
+      需要画面呈现LOGO:!!S.logo,
+      成分表解析:ingInfo || '（未上传成分表，原料信息以商品名与参考图卖点为准，禁止虚构）',
+      风格基调设定:{说明:'只决定色调/光影/构图风格，不决定场景内容与道具', 场景风格:seg('scene').zh, 构图:compZh, 色调:seg('tone').zh, 光影:seg('light').zh},
+      参考图提取的卖点:sps.length ? sps : '（无参考图，可按类目常见卖点创作）',
+      参考图文案排版风格:textStyles.length ? textStyles : '（无参考）',
+      参考图逐张解析:refDetails.length ? refDetails : '（无）'
+    };
+    btn.classList.add('busy');
+    const wt0 = Date.now();
+    btn.textContent = '✍ AI 撰写提示词中… 0s（K3 约 15-30 秒）';
+    const wTimer = setInterval(()=>{
+      btn.textContent = `✍ AI 撰写提示词中… ${Math.round((Date.now()-wt0)/1000)}s（K3 约 15-30 秒）`;
+    }, 1000);
+    try{ ai = await callWriter(ctx); slog('AI 撰写成功：' + ai.zh.slice(0,80) + '…'); }
+    catch(e){ warn.push('AI 撰写调用失败（' + e.message + '），已回退模板引擎'); slog('AI 撰写失败：' + e.message); }
+    clearInterval(wTimer);
+    btn.classList.remove('busy'); btn.textContent = '⚡ 生成主图提示词';
+  }
+
+  const srcMark = d => dim[d].src==='ana' ? '参考图AI解析' : dim[d].src==='strat' ? '策略锁定' : '类目默认';
+  const dimLabel = {scene:'场景', comp:'构图', tone:'色调', light:'光影'};
+  $('useTrace').innerHTML = '✦ 已融入提示词：' +
+    ['scene','comp','tone','light'].map(d=>`${dimLabel[d]}·${dim[d].v}（${srcMark(d)}）`).join('、') +
+    (sps.length ? `、参考图卖点 ${sps.length} 条 → 改写为主图文案` : '、无参考图卖点（用类目卖点库）') +
+    (textStyles.length ? '、排版风格已参考' : '');
+  if(ai){
+    $('zhTitle').textContent = `prompt_zh · ${st.name} · ✦ AI 撰写 · 商用级`;
+    $('enTitle').textContent = 'prompt_en · MJ / Flux · ✦ AI 撰写 · 商用级';
+    S.out = {
+      zhRaw: ai.zh + (ai.neg ? '\n负面约束：' + ai.neg : ''),
+      enRaw: ai.en + (ai.neg ? '\nNegative: ' + ai.neg : ''),
+      aiCopy: {headlines: ai.headlines, badges: ai.badges},
+      strategy: ai.strategy, qcheck: ai.qcheck
+    };
+    renderStrategy(ai.strategy, ai.qcheck, ai.iread);
+  } else {
+    // ── 兜底：模板引擎（未配置 API 或 AI 调用失败时） ──
+    const ratioEn = S.ratio==='1:1' ? 'square 1:1 composition, 800x800px or higher' : 'vertical 3:4 composition, 750x1000px or higher';
+    const subjectZh = '主体严格参照所附白底产品图：包装形状、颜色、图案、文字与原图完全一致，不变形、不扭曲、不篡改';
+    const subjectEn = 'main subject strictly follows the attached white-background product photo: identical packaging shape, colors, graphics and label text, no distortion or alteration';
+    let logoZh = '', logoEn = '';
+    if(S.logo){
+      logoZh = '，画面左上角放置品牌LOGO（参照所附LOGO图，清晰不变形）';
+      logoEn = ', brand logo placed in the top-left corner (follow the attached logo image, crisp and undistorted)';
+    }
+    const zh = [
+      ['主体', subjectZh],
+      ['场景', seg('scene').zh],
+      ['构图', compZh],
+      ['色调', seg('tone').zh],
+      ['光影', seg('light').zh],
+      ['细节', cat.extra.zh + '，' + st.zhExtra + logoZh],
+      ['品质', '真实相机实拍质感，全画幅商业摄影，8K超高清，细节锐利，色彩真实，自然光影，无AI生成痕迹'],
+      ['规格', '抖音电商主图，' + ratioTxt],
+      ['负面约束', '不变形、不模糊、无水印、无杂乱背景、文字渲染清晰无乱码无错别字、包装印刷字清晰可读']
+    ];
+    const en = [
+      ['SUBJECT', subjectEn],
+      ['SCENE', seg('scene').en],
+      ['COMPOSITION', compEn],
+      ['COLOR TONE', seg('tone').en],
+      ['LIGHTING', seg('light').en],
+      ['DETAIL', cat.extra.en + ', ' + st.enExtra + logoEn],
+      ['QUALITY', 'shot on a full-frame camera, real commercial photography look, 8K ultra HD, sharp details, true-to-life color, natural lighting, no AI-generated look'],
+      ['FORMAT', 'Douyin e-commerce main image, ' + ratioEn],
+      ['NEGATIVE', 'no distortion, no blur, no watermark, no cluttered background, rendered text crisp without garbled characters or typos, label print crisp and legible']
+    ];
+    $('zhTitle').textContent = `prompt_zh · ${st.name} · 模板引擎 · 场景:${srcMark('scene')} 构图:${srcMark('comp')}`;
+    $('stratCard').style.display = 'none';
+    $('enTitle').textContent = 'prompt_en · Midjourney / Flux · 模板引擎';
+    S.out = {
+      zhRaw: zh.map(([k,v])=>`【${k}】${v}`).join('\n') + (price?`\n【促销】${price}`:''),
+      enRaw: en.map(([k,v])=>`[${k}] ${v}`).join('\n')
+    };
+  }
+
+  // 提示词正文渲染为纯文本（可直接编辑，编辑后同步回 S.out）
+  $('zhBody').textContent = S.out.zhRaw;
+  $('enBody').textContent = S.out.enRaw;
+
+  // 方案B：Lovart 自由设计简报（依赖 aiCopy 文案，须在 S.out 赋值之后生成）
+  S.out.zhRawB = buildPlanB(true);
+  S.out.enRawB = buildPlanB(false);
+  $('zhBodyB').textContent = S.out.zhRawB;
+  $('enBodyB').textContent = S.out.enRawB;
+
+  buildCopy({cat, sp: sps.length ? sps : cat.tpl, price, name, spFrom: sps.length?'ana':'cat', aiCopy: S.out && S.out.aiCopy});
+  if(hasAna) renderAnaList();
+
+  $('outEmpty').style.display = 'none';
+  ['zh','en','copy'].forEach(t=>{
+    const on = document.querySelector(`#outTabs button[data-t="${t}"]`).classList.contains('on');
+    $('pane-'+t).style.display = on?'block':'none';
+  });
+  $('exportLine').style.display = 'flex';
+  $('lovartBox').style.display = 'block';
+  $('lovartBoxEn').style.display = 'block';
+  $('lovartBoxB').style.display = 'block';
+  $('lovartBoxEnB').style.display = 'block';
+  slog('generate 完成 | 模式=' + (ai ? 'AI撰写' : '模板引擎') + ' 警告=' + (warn.length ? warn.join('；') : '无'));
+  const w = $('warnStrip');
+  if(warn.length){ w.innerHTML = '⚠ ' + warn.join('<br>⚠ '); w.classList.add('show'); } else w.classList.remove('show');
+  toast('提示词已生成 ✓');
+  pushHistory({
+    ts: Date.now(), name, cat: catName, ratio: S.ratio, price: price || '',
+    strategy: S.out.strategy || null, qcheck: S.out.qcheck || null,
+    zhRaw: S.out.zhRaw, enRaw: S.out.enRaw,
+    headlines: (S.out.aiCopy && S.out.aiCopy.headlines) || [],
+    badges: (S.out.aiCopy && S.out.aiCopy.badges) || [],
+    lovart: []
+  });
+}
+
+/* ═══ 策略卡渲染（V5.1 策略引擎） ═══ */
+function renderStrategy(st, qc, iread){
+  const card = $('stratCard');
+  if(!st){ card.style.display = 'none'; return; }
+  const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const hook = st.scroll_stop_hook || {};
+  const proof = st.proof_element || {};
+  const rows = [
+    ['成交角度', st.conversion_angle],
+    ['购买障碍', st.purchase_barrier],
+    ['转化路径', st.conversion_path],
+    ['购买证明', [proof.claim && '宣称：' + proof.claim, proof.visual_proof && '证据：' + proof.visual_proof, proof.trust_signal && '信任：' + proof.trust_signal].filter(Boolean).join('；')],
+    ['视觉张力', st.visual_tension],
+    ['第一秒钩子', [hook.type, hook.visual, hook.psychology].filter(Boolean).join('｜') +
+      (hook.strength ? `（强度${hook.strength}${hook.reason ? '：' + hook.reason : ''}）` : '')],
+    ['视觉层级', st.visual_hierarchy],
+    ['产品占屏', st.product_scale],
+    ['购买心理', st.consumer_psychology],
+    ['视觉差异化', st.visual_differentiation],
+    ['创意路线', st.creative_route]
+  ].filter(r => r[1]);
+  const els = Array.isArray(st.scene_elements)
+    ? st.scene_elements.map(e => `${e.object || ''}（${e.necessity || 'must'}）`).filter(s => s.length > 6).join('、') : '';
+  if(els) rows.splice(6, 0, ['场景元素', els]);
+  if(iread && iread.answer) rows.push(['第一眼解读', iread.answer]);
+  const qcAll = Object.assign({}, qc, iread ? {instant_read: iread.pass} : {});
+  const qcHtml = Object.keys(qcAll).length
+    ? '<div class="st-qc">' + Object.entries(qcAll).map(([k,v]) =>
+        `<span class="${v ? '' : 'bad'}">${v ? '✓' : '✕'} ${k}</span>`).join('') + '</div>'
+    : '';
+  card.innerHTML = '<div class="cc-t">策略卡 · 先策略后画面（V5.1 策略引擎）</div>' +
+    rows.map(([k,v]) => `<div class="st-row"><span class="st-k">${k}</span><span class="st-v">${esc(v)}</span></div>`).join('') + qcHtml;
+  card.style.display = 'block';
+}
+
+/* ═══ 主图文案 ═══ */
+function buildCopy({cat, sp, price, name, spFrom, aiCopy}){
+  const persona = cat.persona;
+  const sp1 = sp[0] || cat.tpl[0];
+  const fill = t => t.replace('{pain}',cat.pain).replace('{sp1}',sp1).replace('{persona}',persona);
+  let badFound = [];
+  const row = (k, txt) => {
+    const len = [...txt].length;
+    const bad = RISKY.test(txt);
+    if(bad) badFound.push(txt);
+    return `<div class="copy-item ${bad?'bad':''}"><span class="ci-k">${k}</span><p>${txt}</p><span class="len">${len}字${len>12?' · 偏长':''}</span><button class="cp" data-cp="${txt}">复制</button></div>`;
+  };
+  // 标题：优先 AI 撰写（融合参考图卖点），否则模板四角度
+  let headHtml, headTitle;
+  if(aiCopy && aiCopy.headlines && aiCopy.headlines.length){
+    headTitle = '主图大字标题 · ✦ AI 撰写（参考图卖点改写）';
+    headHtml = aiCopy.headlines.map(t=>row('AI', t)).join('');
+  }else{
+    headTitle = '主图大字标题 · 按切入角度分组（建议 ≤12 字）';
+    const groups = [['痛点型',COPY_TPL.pain],['结果型',COPY_TPL.result],['数字/证据型',COPY_TPL.number],['身份认同型',COPY_TPL.ident]];
+    headHtml = groups.map(([g,tpls])=>tpls.map(t=>row(g.slice(0,2), fill(t))).join('')).join('');
+  }
+  // 角标：优先 AI，否则静态库
+  const badgeSrc = (aiCopy && aiCopy.badges && aiCopy.badges.length) ? aiCopy.badges : BADGES;
+  const badgeTitle = (aiCopy && aiCopy.badges && aiCopy.badges.length) ? '角标 / 促销条 · ✦ AI 撰写' : '角标 / 促销条（建议 ≤6 字，放四角或底部）';
+  const badgeHtml = badgeSrc.map(b=>row('角标', b)).join('');
+  const priceHtml = price ? row('促销', price) : '';
+  $('copyOut').innerHTML = `
+    <div class="copy-card"><div class="cc-t">${headTitle}</div>${headHtml}</div>
+    <div class="copy-card"><div class="cc-t">副标题 · ${spFrom==='ana'?'✦ 从参考图提取的卖点':'类目高转化卖点库'}</div>
+      ${sp.map(s=>row('副标', s)).join('')}
+    </div>
+    <div class="copy-card"><div class="cc-t">${badgeTitle}</div>${badgeHtml}${priceHtml}</div>
+    ${S.logo?'<p class="hint" style="margin-top:2px">✦ 已上传 LOGO：提示词已包含 LOGO 呈现指令，出图自带 LOGO；在即梦/万相中把 LOGO 图与白底图一起作为参考图传入，还原度更高。</p>':''}
+    ${badFound.length?`<p class="risk-note">⚠ 标红文案含广告法敏感词（最/第一/100%/治疗 等），抖音投放可能限流或拒审，建议改写后使用。</p>`:''}`;
+}
+document.addEventListener('click', e=>{
+  const b = e.target.closest('[data-cp]'); if(!b) return;
+  copyText(b.dataset.cp, '文案已复制');
+});
+
+/* ═══ Lovart 成品图存入白底图文件夹（File System Access API） ═══ */
+let saveDirHandle = null;
+function idbOpen(){ return new Promise((res, rej)=>{ const r = indexedDB.open('petdesk', 1); r.onupgradeneeded = ()=>r.result.createObjectStore('kv'); r.onsuccess = ()=>res(r.result); r.onerror = ()=>rej(r.error); }); }
+async function idbSet(k, v){ const db = await idbOpen(); return new Promise((res, rej)=>{ const t = db.transaction('kv','readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = res; t.onerror = ()=>rej(t.error); }); }
+async function idbGet(k){ const db = await idbOpen(); return new Promise((res, rej)=>{ const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = ()=>res(q.result); q.onerror = ()=>rej(q.error); }); }
+function updateLvDirTxt(){
+  document.querySelectorAll('[data-lvdir]').forEach(el=>{
+    if(saveDirHandle){ el.textContent = '✓ 成品图将保存到：' + saveDirHandle.name + '（lovart_out/ 留备份）'; el.classList.add('ok'); }
+    else { el.textContent = '未设置：成品图存 lovart_out/；设置后自动存入所选文件夹'; el.classList.remove('ok'); }
+  });
+}
+async function pickSaveDir(){
+  if(!window.showDirectoryPicker){ toast('当前浏览器不支持文件夹写入，请用 Chrome'); return; }
+  try{
+    saveDirHandle = await window.showDirectoryPicker();
+    await idbSet('saveDir', saveDirHandle);
+    updateLvDirTxt();
+    toast('已设置保存文件夹：' + saveDirHandle.name);
+  }catch(e){ /* 用户取消 */ }
+}
+async function restoreSaveDir(){
+  if(!window.showDirectoryPicker) return;
+  try{
+    const h = await idbGet('saveDir');
+    if(h && (await h.queryPermission({mode:'readwrite'})) === 'granted'){
+      saveDirHandle = h; updateLvDirTxt();
+    }
+  }catch(e){}
+}
+async function saveToDir(url, fname){
+  // 无句柄时尝试从 IndexedDB 恢复（授权已给过则静默生效）
+  if(!saveDirHandle){
+    try{
+      const h = await idbGet('saveDir');
+      if(h && (await h.queryPermission({mode:'readwrite'})) === 'granted'){ saveDirHandle = h; updateLvDirTxt(); }
+    }catch(e){}
+  }
+  if(!saveDirHandle) return false;
+  try{
+    const blob = await (await fetch(url)).blob();
+    const fh = await saveDirHandle.getFileHandle(fname, {create:true});
+    const w = await fh.createWritable();
+    await w.write(blob); await w.close();
+    slog('成品图已写入白底图文件夹：' + fname);
+    return true;
+  }catch(e){
+    slog('写入白底图文件夹失败：' + e.message);
+    return false;
+  }
+}
+
+/* ═══ 方案B：Lovart 自由设计简报（商品图+全部信息图 → 超高点击率主图） ═══ */
+function buildPlanB(isZh){
+  const full = $('fName').value.trim();
+  const first = full.split(/\s+/)[0] || '';
+  // 任务对象用「品牌+类目名」；首词含类目/规格词或以动物字开头视为无品牌，直接用类目名
+  const CAT_WORD = /粮|砂|玩具|窝|罐头|零食|用品|饮水|喂食|牵引|洗护|全价|冻干|宠物|猫条|爬架|垫|笼/;
+  const isBrand = first && first !== full && first.length <= 5 && !CAT_WORD.test(first) && !/^[猫狗犬幼成]/.test(first);
+  const name = full ? (isBrand ? first + inferCat(full) : inferCat(full)) : '该产品';
+  const price = $('fPrice').value.trim();
+  if(isZh){
+    return [
+      '你是一名顶级电商视觉设计师。根据所有附件图片的信息，为「' + name + '」生成一张抖音电商超高点击率主图，出图即成品。' + (price ? '促销信息：' + price + '。' : ''),
+      '信息图上的卖点、数据、文案都可以自由提炼到画面上，版式与构图由你全权设计，唯一目标：让刷到的用户0.5秒停下并点击。',
+      '',
+      '【信息准确度（严格管控）】',
+      '- 产品主体与包装以第1张商品图为唯一标准：形状、颜色、图案、文字完全一致，不变形、不重新设计、不篡改包装上的任何文字。',
+      '- 产品是画面绝对主角：完整、清晰，不被宠物、道具或文案遮挡。',
+      '- 画面中的一切数字与卖点（百分比/含量/提升率/温度/价格/件数）必须来自附件图片上明确出现的信息；图上没有的信息禁止出现在画面上——虚构数据（如无来源的"适口性提升237%"）是严重违规。',
+      '- 画面文字渲染清晰端正，无乱码、无错别字。',
+      '',
+      '【合规红线（严格管控）】',
+      COMPLIANCE_TXT,
+      '',
+      '【画面质感】宠物只用纯种品种猫犬（英短/布偶/金渐层/柴犬/金毛/柯基等），禁橘猫田园猫串串；真实相机实拍质感，禁止AI感（完美均匀打光、塑料高光、磨皮发光、HDR油画感）。',
+      '',
+      '【负面约束】产品变形、包装被重新设计、包装文字被篡改、虚构无来源的数据、广告法违禁词、文字乱码或错别字、宠物遮挡产品正面、水印、杂乱背景、AI感光影、塑料质感宠物。'
+    ].join('\n');
+  }
+  return [
+    'You are a top e-commerce visual designer. Based on the information from ALL attached images, create one ultra-high-CTR Douyin e-commerce main image for "' + name + '", final and ready to publish.' + (price ? ' Promo info: ' + price + '.' : ''),
+    'Selling points, figures and copy shown on the info images may all be freely distilled onto the canvas; layout and composition are entirely yours — the only goal: make a scrolling user stop within 0.5s and click.',
+    '',
+    '[INFORMATION ACCURACY — STRICT]',
+    '- The product and its packaging follow Image 1 as the single source of truth: identical shape, colors, graphics and text; never distort, redesign or alter any on-pack text.',
+    '- The product is the absolute hero: complete, crisp, never blocked by pets, props or copy.',
+    '- Every number and claim on the image (percentages, content, improvement rates, temperature, price, counts) must come from information explicitly visible on the attached images; anything not shown there must not appear — invented data (e.g. an unsourced "palatability +237%") is a severe violation.',
+    '- All rendered text must be clean and legible, zero garbled characters or typos.',
+    '',
+    '[AD-LAW COMPLIANCE — STRICT] China Advertising Law: no absolute terms (best, No.1, first, only, 100%, unique), no unverifiable promises (absolute, permanent, zero-risk), no medical or therapeutic claims (cure, treat, heal), no false guarantees. Chinese on-image copy must obey the same rules.',
+    '',
+    '[LOOK & FEEL] Use only purebred cats/dogs (British Shorthair, Ragdoll, Golden Shaded, Shiba Inu, Golden Retriever, Corgi, etc.), no orange tabbies or mixed breeds. Real-camera photographic look; no AI feel (no perfectly even lighting, plastic highlights, smoothed glowing skin or fur, HDR or painterly look).',
+    '',
+    '[NEGATIVE] distorted product, redesigned packaging, altered on-pack text, invented unsourced data, illegal ad claims, garbled or misspelled text, pet blocking the product front, watermark, cluttered background, AI-looking lighting, plastic-looking pets.'
+  ].join('\n');
+}
+
+/* ═══ Lovart 一键出图 ═══ */
+const LV_BTN_TXT = {zh:'🎨 Lovart 一键出图', en:'🎨 Lovart 一键出图（英文提示词）', zhB:'🎨 Lovart 一键出图（方案B）', enB:'🎨 Lovart 一键出图（方案B · English）'};
+const LV_BTN_BUSY = {zh:'🎨 Lovart 生成中', en:'🎨 Lovart 生成中（英文提示词）', zhB:'🎨 Lovart 生成中（方案B）', enB:'🎨 Lovart 生成中（方案B）'};
+const LV_RAW_KEY = {zh:'zhRaw', en:'enRaw', zhB:'zhRawB', enB:'enRawB'};
+const LV_SFX = {zh:'', en:'En', zhB:'B', enB:'EnB'};
+async function lovartGen(lang){
+  const isZh = lang[0] === 'z';
+  const raw = S.out && S.out[LV_RAW_KEY[lang]];
+  if(!raw){ toast('请先生成主图提示词'); return; }
+  if(!S.mainImg){ toast('Lovart 出图需要上传白底产品图'); return; }
+  const sfx = LV_SFX[lang];
+  const btn = $('btnLovart' + sfx), st = $('lovartStatus' + sfx);
+  // 附件策略：方案A 只发白底图（+LOGO）；方案B 加发全部信息图（成分表槽除外，不限张数）
+  const refImgs = [];
+  if(lang === 'zhB' || lang === 'enB'){
+    for(const u of S.refs.slice(1)){
+      try{ refImgs.push(await compressImage(u)); }catch(e){ refImgs.push(u); }
+    }
+  }
+  // 附件角色说明：多图时必须告诉模型每张图是什么，否则会把信息图包装当产品重新设计
+  const total = 1 + (S.logo ? 1 : 0) + refImgs.length;
+  const refStart = S.logo ? 3 : 2;
+  const refEnd = refStart + refImgs.length - 1;
+  const roleLines = isZh
+    ? [`【附件说明（共${total}张图，角色不同，严禁混淆）】`,
+       `第1张 = 商品图：生成画面中产品的唯一来源，包装的形状、颜色、图案、文字必须与第1张图完全一致，不变形、不重新设计。`]
+    : [`[ATTACHMENTS (${total} images, distinct roles — do NOT mix up)]`,
+       `Image 1 = the product photo: the ONLY source of the product in the output. Its packaging shape, colors, graphics and text must be reproduced exactly, never redesigned.`];
+  if(S.logo) roleLines.push(isZh
+    ? `第2张 = 品牌LOGO：仅用于画面左上角的LOGO还原。`
+    : `Image 2 = brand logo: only for reproducing the logo in the top-left corner.`);
+  if(refImgs.length) roleLines.push(isZh
+    ? `第${refStart}至${refEnd}张 = 本产品的信息图（卖点/细节/数据/场景图）：图上的卖点、数据与文案都可以提炼到画面上；但画面中的产品主体与包装仍以第1张商品图为唯一标准，如有冲突以第1张为准。`
+    : `Images ${refStart}-${refEnd} = info images of the SAME product (selling points, details, figures, scene shots): any selling points, data and copy shown on them may be distilled onto the canvas; however the product and packaging in the output must still follow Image 1 exactly — Image 1 wins any conflict.`);
+  const prompt = isZh
+    ? roleLines.join('\n') + '\n\n请严格按以下要求生成一张电商主图成品（只输出一张最终图片，不要输出多个方案）。' +
+      (S.ratio==='1:1' ? '画面比例 1:1 正方形，≥800×800像素。' : '画面比例 3:4 竖版，≥750×1000像素。') + '\n\n' + raw
+    : roleLines.join('\n') + '\n\nGenerate exactly ONE final e-commerce main image strictly following the requirements below (single final image, no multiple variants). ' +
+      (S.ratio==='1:1' ? 'Aspect ratio 1:1 square, 800x800px or higher.' : 'Aspect ratio 3:4 vertical, 750x1000px or higher.') + '\n\n' + raw;
+  const images = [{name:'main.png', data:S.mainImg}];
+  if(S.logo) images.push({name:'logo.png', data:S.logo});
+  refImgs.forEach((u, i) => images.push({name:'ref' + (i + 1) + '.jpg', data:u}));
+  btn.disabled = true; btn.classList.add('busy');
+  const t0 = Date.now();
+  const label = LV_BTN_BUSY[lang];
+  btn.textContent = label + '… 0s（约 1-3 分钟）';
+  const timer = setInterval(()=>{ btn.textContent = `${label}… ${Math.round((Date.now()-t0)/1000)}s（约 1-3 分钟）`; }, 1000);
+  st.textContent = '请求已提交，Lovart 正在生成（期间请勿重复点击，每次生成都会消耗积分）…';
+  slog(`lovart 出图开始 | lang=${lang} ratio=${S.ratio} logo=${!!S.logo} 信息图=${refImgs.length} 提示词=${prompt.length}字`);
+  try{
+    const r = await fetch('/api/lovart/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompt, images})});
+    const j = await r.json();
+    if(!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    const prod = ($('fName').value.trim() || '主图').replace(/[\\/:*?"<>|]/g, '_').slice(0, 40);
+    const fname = `${prod}_${lang}_${Date.now()}.png`;
+    const saved = await saveToDir(j.url, fname);
+    $('lovartPreview' + sfx).innerHTML =
+      `<div class="lv-img"><img src="${j.url}"><div class="lv-acts">` +
+      `<a href="${j.url}" target="_blank">打开原图</a><a href="${j.url}" download="主图_${lang}_${Date.now()}.png">⬇ 下载 PNG</a></div></div>`;
+    st.textContent = '生成完成 ✓ ' + (saved ? `已保存到白底图文件夹（${fname}），lovart_out/ 留有备份` : '成品图已保存到 lovart_out/（点「📁 白底图文件夹」可直接存入产品目录）');
+    slog('lovart 出图成功：' + j.url + (j.tid ? ' tid=' + j.tid : ''));
+    attachLovart(j.url, lang);
+    toast('主图已生成 ✓');
+  }catch(e){
+    st.textContent = '生成失败：' + e.message;
+    slog('lovart 出图失败：' + e.message);
+    toast('Lovart 出图失败，详见日志');
+  }
+  clearInterval(timer);
+  btn.disabled = false; btn.classList.remove('busy');
+  btn.textContent = LV_BTN_TXT[lang];
+}
+
+/* ═══ 导出 / 复制 / 提示 ═══ */
+function exportAll(){
+  if(!S.out) return;
+  const t = `PETDESK 主图方案导出 · ${new Date().toLocaleString('zh-CN')}
+类目：${inferCat($('fName').value)}（AI 推断） · 策略：${STRATS.find(s=>s.id===S.strat).name} · 规格：${S.ratio}
+商品：${$('fName').value||'（未填）'} · 促销：${$('fPrice').value||'无'} · LOGO：${S.logo?'已上传':'无'}
+${'─'.repeat(40)}
+【中文提示词 · 即梦/万相/可灵】
+${S.out.zhRaw}
+
+【英文提示词 · MJ/Flux】
+${S.out.enRaw}
+
+【方案B · Lovart 自由设计简报（中文）】
+${S.out.zhRawB || ''}
+
+【方案B · Lovart 自由设计简报（English）】
+${S.out.enRawB || ''}
+${'─'.repeat(40)}
+【主图文案】
+${$('copyOut').innerText}`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([t],{type:'text/plain;charset=utf-8'}));
+  a.download = `主图方案_${inferCat($('fName').value)}_${Date.now()}.txt`; a.click();
+  toast('已导出 TXT ✓');
+}
+function copyText(txt, msg){
+  if(!txt) return;
+  navigator.clipboard.writeText(txt).then(()=>toast(msg||'已复制'));
+}
+let toastTimer;
+function toast(msg){
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.classList.remove('show'), 2200);
+}
+
+/* ═══ API 弹窗 ═══ */
+function openApiModal(){
+  const proto = S.api.proto || 'anthropic';
+  $('apiProto').value = proto;
+  $('apiEndpoint').value = normalizeEndpoint(proto, S.api.endpoint) || 'https://api.kimi.com/coding';
+  $('apiModel').value = S.api.model || 'k3';
+  $('apiKey').value = S.api.key || '';
+  $('apiMask').classList.add('show');
+}
+
+/* ═══ 持久化 ═══ */
+function save(){
+  const cfg = {ratio:S.ratio, api:S.api,
+    f:{name:$('fName').value, price:$('fPrice').value}};
+  try{ localStorage.setItem('petdesk2', JSON.stringify(cfg)); }catch(e){}
+}
+function applyCfg(cfg){
+  S.ratio = cfg.ratio||'1:1';
+  if(cfg.api){
+    S.api = Object.assign({proto:'anthropic'}, cfg.api);
+    S.api.endpoint = normalizeEndpoint(S.api.proto, S.api.endpoint);
+    S.api.model = normalizeModel(S.api.proto, S.api.model);
+  }
+  document.querySelectorAll('#ratioSwitch button').forEach(b=>b.classList.toggle('on', b.dataset.r===S.ratio));
+  if(cfg.f){ $('fName').value=cfg.f.name||''; $('fPrice').value=cfg.f.price||''; }
+  paintApiState();
+}
+async function restore(){
+  let cfg; try{ cfg = JSON.parse(localStorage.getItem('petdesk2')); }catch(e){}
+  if(cfg){ applyCfg(cfg); return; }
+  // localStorage 为空时，尝试从本地服务器读取预置配置（petdesk.config.json）
+  try{
+    const r = await fetch('/api/config');
+    if(r.ok){
+      const c = await r.json();
+      if(c && c.api && c.api.key){ S.api = c.api; save(); }
+    }
+  }catch(e){}
+  paintApiState();
+}
+init();
+</script>
+</body>
+</html>

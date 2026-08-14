@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PETDESK · 历史记录</title>
+<style>
+:root{--bg:#FAFAF8;--card:#fff;--ink:#14141A;--ink2:#55555F;--ink3:#8A8A94;--line:#E6E4DE;
+  --accent:#5541EA;--accent-soft:#EFEDFB;--ok:#1F9D61;--danger:#D43D3D;--r-m:10px;--r-s:8px}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:13px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;padding:22px 26px}
+.hd{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.hd h1{font-size:17px;font-weight:800}
+.hd h1 i{color:var(--accent);font-style:normal}
+.hd .sub{font-size:11.5px;color:var(--ink3)}
+.hd .sp{flex:1}
+.btn{border:1px solid var(--line);background:var(--card);border-radius:var(--r-s);padding:6px 14px;
+  font-size:12px;font-weight:600;color:var(--ink2);cursor:pointer;text-decoration:none}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.danger:hover{border-color:var(--danger);color:var(--danger)}
+.empty{text-align:center;color:var(--ink3);padding:80px 0;font-size:13px}
+.empty .ic{font-size:40px;margin-bottom:10px}
+.rec{background:var(--card);border:1px solid var(--line);border-radius:var(--r-m);padding:14px 16px;margin-bottom:14px}
+.rec-h{display:flex;align-items:baseline;gap:10px;border-bottom:1px dashed var(--line);padding-bottom:8px;margin-bottom:10px}
+.rec-h b{font-size:14px}
+.rec-h .meta{font-size:11px;color:var(--ink3)}
+.rec-h .sp{flex:1}
+.rec-h .del{border:0;background:transparent;color:var(--ink3);font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px}
+.rec-h .del:hover{background:#FFF1F1;color:var(--danger)}
+.rows{display:grid;grid-template-columns:1fr 1fr;gap:2px 18px;margin-bottom:8px}
+.row{display:flex;gap:8px;font-size:11.5px;line-height:1.6}
+.row .k{flex:none;width:64px;color:var(--ink3);font-weight:700}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.chip{font-size:11px;background:var(--accent-soft);color:var(--accent);border-radius:99px;padding:2.5px 10px;font-weight:600}
+.chip.b{background:#F4F3EF;color:var(--ink2)}
+details{margin-top:8px;border:1px solid var(--line);border-radius:var(--r-s);overflow:hidden}
+summary{cursor:pointer;font-size:11.5px;font-weight:700;color:var(--ink2);padding:7px 12px;background:#F7F6F2;
+  display:flex;align-items:center;gap:8px;user-select:none}
+summary:hover{color:var(--accent)}
+summary .cp{margin-left:auto;border:1px solid var(--line);background:var(--card);border-radius:5px;
+  font-size:10.5px;padding:2px 10px;color:var(--ink2);cursor:pointer}
+summary .cp:hover{border-color:var(--accent);color:var(--accent)}
+.det-b{padding:10px 12px;font-size:11.5px;line-height:1.75;white-space:pre-wrap;word-break:break-word;
+  font-family:"SFMono-Regular",Consolas,Menlo,monospace;color:var(--ink2)}
+.imgs{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+.imgs a{display:block;width:132px}
+.imgs img{width:132px;height:132px;object-fit:cover;border-radius:var(--r-s);border:1px solid var(--line);display:block}
+.imgs span{font-size:10.5px;color:var(--ink3);display:block;text-align:center;margin-top:3px}
+#toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);
+  color:#fff;font-size:12px;font-weight:600;padding:8px 18px;border-radius:99px;opacity:0;pointer-events:none;transition:.25s;z-index:99}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="hd">
+  <h1>PET<i>DESK</i> · 历史记录</h1>
+  <span class="sub">生成方案自动留存（最多 50 条，存本机浏览器）· 刷新/关闭不丢失 · 确认无用可自行删除</span>
+  <span class="sp"></span>
+  <a class="btn" href="/">← 返回工作台</a>
+  <button class="btn danger" id="btnClear">清空全部</button>
+</div>
+<div id="list"></div>
+<div id="toast"></div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function loadHist(){ try{ return JSON.parse(localStorage.getItem('petdesk_history') || '[]'); }catch(e){ return []; } }
+function saveHist(h){ try{ localStorage.setItem('petdesk_history', JSON.stringify(h.slice(0, 50))); }catch(e){} }
+let toastTimer;
+function toast(msg){
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.classList.remove('show'), 2200);
+}
+function fmt(ts){
+  const d = new Date(ts);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getMonth()+1}-${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function copyText(txt){
+  if(!txt) return;
+  navigator.clipboard.writeText(txt).then(()=>toast('已复制 ✓'));
+}
+function stratRows(st){
+  if(!st) return '';
+  const hook = st.scroll_stop_hook || {};
+  const proof = st.proof_element || {};
+  const rows = [
+    ['成交角度', st.conversion_angle],
+    ['购买障碍', st.purchase_barrier],
+    ['视觉张力', st.visual_tension],
+    ['钩子', [hook.type, hook.visual].filter(Boolean).join('｜') + (hook.strength ? `（强度${hook.strength}）` : '')],
+    ['购买证明', proof.visual_proof || ''],
+    ['视觉层级', st.visual_hierarchy],
+    ['创意路线', st.creative_route]
+  ].filter(r => r[1]);
+  if(!rows.length) return '';
+  return '<div class="rows">' + rows.map(([k,v]) =>
+    `<div class="row"><span class="k">${k}</span><span>${esc(v)}</span></div>`).join('') + '</div>';
+}
+function render(){
+  const h = loadHist();
+  if(!h.length){
+    $('list').innerHTML = '<div class="empty"><div class="ic">🐾</div>还没有历史记录<br><small>回工作台点「生成主图提示词」，方案会自动存到这里</small></div>';
+    return;
+  }
+  $('list').innerHTML = h.map(r => `
+  <div class="rec" data-id="${r.id}">
+    <div class="rec-h">
+      <b>${esc(r.name || '（未填品名）')}</b>
+      <span class="meta">${fmt(r.ts)} · ${esc(r.cat || '')}（AI 推断） · ${r.ratio || '1:1'}${r.price ? ' · 促销:' + esc(r.price) : ''}</span>
+      <span class="sp"></span>
+      <button class="del" data-del="${r.id}">🗑 删除</button>
+    </div>
+    ${stratRows(r.strategy)}
+    ${(r.headlines && r.headlines.length) ? '<div class="chips">' + r.headlines.map(t => `<span class="chip">${esc(t)}</span>`).join('') + '</div>' : ''}
+    ${(r.badges && r.badges.length) ? '<div class="chips">' + r.badges.map(t => `<span class="chip b">${esc(t)}</span>`).join('') + '</div>' : ''}
+    ${r.zhRaw ? `<details><summary>中文提示词 <button class="cp" data-cp="zh">复制</button></summary><div class="det-b">${esc(r.zhRaw)}</div></details>` : ''}
+    ${r.enRaw ? `<details><summary>英文提示词 <button class="cp" data-cp="en">复制</button></summary><div class="det-b">${esc(r.enRaw)}</div></details>` : ''}
+    ${(r.lovart && r.lovart.length) ? '<div class="imgs">' + r.lovart.map(l =>
+      `<a href="${l.url}" target="_blank"><img src="${l.url}" loading="lazy"><span>Lovart 成品图${l.lang === 'en' ? '（英文提示词）' : ''}</span></a>`).join('') + '</div>' : ''}
+  </div>`).join('');
+}
+document.addEventListener('click', e=>{
+  const del = e.target.closest('[data-del]');
+  if(del){
+    const id = +del.dataset.del;
+    if(!confirm('删除这条记录？删除后不可恢复')) return;
+    saveHist(loadHist().filter(r => r.id !== id));
+    render(); toast('已删除');
+    return;
+  }
+  const cp = e.target.closest('[data-cp]');
+  if(cp){
+    e.preventDefault();
+    const rec = cp.closest('.rec');
+    const h = loadHist();
+    const r = h.find(x => x.id === +rec.dataset.id);
+    if(r) copyText(cp.dataset.cp === 'zh' ? r.zhRaw : r.enRaw);
+  }
+});
+$('btnClear').addEventListener('click', ()=>{
+  if(!loadHist().length) return toast('没有可清空的记录');
+  if(!confirm('清空全部历史记录？删除后不可恢复')) return;
+  saveHist([]); render(); toast('已清空');
+});
+render();
+</script>
+</body>
+</html>

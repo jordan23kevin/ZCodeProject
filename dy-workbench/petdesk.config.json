@@ -1,0 +1,8 @@
+{
+  "api": {
+    "proto": "anthropic",
+    "endpoint": "https://api.kimi.com/coding",
+    "model": "k3",
+    "key": "sk-kimi-4VbVuTy4ob8gYYtBmcj93ExlmyJepJVD3NWvS6yDikSsxU4Syt6wmgwmbjEtHZ8c"
+  }
+}
