@@ -75,3 +75,8 @@ split_*backup*/
 mockup_output/
 _peiyi_worker.py
 _test_*.py
+
+# PETDESK 工作台运行产物
+dy-workbench/petdesk.log
+dy-workbench/lovart_out/
+dy-workbench/_lovart_in/

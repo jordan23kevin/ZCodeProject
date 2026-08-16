@@ -16,7 +16,7 @@ const host = argVal('--host', process.env.HOST || '127.0.0.1');
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.json': 'application/json' };
-const APP_VER = '2.17';
+const APP_VER = '2.18';
 
 function readBody(req) {
   return new Promise((res, rej) => {

@@ -304,11 +304,9 @@ footer b{color:var(--accent);font-weight:700}
     </div>
 
     <div class="sec">
-      <div class="sec-t">成分表 + 细节图（0–7 张）<span class="opt">第 1 张传成分表 · 其余传细节图</span></div>
+      <div class="sec-t">信息图（0–7 张）<span class="opt">卖点 / 细节 / 数据 / 场景图，全部传给 Lovart</span></div>
       <div class="ref-grid" id="refGrid"></div>
-      <p class="hint">丢进来就行：<b>第 1 张请传成分表/配料表</b>（AI 专项战略分析，原料信息的最高依据）；<b>其余传颗粒特写、质地、包装角度、使用场景等细节图</b>——出图时直接传给 Lovart 锁定产品真实细节，AI 同时提取图上卖点与排版风格。支持<b>一次多选</b>、<b>直接拖拽图片到窗口任意位置</b>。</p>
-      <div class="ana-list" id="anaList"></div>
-      <div id="anaSum"></div>
+      <p class="hint">丢进来就行：传本产品的<b>卖点图、细节图、数据图、场景图</b>——全部随出图任务发给 Lovart，图上的卖点、数据、文案会被提炼到主图画面上。<b>图越多信息越足，数据栏越丰富</b>；注意不要混入其他产品的图。支持<b>一次多选</b>、<b>直接拖拽图片到窗口任意位置</b>。</p>
     </div>
   </section>
   <div class="col-drag" data-drag="0" title="拖动调整栏宽"></div>
@@ -323,18 +321,22 @@ footer b{color:var(--accent);font-weight:700}
         <input id="fName" placeholder="例：喵鲜谷 全价冻干双拼猫粮 1.5kg">
       </div>
       <div class="field">
+        <label>品牌名 <span style="font-weight:400;color:var(--ink3)">（选填，填入后出图任务以「品牌+类目」命名；留空则只用类目名）</span></label>
+        <input id="fBrand" placeholder="例：喵鲜谷 / naisi奶思">
+      </div>
+      <div class="field">
         <label>促销信息 <span style="font-weight:400;color:var(--ink3)">（选填，用于促销型主图与角标）</span></label>
         <input id="fPrice" placeholder="例：¥89 到手 · 第2件半价">
       </div>
     </div>
 
     <div class="sec">
-      <div class="sec-t">剩下的交给引擎</div>
+      <div class="sec-t">剩下的交给 Lovart</div>
       <div class="auto-note">
-        <div class="row"><span><b>成分</b>：第 1 张成分表 AI 战略分析，定首图成交角度</span></div>
-        <div class="row"><span><b>细节</b>：其余细节图传给 Lovart 锁定产品真实颗粒/质地，AI 提取图上卖点与排版</span></div>
-        <div class="row"><span><b>策略</b>：成交角度 → 购买障碍 → 钩子 → 视觉层级，先策略后画面</span></div>
-        <div class="row"><span><b>文案</b>：自动生成主图大字、副标、角标，广告法敏感词标红</span></div>
+        <div class="row"><span><b>素材</b>：白底图锁定产品主体，信息图提供卖点与数据</span></div>
+        <div class="row"><span><b>创意</b>：版式构图 Lovart 自由发挥，冲 0.5 秒点击率</span></div>
+        <div class="row"><span><b>管控</b>：数字卖点必须来自信息图，广告法违禁词禁止</span></div>
+        <div class="row"><span><b>出图</b>：一次并行生成 3 张（不同 API Key），挑最好的一张</span></div>
       </div>
     </div>
   </section>
@@ -342,86 +344,25 @@ footer b{color:var(--accent);font-weight:700}
 
   <!-- ═══ 右栏：主图引擎 ═══ -->
   <section class="col">
-    <div class="col-h"><span class="step">STEP 3</span><h2>生成</h2><small>爆款策略引擎 · 提示词 + 文案</small></div>
-
-    <button class="btn-main" id="btnGen">⚡ 生成主图提示词</button>
-    <div class="warn-strip" id="warnStrip"></div>
+    <div class="col-h"><span class="step">STEP 3</span><h2>出图</h2><small>Lovart 自由设计 · 一次 3 张挑最优</small></div>
 
     <div class="sec" style="margin-top:14px">
-      <div class="tabs" id="outTabs">
-        <button class="on" data-t="zh">中文提示词</button>
-        <button data-t="en">英文提示词</button>
-        <button data-t="copy">主图文案</button>
+      <div class="term-card">
+        <div class="term-h"><div class="dots"><i></i><i></i><i></i></div><span id="zhTitleB">prompt · Lovart 自由设计简报</span><button id="cpZhB">复制</button></div>
+        <div class="term-b" id="zhBodyB" contenteditable="plaintext-only" spellcheck="false"></div>
+      </div>
+      <p class="hint" style="margin:-4px 0 10px">把<b>商品图 + 全部信息图</b>直接交给 Lovart，一句话任务 + 版式构图自由发挥冲点击率；提示词只管控<b>信息准确度</b>（数字卖点必须来自图片、包装以第1张为准）与<b>广告合规</b>。提示词随商品名/品牌/促销实时生成，<b>可直接点击编辑</b>，出图使用编辑后的内容。</p>
+      <div class="lovart-box" id="lovartBoxB">
+        <button class="btn-main" id="btnLovartB">🎨 Lovart 一键出图 ×3</button>
+        <div class="lv-status" id="lovartStatusB">一次并行生成 3 张（各用不同 API Key），挑最好的一张。约 1-3 分钟，消耗 3 次 Lovart 积分。</div>
+        <div class="lv-dir">
+          <button class="btn-ghost" id="btnLvDir">📁 白底图文件夹</button>
+          <span class="lv-dir-txt" data-lvdir>未设置：成品图存 lovart_out/；设置后自动存入所选文件夹</span>
+        </div>
+        <div id="lovartPreviewB"></div>
       </div>
 
-      <div id="outEmpty" class="empty-out">
-        <div class="ic">🐾</div>
-        <p>传好白底图、选好类目、填好商品名<br>点击「生成主图提示词」</p>
-      </div>
-
-      <div class="tab-pane" id="pane-zh" style="display:none">
-        <div class="strat-card" id="stratCard" style="display:none"></div>
-        <div class="term-card">
-          <div class="term-h"><div class="dots"><i></i><i></i><i></i></div><span id="zhTitle">prompt_zh · 即梦/通义万相/可灵</span><button id="cpZh">复制</button></div>
-          <div class="term-b" id="zhBody" contenteditable="plaintext-only" spellcheck="false"></div>
-        </div>
-        <p class="hint" id="useTrace" style="margin:-4px 0 10px"></p>
-        <p class="hint">提示词<b>可直接点击编辑</b>（如把「不怕蚊咬」改成「不怕虫咬」），复制 / 导出 / Lovart 出图均使用编辑后的内容。即梦/万相选择<b>参考图生图</b>，上传白底图（有 LOGO 图就一起传）作为主体参考后粘贴提示词。<b>文案已直接写入提示词，出图即成品</b>；中文文字渲染以即梦/万相效果最佳，MJ/Flux 渲染中文易乱码，慎用英文提示词出中文版主图。</p>
-        <div class="lovart-box" id="lovartBox" style="display:none">
-          <button class="btn-main" id="btnLovart">🎨 Lovart 一键出图</button>
-          <div class="lv-status" id="lovartStatus">用上方中文提示词 + 白底图（有 LOGO 一起传，<b>不传参考图</b>）调 Lovart 生成成品主图，约 1-3 分钟，消耗 Lovart 积分。</div>
-          <div class="lv-dir">
-            <button class="btn-ghost" id="btnLvDir">📁 白底图文件夹</button>
-            <span class="lv-dir-txt" data-lvdir>未设置：成品图存 lovart_out/；设置后自动存入所选文件夹</span>
-          </div>
-          <div id="lovartPreview"></div>
-        </div>
-
-        <div class="term-card" style="margin-top:12px">
-          <div class="term-h"><div class="dots"><i></i><i></i><i></i></div><span id="zhTitleB">prompt_zh · 方案B · Lovart 自由设计版</span><button id="cpZhB">复制</button></div>
-          <div class="term-b" id="zhBodyB" contenteditable="plaintext-only" spellcheck="false"></div>
-        </div>
-        <p class="hint" style="margin:-4px 0 10px">方案B = 把<b>商品图 + 全部信息图</b>（除成分表）直接交给 Lovart，一句话任务 + 版式构图全由 Lovart 自由发挥冲点击率；提示词只管控<b>信息准确度</b>（数字卖点必须来自图片、产品包装以第1张为准）与<b>广告合规</b>。与方案A（策略引擎精控版）对比出图，哪张好用哪张。</p>
-        <div class="lovart-box" id="lovartBoxB" style="display:none">
-          <button class="btn-main" id="btnLovartB">🎨 Lovart 一键出图（方案B）</button>
-          <div class="lv-status" id="lovartStatusB">用方案B简报 + 商品图 + 全部信息图（除成分表）调 Lovart 生成，约 1-3 分钟，消耗 Lovart 积分。</div>
-          <div id="lovartPreviewB"></div>
-        </div>
-      </div>
-
-      <div class="tab-pane" id="pane-en" style="display:none">
-        <div class="term-card">
-          <div class="term-h"><div class="dots"><i></i><i></i><i></i></div><span id="enTitle">prompt_en · Midjourney / Flux</span><button id="cpEn">复制</button></div>
-          <div class="term-b" id="enBody" contenteditable="plaintext-only" spellcheck="false"></div>
-        </div>
-        <p class="hint">MJ：白底图链接放最前 + <b>--iw 2</b> 锁定主体；风格参考图用 <b>--sref</b>。Flux：配合 Redux 传入白底图。</p>
-        <div class="lovart-box" id="lovartBoxEn" style="display:none">
-          <button class="btn-main" id="btnLovartEn">🎨 Lovart 一键出图（英文提示词）</button>
-          <div class="lv-status" id="lovartStatusEn">用上方英文提示词 + 白底图（有 LOGO 一起传，<b>不传参考图</b>）调 Lovart 生成，约 1-3 分钟，消耗 Lovart 积分。中文文案在英文提示词中保留原文，但 Lovart 渲染中文以中文提示词通道更稳。</div>
-          <div class="lv-dir">
-            <button class="btn-ghost" id="btnLvDirEn">📁 白底图文件夹</button>
-            <span class="lv-dir-txt" data-lvdir>未设置：成品图存 lovart_out/；设置后自动存入所选文件夹</span>
-          </div>
-          <div id="lovartPreviewEn"></div>
-        </div>
-
-        <div class="term-card" style="margin-top:12px">
-          <div class="term-h"><div class="dots"><i></i><i></i><i></i></div><span id="enTitleB">prompt_en · Plan B · Lovart free-design brief</span><button id="cpEnB">复制</button></div>
-          <div class="term-b" id="enBodyB" contenteditable="plaintext-only" spellcheck="false"></div>
-        </div>
-        <div class="lovart-box" id="lovartBoxEnB" style="display:none">
-          <button class="btn-main" id="btnLovartEnB">🎨 Lovart 一键出图（方案B · English）</button>
-          <div class="lv-status" id="lovartStatusEnB">Plan B brief + main image + reference images to Lovart, ~1-3 min, costs Lovart credits.</div>
-          <div id="lovartPreviewEnB"></div>
-        </div>
-      </div>
-
-      <div class="tab-pane" id="pane-copy" style="display:none">
-        <div id="copyOut"></div>
-      </div>
-
-      <div class="copy-line" id="exportLine" style="display:none">
-        <button class="btn-ghost" id="btnExport">⬇ 导出全部（.txt）</button>
+      <div class="copy-line" id="exportLine">
         <button class="btn-ghost" id="btnReset">↺ 清空重来</button>
       </div>
     </div>
@@ -699,34 +640,14 @@ function init(){
     document.querySelectorAll('#ratioSwitch button').forEach(x=>x.classList.toggle('on', x===b));
     save();
   });
-  $('outTabs').addEventListener('click', e=>{
-    const b = e.target.closest('button'); if(!b) return;
-    document.querySelectorAll('#outTabs button').forEach(x=>x.classList.toggle('on', x===b));
-    ['zh','en','copy'].forEach(t=>{
-      const p = $('pane-'+t);
-      p.style.display = (b.dataset.t===t && $('outEmpty').style.display==='none') ? 'block':'none';
-    });
-  });
-  $('btnGen').addEventListener('click', generate);
-  $('cpZh').addEventListener('click', ()=>copyText(S.out?.zhRaw,'中文提示词已复制'));
-  $('cpEn').addEventListener('click', ()=>copyText(S.out?.enRaw,'英文提示词已复制'));
-  $('cpZhB').addEventListener('click', ()=>copyText(S.out?.zhRawB,'方案B中文提示词已复制'));
-  $('cpEnB').addEventListener('click', ()=>copyText(S.out?.enRawB,'方案B英文提示词已复制'));
-  // 提示词可编辑：编辑实时同步回 S.out，复制/导出/Lovart 出图均使用编辑后内容
-  $('zhBody').addEventListener('input', ()=>{ if(S.out) S.out.zhRaw = $('zhBody').innerText; });
-  $('enBody').addEventListener('input', ()=>{ if(S.out) S.out.enRaw = $('enBody').innerText; });
+  $('cpZhB').addEventListener('click', ()=>copyText(S.out && S.out.zhRawB,'提示词已复制'));
+  // 提示词可编辑：编辑实时同步回 S.out，复制/Lovart 出图均使用编辑后内容
   $('zhBodyB').addEventListener('input', ()=>{ if(S.out) S.out.zhRawB = $('zhBodyB').innerText; });
-  $('enBodyB').addEventListener('input', ()=>{ if(S.out) S.out.enRawB = $('enBodyB').innerText; });
-  $('btnExport').addEventListener('click', exportAll);
-  $('btnLovart').addEventListener('click', ()=>lovartGen('zh'));
-  $('btnLovartEn').addEventListener('click', ()=>lovartGen('en'));
-  $('btnLovartB').addEventListener('click', ()=>lovartGen('zhB'));
-  $('btnLovartEnB').addEventListener('click', ()=>lovartGen('enB'));
+  $('btnLovartB').addEventListener('click', lovartGen);
   $('btnLvDir').addEventListener('click', pickSaveDir);
-  $('btnLvDirEn').addEventListener('click', pickSaveDir);
   restoreSaveDir();
   $('btnReset').addEventListener('click', ()=>{ if(confirm('清空所有素材与填写内容？')){ localStorage.removeItem('petdesk2'); location.reload(); }});
-  ['fName','fPrice'].forEach(id=>$(id).addEventListener('input', save));
+  ['fName','fPrice','fBrand'].forEach(id=>$(id).addEventListener('input', ()=>{ save(); refreshPromptB(); }));
   // API 弹窗
   $('apiBtn').addEventListener('click', openApiModal);
   $('histBtn').addEventListener('click', ()=>window.open('/history.html', '_blank'));
@@ -780,7 +701,7 @@ function init(){
     }
     out.innerHTML = lines.join('<br>');
   });
-  restore();
+  restore().then(()=>refreshPromptB());
   serverCheck();
 }
 
@@ -791,13 +712,11 @@ function renderRefGrid(){
   const g = $('refGrid'); g.innerHTML = '';
   for(let i=0;i<7;i++){
     const d = document.createElement('div');
-    d.className = 'slot-ref' + (S.refs[i]?' filled':'') + (i===0?' slot-ing':'');
+    d.className = 'slot-ref' + (S.refs[i]?' filled':'');
     d.dataset.i = i;
     if(S.refs[i]){
-      const ana = S.anaMap[sig(S.refs[i])];
-      const st = ana === 'ing' ? '<span class="st ing">解析中</span>' : ana ? '<span class="st ok">已解析</span>' : '';
-      d.innerHTML = `<img src="${S.refs[i]}"><span class="idx">${i===0?'成分表':'#'+(i+2)}</span>${st}<button class="del" data-del="${i}">✕</button>`;
-    } else { d.innerHTML = i===0 ? '<span class="ing-tip">成分表</span>' : '+'; }
+      d.innerHTML = `<img src="${S.refs[i]}"><span class="idx">#${i+1}</span><button class="del" data-del="${i}">✕</button>`;
+    } else { d.innerHTML = '+'; }
     g.appendChild(d);
   }
 }
@@ -806,7 +725,7 @@ document.addEventListener('click', e=>{
   if(del){ e.stopPropagation();
     if(del.closest('#slotMain')){ S.mainImg=null; paintMainSlot(); }
     else if(del.closest('#slotLogo')){ S.logo=null; paintLogoSlot(); }
-    else { S.refs.splice(+del.dataset.del, 1); renderRefGrid(); renderAnaList(); }
+    else { S.refs.splice(+del.dataset.del, 1); renderRefGrid(); }
     return;
   }
   const slot = e.target.closest('.slot-ref');
@@ -953,7 +872,7 @@ function compressImage(dataUrl, max=640){
   });
 }
 /* ── 统一 LLM 调用（Anthropic / OpenAI 双协议，代理优先） ── */
-const APP_VER = '2.17';
+const APP_VER = '2.18';
 /* 端点规范化：anthropic 协议（sk-kimi 编程 Key）只认 api.kimi.com/coding，
    其他任何主机（如误存的 moonshot 开放平台地址）一律重置 */
 function normalizeEndpoint(proto, endpoint){
@@ -1557,13 +1476,17 @@ async function saveToDir(url, fname){
 }
 
 /* ═══ 方案B：Lovart 自由设计简报（商品图+全部信息图 → 超高点击率主图） ═══ */
+function refreshPromptB(){
+  S.out = S.out || {};
+  S.out.zhRawB = buildPlanB(true);
+  const el = $('zhBodyB');
+  if(el) el.textContent = S.out.zhRawB;
+}
 function buildPlanB(isZh){
   const full = $('fName').value.trim();
-  const first = full.split(/\s+/)[0] || '';
-  // 任务对象用「品牌+类目名」；首词含类目/规格词或以动物字开头视为无品牌，直接用类目名
-  const CAT_WORD = /粮|砂|玩具|窝|罐头|零食|用品|饮水|喂食|牵引|洗护|全价|冻干|宠物|猫条|爬架|垫|笼/;
-  const isBrand = first && first !== full && first.length <= 5 && !CAT_WORD.test(first) && !/^[猫狗犬幼成]/.test(first);
-  const name = full ? (isBrand ? first + inferCat(full) : inferCat(full)) : '该产品';
+  const brand = $('fBrand') ? $('fBrand').value.trim() : '';
+  // 任务对象：填了品牌用「品牌+类目名」，留空直接用类目名
+  const name = brand ? brand + inferCat(full) : (full ? inferCat(full) : '该产品');
   const price = $('fPrice').value.trim();
   if(isZh){
     return [
@@ -1602,77 +1525,80 @@ function buildPlanB(isZh){
   ].join('\n');
 }
 
-/* ═══ Lovart 一键出图 ═══ */
-const LV_BTN_TXT = {zh:'🎨 Lovart 一键出图', en:'🎨 Lovart 一键出图（英文提示词）', zhB:'🎨 Lovart 一键出图（方案B）', enB:'🎨 Lovart 一键出图（方案B · English）'};
-const LV_BTN_BUSY = {zh:'🎨 Lovart 生成中', en:'🎨 Lovart 生成中（英文提示词）', zhB:'🎨 Lovart 生成中（方案B）', enB:'🎨 Lovart 生成中（方案B）'};
-const LV_RAW_KEY = {zh:'zhRaw', en:'enRaw', zhB:'zhRawB', enB:'enRawB'};
-const LV_SFX = {zh:'', en:'En', zhB:'B', enB:'EnB'};
-async function lovartGen(lang){
-  const isZh = lang[0] === 'z';
-  const raw = S.out && S.out[LV_RAW_KEY[lang]];
-  if(!raw){ toast('请先生成主图提示词'); return; }
+/* ═══ Lovart 一键出图 ×3（并行 3 张，各用不同 API Key，用户挑最优） ═══ */
+async function lovartGen(){
+  const raw = S.out && S.out.zhRawB;
+  if(!raw){ toast('提示词为空'); return; }
   if(!S.mainImg){ toast('Lovart 出图需要上传白底产品图'); return; }
-  const sfx = LV_SFX[lang];
-  const btn = $('btnLovart' + sfx), st = $('lovartStatus' + sfx);
-  // 附件策略：方案A 只发白底图（+LOGO）；方案B 加发全部信息图（成分表槽除外，不限张数）
+  const btn = $('btnLovartB'), st = $('lovartStatusB');
+  // 全部信息图（压缩后随附，不限张数）
   const refImgs = [];
-  if(lang === 'zhB' || lang === 'enB'){
-    for(const u of S.refs.slice(1)){
-      try{ refImgs.push(await compressImage(u)); }catch(e){ refImgs.push(u); }
-    }
+  for(const u of S.refs){
+    try{ refImgs.push(await compressImage(u)); }catch(e){ refImgs.push(u); }
   }
   // 附件角色说明：多图时必须告诉模型每张图是什么，否则会把信息图包装当产品重新设计
   const total = 1 + (S.logo ? 1 : 0) + refImgs.length;
   const refStart = S.logo ? 3 : 2;
   const refEnd = refStart + refImgs.length - 1;
-  const roleLines = isZh
-    ? [`【附件说明（共${total}张图，角色不同，严禁混淆）】`,
-       `第1张 = 商品图：生成画面中产品的唯一来源，包装的形状、颜色、图案、文字必须与第1张图完全一致，不变形、不重新设计。`]
-    : [`[ATTACHMENTS (${total} images, distinct roles — do NOT mix up)]`,
-       `Image 1 = the product photo: the ONLY source of the product in the output. Its packaging shape, colors, graphics and text must be reproduced exactly, never redesigned.`];
-  if(S.logo) roleLines.push(isZh
-    ? `第2张 = 品牌LOGO：仅用于画面左上角的LOGO还原。`
-    : `Image 2 = brand logo: only for reproducing the logo in the top-left corner.`);
-  if(refImgs.length) roleLines.push(isZh
-    ? `第${refStart}至${refEnd}张 = 本产品的信息图（卖点/细节/数据/场景图）：图上的卖点、数据与文案都可以提炼到画面上；但画面中的产品主体与包装仍以第1张商品图为唯一标准，如有冲突以第1张为准。`
-    : `Images ${refStart}-${refEnd} = info images of the SAME product (selling points, details, figures, scene shots): any selling points, data and copy shown on them may be distilled onto the canvas; however the product and packaging in the output must still follow Image 1 exactly — Image 1 wins any conflict.`);
-  const prompt = isZh
-    ? roleLines.join('\n') + '\n\n请严格按以下要求生成一张电商主图成品（只输出一张最终图片，不要输出多个方案）。' +
-      (S.ratio==='1:1' ? '画面比例 1:1 正方形，≥800×800像素。' : '画面比例 3:4 竖版，≥750×1000像素。') + '\n\n' + raw
-    : roleLines.join('\n') + '\n\nGenerate exactly ONE final e-commerce main image strictly following the requirements below (single final image, no multiple variants). ' +
-      (S.ratio==='1:1' ? 'Aspect ratio 1:1 square, 800x800px or higher.' : 'Aspect ratio 3:4 vertical, 750x1000px or higher.') + '\n\n' + raw;
+  const roleLines = [`【附件说明（共${total}张图，角色不同，严禁混淆）】`,
+     `第1张 = 商品图：生成画面中产品的唯一来源，包装的形状、颜色、图案、文字必须与第1张图完全一致，不变形、不重新设计。`];
+  if(S.logo) roleLines.push(`第2张 = 品牌LOGO：仅用于画面左上角的LOGO还原。`);
+  if(refImgs.length) roleLines.push(
+    `第${refStart}至${refEnd}张 = 本产品的信息图（卖点/细节/数据/场景图）：图上的卖点、数据与文案都可以提炼到画面上；但画面中的产品主体与包装仍以第1张商品图为唯一标准，如有冲突以第1张为准。`);
+  const prompt = roleLines.join('\n') + '\n\n请严格按以下要求生成一张电商主图成品（只输出一张最终图片，不要输出多个方案）。' +
+    (S.ratio==='1:1' ? '画面比例 1:1 正方形，≥800×800像素。' : '画面比例 3:4 竖版，≥750×1000像素。') + '\n\n' + raw;
   const images = [{name:'main.png', data:S.mainImg}];
   if(S.logo) images.push({name:'logo.png', data:S.logo});
   refImgs.forEach((u, i) => images.push({name:'ref' + (i + 1) + '.jpg', data:u}));
+
+  // 先建历史记录，3 张成品逐个挂上去
+  const prodName = $('fName').value.trim();
+  pushHistory({ts:Date.now(), name:prodName, cat:inferCat(prodName), ratio:S.ratio, price:$('fPrice').value.trim(),
+    strategy:null, qcheck:null, zhRaw:raw, enRaw:'', headlines:[], badges:[], lovart:[]});
+
   btn.disabled = true; btn.classList.add('busy');
   const t0 = Date.now();
-  const label = LV_BTN_BUSY[lang];
-  btn.textContent = label + '… 0s（约 1-3 分钟）';
-  const timer = setInterval(()=>{ btn.textContent = `${label}… ${Math.round((Date.now()-t0)/1000)}s（约 1-3 分钟）`; }, 1000);
-  st.textContent = '请求已提交，Lovart 正在生成（期间请勿重复点击，每次生成都会消耗积分）…';
-  slog(`lovart 出图开始 | lang=${lang} ratio=${S.ratio} logo=${!!S.logo} 信息图=${refImgs.length} 提示词=${prompt.length}字`);
-  try{
-    const r = await fetch('/api/lovart/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompt, images})});
-    const j = await r.json();
-    if(!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
-    const prod = ($('fName').value.trim() || '主图').replace(/[\\/:*?"<>|]/g, '_').slice(0, 40);
-    const fname = `${prod}_${lang}_${Date.now()}.png`;
-    const saved = await saveToDir(j.url, fname);
-    $('lovartPreview' + sfx).innerHTML =
-      `<div class="lv-img"><img src="${j.url}"><div class="lv-acts">` +
-      `<a href="${j.url}" target="_blank">打开原图</a><a href="${j.url}" download="主图_${lang}_${Date.now()}.png">⬇ 下载 PNG</a></div></div>`;
-    st.textContent = '生成完成 ✓ ' + (saved ? `已保存到白底图文件夹（${fname}），lovart_out/ 留有备份` : '成品图已保存到 lovart_out/（点「📁 白底图文件夹」可直接存入产品目录）');
-    slog('lovart 出图成功：' + j.url + (j.tid ? ' tid=' + j.tid : ''));
-    attachLovart(j.url, lang);
-    toast('主图已生成 ✓');
-  }catch(e){
-    st.textContent = '生成失败：' + e.message;
-    slog('lovart 出图失败：' + e.message);
-    toast('Lovart 出图失败，详见日志');
-  }
+  btn.textContent = '🎨 Lovart 生成中 ×3… 0s（约 1-3 分钟）';
+  const timer = setInterval(()=>{ btn.textContent = `🎨 Lovart 生成中 ×3… ${Math.round((Date.now()-t0)/1000)}s（约 1-3 分钟）`; }, 1000);
+  const preview = $('lovartPreviewB');
+  preview.innerHTML = [0,1,2].map(i=>`<div class="lv-img" id="lvSlot${i}"><div class="lv-wait">⏳ 第 ${i+1} 张生成中…</div></div>`).join('');
+  st.textContent = '3 张并行生成中（各用不同 API Key，期间请勿重复点击）…';
+  slog(`lovart 出图×3 开始 | ratio=${S.ratio} logo=${!!S.logo} 信息图=${refImgs.length} 提示词=${prompt.length}字`);
+
+  let done = 0, okCount = 0, savedAny = false;
+  const prod = (prodName || '主图').replace(/[\\/:*?"<>|]/g, '_').slice(0, 40);
+  await Promise.all([0,1,2].map(async i=>{
+    const slot = $('lvSlot' + i);
+    try{
+      const r = await fetch('/api/lovart/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompt, images})});
+      const j = await r.json();
+      if(!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      const fname = `${prod}_${i+1}_${Date.now()}.png`;
+      const saved = await saveToDir(j.url, fname);
+      if(saved) savedAny = true;
+      slot.innerHTML = `<img src="${j.url}"><div class="lv-acts">` +
+        `<a href="${j.url}" target="_blank">打开原图</a><a href="${j.url}" download="${fname}">⬇ 下载 PNG</a></div>`;
+      slog(`lovart 第${i+1}张成功：` + j.url + (j.tid ? ' tid=' + j.tid : ''));
+      attachLovart(j.url, 'B' + (i+1));
+      okCount++;
+    }catch(e){
+      slot.innerHTML = `<div class="lv-wait" style="color:var(--danger)">✕ 第 ${i+1} 张失败：${String(e.message).slice(0,60)}</div>`;
+      slog(`lovart 第${i+1}张失败：` + e.message);
+    }
+    done++;
+    st.textContent = `进行中… 已完成 ${done}/3（成功 ${okCount}）`;
+  }));
+
   clearInterval(timer);
   btn.disabled = false; btn.classList.remove('busy');
-  btn.textContent = LV_BTN_TXT[lang];
+  btn.textContent = '🎨 Lovart 一键出图 ×3';
+  if(okCount){
+    st.textContent = `生成完成 ✓ 成功 ${okCount}/3 张，挑最好的一张。` + (savedAny ? '已同步保存到白底图文件夹，lovart_out/ 留有备份' : '成品图已存 lovart_out/（点「📁 白底图文件夹」可直接存入产品目录）');
+    toast('主图已生成 ✓');
+  } else {
+    st.textContent = '3 张全部失败，请查看日志（petdesk.log）';
+    toast('Lovart 出图失败，详见日志');
+  }
 }
 
 /* ═══ 导出 / 复制 / 提示 ═══ */
@@ -1724,7 +1650,7 @@ function openApiModal(){
 /* ═══ 持久化 ═══ */
 function save(){
   const cfg = {ratio:S.ratio, api:S.api,
-    f:{name:$('fName').value, price:$('fPrice').value}};
+    f:{name:$('fName').value, brand:$('fBrand').value, price:$('fPrice').value}};
   try{ localStorage.setItem('petdesk2', JSON.stringify(cfg)); }catch(e){}
 }
 function applyCfg(cfg){
@@ -1735,7 +1661,7 @@ function applyCfg(cfg){
     S.api.model = normalizeModel(S.api.proto, S.api.model);
   }
   document.querySelectorAll('#ratioSwitch button').forEach(b=>b.classList.toggle('on', b.dataset.r===S.ratio));
-  if(cfg.f){ $('fName').value=cfg.f.name||''; $('fPrice').value=cfg.f.price||''; }
+  if(cfg.f){ $('fName').value=cfg.f.name||''; $('fBrand').value=cfg.f.brand||''; $('fPrice').value=cfg.f.price||''; }
   paintApiState();
 }
 async function restore(){
