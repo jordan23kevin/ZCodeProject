@@ -1,12 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.5.0
+Y2 Bridge Server v2.5.1
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.5.1：
+  - 多品类架构第 1 步（零回归重构）：BASE_DIR 与 WB_REGISTRY_FILE / CHECK_REM_SCRIPT
+    不再写死字面量，改走品类注册表单一真源 D:\Semems\wb_category.py（root_for(cat)，
+    缺省 wb=T恤）。常量值与改造前逐字节一致，已用生产解释器+生产 PYTHONPATH 实测回归。
+    为 D:\Semems Hoodie（卫衣，HX 前缀）接入做准备；本版本不含卫衣业务逻辑。
 
 变更 v2.5.0：
   - 新增「价格申报视角」批量处理子系统（Temu「待卖家确认」调价单列表）：
@@ -270,7 +276,7 @@ from urllib.request import urlopen
 from urllib.error import URLError
 from ctypes import wintypes
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 import urllib.parse
 
 try:
@@ -292,15 +298,33 @@ except Exception as e:
 # ============================================================================
 # 路径常量
 # ============================================================================
-BASE_DIR       = Path("D:/Semems WB")
+# 便携包布局检测：本文件位于 <包根>/ZCodeProject/lovart_bridge.py，
+# 若包根下存在 lovart-official/ 即为便携包（如 D:\lovart_bridge），
+# 所有路径基于包根解析；否则保持本机原有绝对路径（向后兼容）。
+_PKG_ROOT  = Path(__file__).resolve().parent.parent
+_PORTABLE  = (_PKG_ROOT / "lovart-official").is_dir()
+
+# 品类根目录单一真源：D:\Semems\wb_category.py + categories.json（缺省 wb=T恤，行为不变）
+import sys as _sys
+if r"D:\Semems" not in _sys.path:
+    _sys.path.insert(0, r"D:\Semems")
+from wb_category import root_for as _cat_root, DEFAULT_CAT as _DEFAULT_CAT
+
+if _PORTABLE:
+    BASE_DIR       = _PKG_ROOT / "data"                    # 相当于本机 D:/Semems WB
+    LOVART_DIR     = _PKG_ROOT / "lovart-official"
+    PYTHON_EXE     = "python"                              # 由启动 bat 保证在 PATH
+    PYTHONPATH     = str(_PKG_ROOT / "python_packages")
+else:
+    BASE_DIR       = _cat_root(_DEFAULT_CAT)               # D:/Semems WB
+    LOVART_DIR     = Path("E:/Claude code/lovart-official")
+    PYTHON_EXE     = r"C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe"
+    PYTHONPATH     = "E:/python_packages"
+
 INBOX_DIR      = BASE_DIR / "01_INBOX"
 PROJECTS_DIR   = BASE_DIR / "02_PROJECTS"
 REGISTRY_FILE  = BASE_DIR / ".image_registry.json"
-LOVART_DIR     = Path("E:/Claude code/lovart-official")
 LOVART_SCRIPT  = LOVART_DIR / "run_official_v53.py"
-
-PYTHON_EXE     = r"C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe"
-PYTHONPATH     = "E:/python_packages"
 
 HOVER_CACHE    = INBOX_DIR / "_hover_cache"  # 悬停预览缩略图缓存
 UID_MANIFEST_FILE = BASE_DIR / ".generation_uid_manifest.json"  # 传给 Lovart 的 UID 清单
@@ -309,29 +333,40 @@ AI_TRASH_DIR   = BASE_DIR / "_ai_trash"        # AI 图回收站
 AI_THUMB_DIR   = BASE_DIR / "_ai_review_thumbs"  # AI 对比页缩略图缓存
 
 # Lovart 处理记录文件：重新生图时需要清除对应 hash，否则 Lovart 会跳过
-LOVART_TRACK_FILE = Path("E:/Claude code/lovart-official/.processed_track.json")
+LOVART_TRACK_FILE = LOVART_DIR / ".processed_track.json"
 
 # ============================================================================
 # Temu 核价（Hermes）项目路径
 # ============================================================================
-PRICING_DIR        = Path("E:/Claude code/Temu自动化/核价")
+if _PORTABLE:
+    PRICING_DIR        = _PKG_ROOT / "Temu自动化" / "核价"
+    PRICING_OUTPUT_DIR = BASE_DIR / "核价档案"
+else:
+    PRICING_DIR        = Path("E:/Claude code/Temu自动化/核价")
+    PRICING_OUTPUT_DIR = Path(r"C:\Users\Administrator\Desktop\核价档案")
 PRICING_ENTRYPOINT = PRICING_DIR / "entrypoint"
 PRICING_MAIN       = PRICING_DIR / "hengjia.py"
 PRICING_STATE_FILE = PRICING_DIR / "hengjia_state.json"
-PRICING_OUTPUT_DIR = Path(r"C:\Users\Administrator\Desktop\核价档案")
 
 # ============================================================================
 # Temu 建议零售价填写项目路径
 # ============================================================================
-RETAIL_PRICE_DIR   = Path("E:/Claude code/WB Lovart")
+if _PORTABLE:
+    RETAIL_PRICE_DIR   = _PKG_ROOT / "WB Lovart"
+else:
+    RETAIL_PRICE_DIR   = Path("E:/Claude code/WB Lovart")
 RETAIL_PRICE_SCRIPT = RETAIL_PRICE_DIR / "建议零售价.js"
 
 # ============================================================================
 # Temu 报活动项目路径
 # ============================================================================
-ACTIVITY_DIR        = 'E:/Claude code/Temu自动化/报活动'
+if _PORTABLE:
+    ACTIVITY_DIR        = str(_PKG_ROOT / "Temu自动化" / "报活动")
+else:
+    ACTIVITY_DIR        = 'E:/Claude code/Temu自动化/报活动'
 ACTIVITY_ENTRYPOINT = ACTIVITY_DIR + '/entrypoint/run.py'
 ACTIVITY_STATE_FILE = ACTIVITY_DIR + '/state/state.json'
+ACTIVITY_SELECTION_FILE = ACTIVITY_DIR + '/state/user_selection.json'  # 面板勾选的活动（引擎轮询消费）
 
 # ============================================================================
 # 胚衣制作（素材库）路径
@@ -370,13 +405,38 @@ PEIYI_META_FIELDS = [
 PEIYI_META_KEYS = [k for k, _, _ in PEIYI_META_FIELDS]
 
 # 贴图（AI 去背贴图）相关常量
-TPL_ROOT = Path(r"D:\Semems\1胚衣\_tpl")          # _tpl/<款名>/ 扭曲素材根
-CSV_PATH = Path(r"E:\Kimi Code\docs\胚衣参数表_模板.csv")
-MOCKUP_PY = Path(r"C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe")
-MOCKUP_ROOT = Path(r"E:/Kimi Code")              # white_t_mockup 所在目录（运行 -m white_t_mockup）
-PY_PACKAGES = "E:/python_packages"
+if _PORTABLE:
+    TPL_ROOT   = _PKG_ROOT / "1胚衣" / "_tpl"    # _tpl/<款名>/ 扭曲素材根
+    CSV_PATH   = _PKG_ROOT / "docs" / "胚衣参数表_模板.csv"
+    MOCKUP_PY  = "python"
+    MOCKUP_ROOT = _PKG_ROOT                       # white_t_mockup 所在目录（运行 -m white_t_mockup）
+    PY_PACKAGES = PYTHONPATH
+else:
+    TPL_ROOT = Path(r"D:\Semems\1胚衣\_tpl")          # _tpl/<款名>/ 扭曲素材根
+    CSV_PATH = Path(r"E:\Kimi Code\docs\胚衣参数表_模板.csv")
+    MOCKUP_PY = Path(r"C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe")
+    MOCKUP_ROOT = Path(r"E:/Kimi Code")              # white_t_mockup 所在目录（运行 -m white_t_mockup）
+    PY_PACKAGES = "E:/python_packages"
 MOCKUP_OUT = BASE_DIR / "03_MOCKUP_OUT"          # 贴图成品输出
 ZCODE_PROJECT = Path(__file__).resolve().parent  # 本文件所在目录（peiyi_mask / tpl_generator 在此）
+
+# ============================================================================
+# 其它散点路径（便携包/本机双套）
+# ============================================================================
+if _PORTABLE:
+    WB_REGISTRY_FILE   = BASE_DIR / "WB_REGISTRY" / "registry.json"
+    CHECK_REM_SCRIPT   = BASE_DIR / "04_OS" / "engine" / "check_rem.py"
+    WB_LISTING_DIR     = _PKG_ROOT / "wb上款"
+    TEMU_ANALYSIS_DIR  = _PKG_ROOT / "temu分析"
+    KIMI_SCRIPTS_DIR   = _PKG_ROOT / "scripts"
+    WHITE_T_PRESETS    = _PKG_ROOT / "white_t_mockup" / "presets.json"
+else:
+    WB_REGISTRY_FILE   = BASE_DIR / "WB_REGISTRY" / "registry.json"
+    CHECK_REM_SCRIPT   = BASE_DIR / "04_OS" / "engine" / "check_rem.py"
+    WB_LISTING_DIR     = Path(r"E:\Claude code\wb上款")
+    TEMU_ANALYSIS_DIR  = Path(r"E:/Kimi Code/temu分析")
+    KIMI_SCRIPTS_DIR   = Path(r"E:/Kimi Code/scripts")
+    WHITE_T_PRESETS    = Path(r"E:/Kimi Code/white_t_mockup/presets.json")
 
 
 def _single_thread_env(base_env):
@@ -529,7 +589,7 @@ def _check_rem_daemon():
     若 check_rem 崩溃退出会自动重拉，实现自愈。
     """
     import subprocess
-    script = Path("D:/Semems WB/04_OS/engine/check_rem.py")
+    script = CHECK_REM_SCRIPT
     if not script.exists():
         print("  [check_rem daemon] 脚本不存在，跳过守护", flush=True)
         return
@@ -792,7 +852,7 @@ def scan_provenance():
 
     # 加载 Lovart registry（用于 AI → 原图）
     lovart_reg = {}
-    lr_path = Path("D:/Semems WB/WB_REGISTRY/registry.json")
+    lr_path = WB_REGISTRY_FILE
     if lr_path.exists():
         try:
             with open(lr_path, 'r', encoding='utf-8') as f:
@@ -1385,7 +1445,7 @@ def _scan_ai_review_projects():
         sm_path = d / "source_map.json"
         if sm_path.exists():
             try:
-                lovart_reg_path = Path("D:/Semems WB/WB_REGISTRY/registry.json")
+                lovart_reg_path = WB_REGISTRY_FILE
                 lovart_reg = {}
                 if lovart_reg_path.exists():
                     try:
@@ -2085,7 +2145,7 @@ def api_projects():
                     with open(sm_path, 'r', encoding='utf-8') as f:
                         source_map = json.load(f)
                     # 从 Lovart 注册表查找原图名
-                    lovart_reg_path = Path("D:/Semems WB/WB_REGISTRY/registry.json")
+                    lovart_reg_path = WB_REGISTRY_FILE
                     if lovart_reg_path.exists():
                         with open(lovart_reg_path, 'r', encoding='utf-8') as lf:
                             lovart_reg = json.load(lf)
@@ -3250,7 +3310,7 @@ def api_upload_refresh_online_listed():
         if killed:
             print(f"[刷新已上款] 强制结束旧任务 PID={killed}，重新启动")
 
-    default_script = r"E:\Claude code\wb上款\check_online_listed.py"
+    default_script = str(WB_LISTING_DIR / "check_online_listed.py")
     script_path = Path(default_script)
     if not script_path.exists():
         return jsonify({
@@ -3398,7 +3458,7 @@ def api_batch_upload():
     if not dx_list:
         return jsonify({"ok": False, "error": "请指定DX号"}), 400
 
-    default_script = r"E:\Claude code\wb上款\wb_listing.py"
+    default_script = str(WB_LISTING_DIR / "wb_listing.py")
     upload_script = os.environ.get("LOVART_UPLOAD_SCRIPT", default_script)
     script_path = Path(upload_script)
     if not script_path.exists():
@@ -3557,8 +3617,8 @@ def _pricing_log_reader(proc, mode):
         pricing_task["proc"] = None
 
 
-def _start_pricing_script(mode, args, label):
-    """通用启动 Hermes 核价子进程。"""
+def _start_pricing_script(mode, args, label, extra_env=None):
+    """通用启动 Hermes 核价子进程。extra_env: 附加环境变量（如底价覆盖文件路径）。"""
     with pricing_lock:
         if pricing_task.get("status") == "running" and pricing_task.get("proc") and pricing_task["proc"].poll() is None:
             return {"error": "已有核价任务在运行，请先停止"}, 409
@@ -3580,6 +3640,8 @@ def _start_pricing_script(mode, args, label):
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    if extra_env:
+        env.update(extra_env)
 
     try:
         proc = subprocess.Popen(
@@ -3674,6 +3736,50 @@ def api_pricing_retry():
         return jsonify({"error": f"脚本不存在: {script}"}), 404
     args = [get_python(), str(script)] + pages_list
     resp, code = _start_pricing_script("retry", args, f"重试页 {raw}")
+    return jsonify(resp), code
+
+
+@app.route('/api/pricing/reprice', methods=['POST'])
+def api_pricing_reprice():
+    """按模拟档位底价重新核价（临时覆盖，不改原始底价表）。
+
+    body: {"overrides": {"德国站": 61.14, ...}, "pages": "2-52"(可选)}
+    覆盖通过 HENGJIA_FLOOR_OVERRIDE 环境变量传给核价子进程，
+    常规「完整自动核价」不带此变量，永远按原始底价。
+    """
+    data = request.get_json(silent=True) or {}
+    overrides = data.get("overrides") or {}
+    if not isinstance(overrides, dict) or not overrides:
+        return jsonify({"error": "请提供 overrides（站点→模拟底价）"}), 400
+    clean = {}
+    for site, v in overrides.items():
+        if isinstance(v, (int, float)) and v > 0:
+            clean[str(site)] = round(float(v), 2)
+    if not clean:
+        return jsonify({"error": "overrides 无有效项"}), 400
+
+    override_path = PRICING_DIR / "state" / "floor_override.json"
+    try:
+        override_path.parent.mkdir(parents=True, exist_ok=True)
+        override_path.write_text(json.dumps(clean, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as e:
+        return jsonify({"error": f"写入覆盖文件失败: {e}"}), 500
+
+    pages = (data.get("pages") or "").strip()
+    args = [get_python(), str(PRICING_MAIN)]
+    if pages:
+        import re
+        if not re.match(r'^\d+-\d+$', pages):
+            return jsonify({"error": "页码范围格式应为 起始-结束，如 2-52"}), 400
+        args.append(f"--pages={pages}")
+    desc = "，".join(f"{s}→{v}" for s, v in clean.items())
+    label = f"按模拟底价重新核价（{desc}）"
+    if pages:
+        label += f" 页{pages}"
+    resp, code = _start_pricing_script(
+        "reprice", args, label,
+        extra_env={"HENGJIA_FLOOR_OVERRIDE": str(override_path)},
+    )
     return jsonify(resp), code
 
 
@@ -3775,6 +3881,20 @@ def api_pricing_download():
     if not path.exists():
         return jsonify({"error": "文件不存在"}), 404
     return send_file(str(path), as_attachment=True, download_name=filename)
+
+
+@app.route('/api/pricing/fail_analysis')
+def api_pricing_fail_analysis():
+    """读取 Hermes 核价引擎每页落盘的「不通过核价底价分析」（底价模拟）。"""
+    path = PRICING_DIR / "state" / "fail_analysis.json"
+    if not path.exists():
+        return jsonify({"updated": None, "pages": [], "sites": []})
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return jsonify(data)
+    except (json.JSONDecodeError, OSError) as e:
+        return jsonify({"error": f"读取分析文件失败: {e}", "pages": [], "sites": []})
 
 
 @app.route('/api/pricing/signal', methods=['POST'])
@@ -3888,6 +4008,13 @@ def _start_activity_script(label, extra_env=None):
     env.setdefault("PYTHONIOENCODING", "utf-8")
     if extra_env:
         env.update(extra_env)
+
+    # 清除上一轮残留的勾选文件，避免新任务误消费旧勾选
+    try:
+        if os.path.exists(ACTIVITY_SELECTION_FILE):
+            os.remove(ACTIVITY_SELECTION_FILE)
+    except Exception as e:
+        print(f"[activity] 清除残留勾选文件失败: {e}", flush=True)
 
     try:
         proc = subprocess.Popen(
@@ -4101,7 +4228,10 @@ def _ensure_edge_cdp(p, log, timeout=40):
         raise RuntimeError("未找到 Edge 安装路径，请先安装 Microsoft Edge。")
     profile = r"C:\edge-cdp-profile"
     args = [edge, "--remote-debugging-port=9222", f"--user-data-dir={profile}",
-            "--no-first-run", "--no-default-browser-check"]
+            "--no-first-run", "--no-default-browser-check",
+            # Temu 页面 JS 堆随运行时间增长，默认 ~2GB 易撞顶报 Out of Memory；
+            # 4GB 是 V8 指针压缩模式的上限
+            "--js-flags=--max-old-space-size=4096"]
     try:
         # DETACHED_PROCESS(0x8) + CREATE_NEW_PROCESS_GROUP(0x200)：脱离 bridge 独立存活
         subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -4231,13 +4361,12 @@ def api_order_price_enter():
 # ─────────────────────────────────────────────────────────────
 # Temu 价格申报视角：按核价底价自动批量确认/拒绝
 # ─────────────────────────────────────────────────────────────
-# 核价底价（站点 -> 核价下限）。权威来源：Temu 核价仓 config/prices.py 的 PRICE_MAP。
-# 意大利站底价 115（2026-07-27 用户确认加入）。
+# 核价底价（站点 -> 核价下限）。权威来源：Temu 核价仓 config/prices.py 的 PRICE_MAP（17站）。
 ORDER_PRICE_FLOOR = {
     "波兰": 52, "匈牙利": 56, "立陶宛": 56, "德国": 63, "捷克": 65,
-    "斯洛伐克": 67, "葡萄牙": 76, "西班牙": 85, "比利时": 85, "法国": 70,
-    "丹麦": 84, "斯洛文尼亚": 84, "奥地利": 86, "荷兰": 89, "罗马尼亚": 100,
-    "瑞典": 134, "芬兰": 142, "意大利": 115,
+    "斯洛伐克": 67, "葡萄牙": 76, "西班牙": 80, "比利时": 80, "法国": 70,
+    "丹麦": 76, "斯洛文尼亚": 84, "奥地利": 75, "荷兰": 73, "罗马尼亚": 93,
+    "瑞典": 134, "芬兰": 142,
 }
 
 # 注入到页面上下文的 JS 助手（window._op_*）。表格用嵌套结构，真实数据行靠
@@ -5055,7 +5184,113 @@ def api_order_price_reject():
 # ===== Temu 流量加速器：开启流量加速（用户登录后点「好了」，脚本接管标签页） =====
 TRAFFIC_TASKS = {}
 TRAFFIC_TASKS_LOCK = threading.Lock()
+TRAFFIC_SKU_MAP = {}  # skuId → goodsId(SPU)，响应拦截器从列表接口数据里建（submit higher custom price 报错只给 sku）
 TRAFFIC_STOP = threading.Event()   # 全局停止信号：前端点「停止」即置位，循环安全退出
+# 本轮（含历史记录）被 Temu 提交校验拒绝（submit higher custom price，连最少让价档都不行）的 SPU。
+# 这些 SPU 会一直留在「待开启」列表里，每轮重扫都会再次被拒、白跑一整圈剔除流程，
+# 所以分析阶段直接当不通过处理，不再进提交抽屉。任务启动时从记录文件预载。
+TRAFFIC_REJECTED_SPUS = set()
+# 会话级记录去重：垃圾商品（价格不通过/读不出价/未提交成功）永远留在「待开启」列表，
+# 每轮重扫都会重复写 xlsx（实测 35 轮写了 374 条不通过记录，其实只有十几个 SPU）。
+# 每个 (SPU,站点)/(SPU) 每次任务只写一条。任务启动时清空。
+TRAFFIC_RECORDED_ONCE = set()
+
+# 已知垃圾 (SPU,站点) 黑名单：价格不通过（低于底价10元+）/未读到申报价或档位/Temu拒绝。
+# 这些行永远不离开「待开启」列表，每次扫到都重新分析一遍（实测 18 个垃圾 pair 产生了
+# 1843 条重复记录）。落盘持久化 + 时间戳，7 天过期（防用户改申报价后误杀）。
+# 必须按 (SPU,站点) 对拉黑：Temu 勾选是 SPU 粒度，多数垃圾 SPU 同时有可通过的站点行，
+# 按 SPU 拉黑会误杀（2026-08-08 用户确认方案）。
+TRAFFIC_BLACKLIST = {}  # {(spu, site): {"ts": iso字符串, "status": str}}
+TRAFFIC_BLACKLIST_FILE = TEMU_ANALYSIS_DIR / "traffic_blacklist.json"
+TRAFFIC_BLACKLIST_TTL_DAYS = 7
+
+
+def _traffic_blacklist_alive(entry):
+    try:
+        ts = datetime.fromisoformat(entry.get("ts", ""))
+        return datetime.now() - ts < timedelta(days=TRAFFIC_BLACKLIST_TTL_DAYS)
+    except Exception:
+        return False
+
+
+def _traffic_blacklist_add(spu, site, status):
+    """把 (SPU,站点) 加入黑名单并落盘（含过期清理）。写失败不中断主流程。"""
+    TRAFFIC_BLACKLIST[(str(spu), str(site))] = {
+        "ts": datetime.now().isoformat(timespec="seconds"), "status": status}
+    try:
+        data = {f"{k[0]}|{k[1]}": v for k, v in TRAFFIC_BLACKLIST.items()
+                if _traffic_blacklist_alive(v)}
+        TRAFFIC_BLACKLIST_FILE.write_text(
+            json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _traffic_load_blacklist():
+    """预载黑名单：落盘文件（未过期）+ 记录文件里最终状态为垃圾且未过期的 (SPU,站点) 对。"""
+    n = 0
+    try:
+        if TRAFFIC_BLACKLIST_FILE.exists():
+            data = json.loads(TRAFFIC_BLACKLIST_FILE.read_text(encoding="utf-8"))
+            for k, v in data.items():
+                if _traffic_blacklist_alive(v):
+                    spu, _, site = k.partition("|")
+                    TRAFFIC_BLACKLIST[(spu, site)] = v
+                    n += 1
+    except Exception:
+        pass
+    try:
+        from openpyxl import load_workbook
+        if TRAFFIC_RECORD_FILE.exists():
+            wb = load_workbook(TRAFFIC_RECORD_FILE, read_only=True)
+            final = {}  # 同一 (SPU,站点) 最后一条记录为准（避免拉黑后来改价通过的）
+            for row in wb.active.iter_rows(min_row=2, values_only=True):
+                if row and len(row) >= 9 and row[1]:
+                    final[(str(row[1]).strip(), str(row[2] or "").strip())] = \
+                        (str(row[0] or ""), str(row[8] or ""))
+            wb.close()
+            for (spu, site), (t, status) in final.items():
+                if ("价格不通过" not in status and "Temu拒绝" not in status) \
+                        or (spu, site) in TRAFFIC_BLACKLIST:
+                    continue
+                try:  # 记录时间超过 7 天的不再预载（价格可能已改）
+                    if datetime.now() - datetime.strptime(t, "%Y-%m-%d %H:%M:%S") \
+                            >= timedelta(days=TRAFFIC_BLACKLIST_TTL_DAYS):
+                        continue
+                except Exception:
+                    pass
+                TRAFFIC_BLACKLIST[(spu, site)] = {"ts": t.replace(" ", "T"), "status": status}
+                n += 1
+    except Exception:
+        pass
+    return n
+
+
+def _traffic_record_once(rec, key):
+    """同一次任务里同一个 key 只写一条记录（垃圾商品每轮重扫不重复写）。"""
+    if key in TRAFFIC_RECORDED_ONCE:
+        return
+    TRAFFIC_RECORDED_ONCE.add(key)
+    _traffic_record(rec)
+
+
+def _traffic_load_rejected_spus():
+    """从记录文件预载历史上被 Temu 拒绝（要求更高价格，已剔除）的 SPU。"""
+    try:
+        from openpyxl import load_workbook
+        if not TRAFFIC_RECORD_FILE.exists():
+            return
+        wb = load_workbook(TRAFFIC_RECORD_FILE, read_only=True)
+        ws = wb.active
+        n = 0
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row and len(row) >= 9 and row[1] and "Temu拒绝" in str(row[8] or ""):
+                TRAFFIC_REJECTED_SPUS.add(str(row[1]).strip())
+                n += 1
+        wb.close()
+        return n
+    except Exception:
+        return None
 
 
 class _TrafficStopped(Exception):
@@ -5071,7 +5306,7 @@ def _traffic_check_stop():
 TRAFFIC_URL_HINTS = ["flux-analysis", "flux"]
 TRAFFIC_HOME = "https://agentseller-eu.temu.com/main/flux-analysis"
 # 处理记录文件（xlsx，避免 CSV 编码/分列问题）
-TRAFFIC_RECORD_FILE = Path(r"E:/Kimi Code/temu分析/流量加速器记录.xlsx")
+TRAFFIC_RECORD_FILE = TEMU_ANALYSIS_DIR / "流量加速器记录.xlsx"
 
 
 def _traffic_record(rec):
@@ -5175,7 +5410,10 @@ def api_traffic_open():
 
 
 def _traffic_click_batch_button(page, log):
-    """点「批量开启流量加速器」按钮并等抽屉弹出（含「部分商品不可开启」弹窗处理）。"""
+    """点「批量开启流量加速器」按钮并等抽屉弹出。返回 True=抽屉已弹出 / False=本页跳过。
+    弹窗处理（轮询检测，2026-08-07 改）：
+    - 「部分商品不可开启，要过滤并继续吗」→ 点「过滤并继续」，继续等抽屉；
+    - 「商品已开启流量加速器，正在调价中」→ 点确认，本页无可开启商品，返回 False。"""
     clicked = False
     for _ in range(3):
         clicked = page.evaluate("""() => {
@@ -5191,28 +5429,41 @@ def _traffic_click_batch_button(page, log):
     if not clicked:
         raise RuntimeError("「批量开启流量加速器」按钮不可点击（可能未勾选到商品）。")
     log.append("✅ 已点击「批量开启流量加速器」，等待抽屉弹出…")
-    page.wait_for_timeout(1500)
-    # 可能弹出「部分商品不可开启流量加速器，要过滤并继续吗？」→ 点「过滤并继续」
-    dlg = page.evaluate("""() => {
+    page.wait_for_timeout(800)
+    for _ in range(20):  # 轮询最多 ~16s：等抽屉 / 处理弹窗
+        r = page.evaluate("""() => {
+      const drawer = """ + _TRAFFIC_VISIBLE_DRAWER_FIND_JS + """;
+      if (drawer) return 'drawer';
       const dlgs = [...document.querySelectorAll("[class*='modal'], [class*='Modal'], [class*='MDL'], [class*='dialog'], [class*='Dialog'], [role='dialog']")]
         .filter(el => el.getBoundingClientRect().width > 50);
       for (const d of dlgs) {
         const t = d.innerText || '';
+        const btn = (re) => [...d.querySelectorAll('button')].find(b => re.test((b.innerText||'').trim()));
         if (t.includes('不可开启') || t.includes('过滤并继续')) {
-          const b = [...d.querySelectorAll('button')]
-            .find(b => /过滤并继续|确定|确认/.test((b.innerText||'').trim()));
-          if (b) { b.click(); return 'clicked'; }
-          return 'found-no-btn';
+          const b = btn(/过滤并继续|确定|确认/);
+          if (b) { b.click(); return 'filtered'; }
+        } else if (t.includes('调价中') || t.includes('已开启流量加速器')) {
+          const b = btn(/确定|确认|知道了|^好$/);
+          if (b) { b.click(); return 'busy'; }
+          return 'busy-no-btn';
         }
       }
-      return 'none';
+      return 'waiting';
     }""")
-    if dlg == 'clicked':
-        log.append("ℹ️ 检测到「部分商品不可开启」弹窗，已点「过滤并继续」")
-        page.wait_for_timeout(1500)
-    page.wait_for_function(_TRAFFIC_HAS_VISIBLE_DRAWER_JS, timeout=15000)
-    page.wait_for_timeout(1500)
-    log.append("✅ 抽屉已弹出")
+        if r == 'drawer':
+            page.wait_for_timeout(800)
+            log.append("✅ 抽屉已弹出")
+            return True
+        if r == 'filtered':
+            log.append("ℹ️ 检测到「部分商品不可开启」弹窗，已点「过滤并继续」")
+            page.wait_for_timeout(1500)
+        elif r in ('busy', 'busy-no-btn'):
+            log.append("ℹ️ 本页商品已开启流量加速器（正在调价中），跳过本页")
+            page.wait_for_timeout(1000)
+            return False
+        page.wait_for_timeout(800)
+    _traffic_dump_dialogs(page, log)
+    raise RuntimeError("等待批量开启抽屉弹出超时（页面结构可能变化或有未处理弹窗）。")
 
 
 # 抽屉在原地关闭后，旧元素会带着 transform 滑出屏幕右侧但仍留在 DOM（僵尸抽屉），
@@ -5227,10 +5478,11 @@ _TRAFFIC_HAS_VISIBLE_DRAWER_JS = ("() => !! " + _TRAFFIC_VISIBLE_DRAWER_FIND_JS)
 
 
 def _traffic_open_batch_drawer(page, log):
-    """确保「批量开启流量加速器」抽屉已打开；没开就 全选 → 点批量开启按钮。"""
+    """确保「批量开启流量加速器」抽屉已打开；没开就 全选 → 点批量开启按钮。
+    返回 True=抽屉已弹出 / False=本页商品都在调价中，跳过。"""
     if page.evaluate(_TRAFFIC_HAS_VISIBLE_DRAWER_JS):
         log.append("ℹ️ 检测到批量开启抽屉已打开，直接处理当前抽屉内容")
-        return
+        return True
     # 列表可能还在加载，重试几次找全选框（优先点表头的全选，没有才点最上方的）
     n = 0
     for _ in range(4):
@@ -5250,8 +5502,22 @@ def _traffic_open_batch_drawer(page, log):
     if not n:
         raise RuntimeError("未找到商品列表的全选复选框（页面可能未加载完，或未登录）。")
     log.append(f"✅ 已点击全选（页面共 {n} 个复选框）")
-    page.wait_for_timeout(1200)
-    _traffic_click_batch_button(page, log)
+    page.wait_for_timeout(600)
+    return _traffic_click_batch_button(page, log)
+
+
+def _traffic_read_list_rows(page):
+    """读主列表行的 (SPU, 站点)（不开抽屉——行文本里直接有），用于黑名单预筛。"""
+    return page.evaluate("""() => {
+      const rows = [...document.querySelectorAll("tr")].filter(tr =>
+        (tr.innerText||'').includes('SPU ID') && !tr.closest("div[class*='Drawer_content']"));
+      return rows.map(tr => {
+        const t = tr.innerText || '';
+        const mSpu = t.match(/SPU ID[：:]\\s*(\\d+)/);
+        const mSite = t.match(/经营站点[：:]\\s*([^\\n]+)/);
+        return {spu: mSpu ? mSpu[1] : '', site: mSite ? mSite[1].trim() : ''};
+      }).filter(x => x.spu);
+    }""")
 
 
 def _traffic_read_rows(page):
@@ -5321,10 +5587,16 @@ def _traffic_analyze_rows(rows, log):
     返回 (decisions, failed)：decisions = {spu: {name,L,eff,floor,price,site}}；不通过的已写记录。
     """
     decisions, failed = {}, []
+    bl_skipped = []  # 命中黑名单跳过的 SPU（记日志用）
     for row in rows:
         _traffic_check_stop()
         spu = row.get("spu") or f"第{row['ri']+1}行"
         site = (row.get("site") or "").rstrip("站").strip()
+        if (spu, site) in TRAFFIC_BLACKLIST:
+            # 已知垃圾（落盘 7 天过期）：不重复分析/写记录，按不通过处理（不进决策、会被取消勾选）
+            bl_skipped.append(spu)
+            failed.append(spu)
+            continue
         price = _parse_price(row.get("priceTxt") or "")
         opts = []
         for o in row.get("opts") or []:
@@ -5339,13 +5611,14 @@ def _traffic_analyze_rows(rows, log):
             log.append(f"⚠️ {tag} 站点未配置核价底价，按不通过处理")
             failed.append(spu)
             rec["status"] = "价格不通过（站点未配置底价）"
-            _traffic_record(rec)
+            _traffic_record_once(rec, f"F:{spu}:{site}")
             continue
         if price is None or not opts:
             log.append(f"⚠️ {tag} 未读到申报价或档位选项，按不通过处理")
             failed.append(spu)
             rec["status"] = "价格不通过（未读到申报价或档位）"
-            _traffic_record(rec)
+            _traffic_record_once(rec, f"F:{spu}:{site}")
+            _traffic_blacklist_add(spu, site, rec["status"])
             continue
         above = [o for o in opts if round(price - o["L"], 2) >= floor]
         if above:
@@ -5357,17 +5630,45 @@ def _traffic_analyze_rows(rows, log):
             log.append(f"❌ {tag} 申报价{price}，最少让价后仍低于底价{floor}超10元，价格不通过")
             failed.append(spu)
             rec["status"] = "价格不通过（低于底价10元及以上）"
-            _traffic_record(rec)
+            _traffic_record_once(rec, f"F:{spu}:{site}")
+            _traffic_blacklist_add(spu, site, rec["status"])
             continue
         decisions[spu] = {"name": pick["name"], "L": pick["L"], "eff": round(price - pick["L"], 2),
                           "floor": floor, "price": price, "site": site}
+    if bl_skipped:
+        log.append(f"⏭ 跳过 {len(set(bl_skipped))} 个黑名单已知垃圾 SPU（不再重复分析）：{','.join(sorted(set(bl_skipped)))}")
     return decisions, failed
 
 
-def _traffic_apply_decisions(page, decisions, log):
-    """在当前抽屉里按 SPU 点选决策的档位（同名优先、让价兜底）。成功的写入记录。返回点中的 SPU 列表。"""
+def _traffic_apply_decisions(page, decisions, log, record=True):
+    """在当前抽屉里按 SPU 点选决策的档位（同名优先、让价兜底）。成功的写入记录。
+    返回 (clicked, missing)：clicked=点中的 SPU 列表；missing=行始终没出现在抽屉里的 SPU
+    （2026-08-08 实测：重开的抽屉偶发只含部分勾选商品，等 8s 也不再加载，只能关抽屉重开）。
+    注意：Temu 列表/抽屉里同一 SPU 可能出现多行（重复行），每行都要点选，但日志和记录只写首次。
+    record=False 用于剔除被拒 SPU 后的重开抽屉重选（记录已在首次写过，不重复写）。"""
     rows = _traffic_read_rows(page) or []
+    # 重开抽屉后行有短暂异步渲染（实测真实行 ~2s 内渲染完），轮询等决策 SPU 的行出现。
+    # 注意：等再久也不会出现的行 = 分析抽屉的过期快照/幻影数据或商品已流出本页
+    # （2026-08-08 查实，见 _traffic_batch_enable 提交条件注释），所以最多等 ~3s 就交回上层判断。
+    missing = set(decisions) - {r.get("spu") for r in rows}
+    for _ in range(6):
+        if not missing:
+            break
+        page.wait_for_timeout(500)
+        page.evaluate("""() => {
+          const drawer = """ + _TRAFFIC_VISIBLE_DRAWER_FIND_JS + """;
+          if (!drawer) return;
+          [...drawer.querySelectorAll('*')]
+            .filter(el => el.scrollHeight > el.clientHeight + 50)
+            .forEach(el => { el.scrollTop = el.scrollHeight; });
+        }""")
+        rows = _traffic_read_rows(page) or []
+        missing = set(decisions) - {r.get("spu") for r in rows}
+    if missing:
+        log.append(f"🔍 抽屉等 3s 后仍缺 {len(missing)} 个 SPU 的行：{','.join(sorted(missing))}（实际读到 {len(rows)} 行）")
+    missing_spus = sorted(missing)
     clicked = []
+    seen = set()
     for row in rows:
         _traffic_check_stop()
         spu = row.get("spu")
@@ -5386,12 +5687,20 @@ def _traffic_apply_decisions(page, decisions, log):
                     break
         tag = f"[{spu} {d['site']}站]"
         if oi is None:
-            log.append(f"⚠️ {tag} 抽屉里未找到「{d['name']}」选项，未选；请人工核对")
+            if spu not in seen:
+                log.append(f"⚠️ {tag} 抽屉里未找到「{d['name']}」选项，未选；请人工核对")
             continue
         r = _traffic_click_option(page, row["ri"], oi)
         if r != "ok":
             page.wait_for_timeout(400)
             r = _traffic_click_option(page, row["ri"], oi)
+        if spu in seen:
+            # 重复行：点选即可，日志/记录已在首次写过
+            if r == "ok":
+                clicked.append(spu)
+            page.wait_for_timeout(50)
+            continue
+        seen.add(spu)
         rec = {"spu": spu, "site": d["site"], "price": d["price"], "floor": d["floor"],
                "level": d["name"], "discount": d["L"], "final": d["eff"]}
         if r == "ok":
@@ -5401,17 +5710,115 @@ def _traffic_apply_decisions(page, decisions, log):
         else:
             log.append(f"⚠️ {tag} 点击「{d['name']}」未确认选中（{r}），请人工核对该行")
             rec["status"] = f"待人工核对（点击未确认：{r}）"
-        _traffic_record(rec)
-        page.wait_for_timeout(150)
-    return clicked
+        if record:
+            _traffic_record_once(rec, f"P:{spu}:{d['site']}")
+        page.wait_for_timeout(50)
+    return clicked, missing_spus
 
 
 def _traffic_submit_drawer(page, log):
     """点抽屉底部「立即加速」提交（含二次确认弹窗）。返回 True/False。
-    档位选完后按钮变可用可能有延迟，轮询等待几秒。"""
-    clicked = False
-    for _ in range(8):
-        clicked = page.evaluate("""() => {
+    档位选完后按钮变可用可能有延迟，轮询等待几秒。
+    提交后必须等抽屉自动关闭才算成功（2026-08-07：JS 点击偶发被吞/提交未生效时
+    抽屉会一直开着，不关就会污染下一组）。
+    若 Temu 报「submit higher custom price, sku:xxx」（该 SKU 要求更高价格），
+    把对应行改选「让价最少」的档位重试（2026-08-07 用户确认）。
+    返回 (ok, rejected_spu)：ok=提交成功；rejected_spu=连最少让价档都被拒的 SPU
+    （调用方应把它从本组剔除后重试），无法定位时为 None。"""
+    def drawer_open():
+        return page.evaluate(_TRAFFIC_HAS_VISIBLE_DRAWER_JS)
+
+    def click_confirm_dialog():
+        """提交确认框「确认要批量开启流量加速器吗」→ 点「确认」。"""
+        page.evaluate("""() => {
+      const els = [...document.querySelectorAll("[class*='MDL'], [role='dialog'], [class*='Modal'], [class*='modal']")];
+      for (const el of els) {
+        const r = el.getBoundingClientRect();
+        if (r.width < 10 || r.height < 10) continue;
+        if (el.querySelector("div[class*='Drawer_content']") || el.closest("div[class*='Drawer_content']")) continue;
+        const t = el.innerText || '';
+        if (!t.includes('批量开启流量加速器')) continue;
+        const b = [...el.querySelectorAll('button')].find(b => /确定|确认/.test((b.innerText||'').trim()));
+        if (b) { b.click(); return true; }
+      }
+      return false;
+    }""")
+
+    def read_price_error():
+        """读页面上的「submit higher custom price, sku:xxx」报错，返回 sku 或 None。"""
+        return page.evaluate("""() => {
+      const m = (document.body.innerText||'').match(/submit higher custom price[，,\\s]*sku[:：]\\s*(\\d+)/i);
+      return m ? m[1] : null;
+    }""")
+
+    def switch_to_min_discount(sku, spu=None):
+        """把报错 SKU 对应的抽屉行改选让价最少的档位（价格最高）。定位行的四级办法：
+        ① 报错元素就近 closest('tr')（行内报错）；② 行 innerText 含 sku；③ 行 innerHTML 含 sku；
+        ④ 接口映射 sku→SPU 后按 SPU 找行。返回 'ok' / 'already'（已是最少让价）/ 'not-found'。"""
+        return page.evaluate("""(args) => {
+          const drawer = """ + _TRAFFIC_VISIBLE_DRAWER_FIND_JS + """;
+          if (!drawer) return 'not-found';
+          const rows = [...drawer.querySelectorAll("tr")].filter(tr => (tr.innerText||'').includes('SPU ID'));
+          let tr = null;
+          // ① 报错元素就近找行
+          const errEl = [...drawer.querySelectorAll('*')].find(el =>
+            el.children.length === 0 && (el.textContent||'').includes('submit higher custom price'));
+          if (errEl) tr = errEl.closest('tr');
+          // ② 行可见文本含 sku
+          if (!tr) tr = rows.find(r => (r.innerText||'').includes(args.sku));
+          // ③ 行 HTML（含隐藏属性/未渲染文本）含 sku
+          if (!tr) tr = rows.find(r => (r.innerHTML||'').includes(args.sku));
+          // ④ 接口映射出的 SPU 找行
+          if (!tr && args.spu) tr = rows.find(r => (r.innerText||'').includes(args.spu));
+          if (!tr) return 'not-found';
+          const tds = [...tr.querySelectorAll('td')];
+          const optCell = tds.find(td => {
+            const t = td.innerText || '';
+            return !!td.querySelector("label[class*='RD_outerWrapper']") && t.includes('¥');
+          });
+          if (!optCell) return 'not-found';
+          const lbs = [...optCell.querySelectorAll("label[class*='RD_outerWrapper']")];
+          let best = null, bestL = null;
+          for (const lb of lbs) {
+            const m = (lb.innerText||'').match(/¥\\s*([\\d.,]+)/);
+            if (!m) continue;
+            const L = parseFloat(m[1].replace(/,/g, ''));
+            if (bestL === null || L < bestL) { bestL = L; best = lb; }
+          }
+          if (!best) return 'not-found';
+          const inp = best.querySelector('input');
+          if (inp && inp.checked) return 'already';
+          best.click();
+          const inp2 = best.querySelector('input');
+          return (inp2 && inp2.checked) ? 'ok' : 'clicked-unverified';
+        }""", {"sku": sku, "spu": spu or ""})
+
+    def dump_row_diagnosis():
+        """映射不到行时，把报错元素位置和前两行的 HTML 片段写日志，供下一步改进映射。"""
+        try:
+            infos = page.evaluate("""() => {
+              const out = [];
+              const errEls = [...document.querySelectorAll('body *')].filter(el =>
+                el.children.length === 0 && (el.textContent||'').includes('submit higher custom price'));
+              out.push('报错元素数=' + errEls.length + errEls.slice(0,2).map(el =>
+                ' tag=' + el.tagName + ' cls=' + (el.className||'').toString().slice(0,60) +
+                ' inDrawer=' + !!el.closest("div[class*='Drawer_content']") +
+                ' closestTr=' + (el.closest('tr') ? 'Y' : 'N')).join('｜'));
+              const drawer = """ + _TRAFFIC_VISIBLE_DRAWER_FIND_JS + """;
+              if (drawer) {
+                const rows = [...drawer.querySelectorAll("tr")].filter(tr => (tr.innerText||'').includes('SPU ID'));
+                rows.slice(0, 2).forEach((tr, i) =>
+                  out.push('行' + i + ' HTML: ' + (tr.innerHTML||'').replace(/\\s+/g, ' ').slice(0, 500)));
+              }
+              return out;
+            }""")
+            for info in infos:
+                log.append("🔍 行诊断: " + info)
+        except Exception:
+            pass
+
+    def click_submit_js():
+        return page.evaluate("""() => {
           const drawer = """ + _TRAFFIC_VISIBLE_DRAWER_FIND_JS + """;
           if (!drawer) return 'no-drawer';
           const b = [...drawer.querySelectorAll("button")]
@@ -5421,43 +5828,104 @@ def _traffic_submit_drawer(page, log):
           b.click();
           return 'clicked';
         }""")
-        if clicked == 'clicked':
+
+    def click_submit_real():
+        """Playwright 真实点击「立即加速」（isTrusted 校验通过，实测最可靠）。"""
+        try:
+            page.locator("div[class*='Drawer_content'] button", has_text="立即加速").last.click(timeout=4000)
+            return True
+        except Exception:
+            return False
+
+    # 先等「立即加速」可用并点击（优先真实点击：JS 点击常被 isTrusted 吞掉，2026-08-07 实测几乎全靠真实点击兜底）
+    clicked = False
+    for _ in range(8):
+        if click_submit_real() or click_submit_js() == 'clicked':
+            clicked = True
             break
         page.wait_for_timeout(1000)
-    if clicked != 'clicked':
-        log.append(f"⚠️ 未找到可点的「立即加速」按钮（{clicked}），请人工提交")
-        return False
+    if not clicked:
+        log.append("⚠️ 未找到可点的「立即加速」按钮，请人工提交")
+        return False, None
     log.append("✅ 已自动点击「立即加速」提交")
-    page.wait_for_timeout(2500)
-    # 可能有二次确认弹窗（确定/确认），有就点掉
-    page.evaluate("""() => {
-      const b = [...document.querySelectorAll("button")].find(b => {
-        const t = (b.innerText||'').trim();
-        return (t === '确定' || t === '确认') && b.getBoundingClientRect().width > 0;
-      });
-      if (b) b.click();
-    }""")
-    page.wait_for_timeout(1500)
-    return True
+
+    retried_real = False
+    for _ in range(16):  # 每轮：等 1s → 处理确认框 → 抽屉关了=成功；没关看是不是价格报错
+        page.wait_for_timeout(1000)
+        click_confirm_dialog()
+        if not drawer_open():
+            return True, None
+        sku = read_price_error()
+        if sku:
+            spu = TRAFFIC_SKU_MAP.get(sku)
+            r = switch_to_min_discount(sku, spu)
+            if r in ('ok', 'clicked-unverified'):
+                via = f"（映射到 SPU {spu}）" if spu else ""
+                log.append(f"⚠️ Temu 要求 sku {sku}{via} 更高价格，已改选让价最少档，重试提交")
+                page.wait_for_timeout(800)
+                if not click_submit_real():
+                    click_submit_js()
+            elif r == 'already':
+                log.append(f"⚠️ sku {sku} 已是让价最少档仍被 Temu 拒绝，需从本组剔除")
+                return False, spu
+            else:
+                log.append(f"⚠️ Temu 拒绝 sku {sku} 但抽屉里找不到对应行，本组按未提交处理")
+                dump_row_diagnosis()
+                return False, None
+        elif not retried_real:
+            # 没有价格报错但抽屉没关：点击可能被吞了，再补一次真实点击
+            retried_real = True
+            log.append("⚠️ 提交后抽屉未关闭，用真实点击重试「立即加速」…")
+            click_submit_real()
+    log.append("⚠️ 提交后抽屉始终未关闭，按未提交处理（避免污染下一组）")
+    return False, None
 
 
 def _traffic_batch_enable(page, log):
-    """每页流程（2026-08-07 用户确认）：全选 → 开抽屉 → 按核价底价规则分析 →
+    """每页流程（2026-08-07 用户确认；2026-08-08 加黑名单预筛）：
+    先不开抽屉读列表行做黑名单预筛 → 只勾选非垃圾行 → 开抽屉按核价底价规则分析 →
     全部通过：直接选档提交；部分通过：关抽屉 → 只勾选通过的商品 → 重开抽屉选档提交；
     全部不通过：跳过本页。返回 (passed, failed, submitted)。"""
-    _traffic_open_batch_drawer(page, log)
+    # 黑名单预筛（2026-08-08 用户确认）：垃圾行永远不离开列表，每次全选开抽屉分析一遍
+    # 要烧 20~35s；列表行文本直接带 SPU+站点，不开抽屉就能过滤——整页垃圾 ~2s 跳过，
+    # 部分垃圾则只勾选非垃圾行的 SPU（垃圾行不进抽屉，省掉关/重开一整轮）。
+    listed = _traffic_read_list_rows(page) or []
+    if listed:
+        fresh = [x for x in listed
+                 if (x["spu"], (x["site"] or "").rstrip("站").strip()) not in TRAFFIC_BLACKLIST]
+        if not fresh:
+            log.append(f"🗑 本页 {len(listed)} 行全部命中黑名单（已知垃圾），跳过本页")
+            return [], [x["spu"] for x in listed], False
+        if len(fresh) < len(listed):
+            log.append(f"ℹ️ 本页 {len(listed)} 行，{len(listed) - len(fresh)} 行命中黑名单不勾选，只勾选其余 {len(fresh)} 行开抽屉")
+        _traffic_select_spus(page, sorted({x["spu"] for x in fresh}), log)
+        if not _traffic_click_batch_button(page, log):
+            log.append("⏸ 本页无可开启商品（均已开启/调价中），跳过提交")
+            return [], [], False
+    elif not _traffic_open_batch_drawer(page, log):  # 列表行读不到（结构变化兜底）：走全选流程
+        log.append("⏸ 本页无可开启商品（均已开启/调价中），跳过提交")
+        return [], [], False
     rows = _traffic_read_rows(page)
     if not rows:
         raise RuntimeError("抽屉里未读到任何商品行。")
     log.append(f"ℹ️ 抽屉内共 {len(rows)} 个商品，开始按核价底价规则分析…")
     decisions, failed = _traffic_analyze_rows(rows, log)
+    # 历史上被 Temu 拒绝（要求更高价格）的 SPU 直接跳过：再提交也只会再被拒，白跑剔除流程
+    rej_skip = [s for s in decisions if s in TRAFFIC_REJECTED_SPUS]
+    if rej_skip:
+        for s in rej_skip:
+            decisions.pop(s)
+        failed += rej_skip
+        log.append(f"⏭ 跳过 {len(rej_skip)} 个曾被 Temu 拒绝的 SPU：{','.join(rej_skip)}（不再尝试提交）")
 
     if decisions and failed:
         log.append(f"ℹ️ 本页 {len(decisions)} 个通过 / {len(failed)} 个不通过：只勾选通过的商品重新打开抽屉…")
         st = _traffic_page_state(page)
         _traffic_close_drawer(page, log, target_page=st["pageNo"])
         _traffic_select_spus(page, list(decisions.keys()), log)
-        _traffic_click_batch_button(page, log)
+        if not _traffic_click_batch_button(page, log):
+            log.append("⚠️ 重开抽屉时提示商品调价中，本页改为人工处理")
+            return [], failed, False
     elif not decisions:
         log.append("❌ 价格不通过 " + str(len(failed)) + " 个：" + ",".join(failed))
         log.append("⏸ 本页全部价格不通过，跳过提交")
@@ -5465,16 +5933,48 @@ def _traffic_batch_enable(page, log):
         _traffic_close_drawer(page, log, target_page=st["pageNo"])
         return [], failed, False
 
-    passed = _traffic_apply_decisions(page, decisions, log)
-    log.append("✅ 价格通过 " + str(len(passed)) + " 个：" + ",".join(passed))
-    log.append("❌ 价格不通过 " + str(len(failed)) + " 个：" + (",".join(failed) if failed else "无"))
-
-    submitted = False
-    if passed and len(passed) == len(decisions):
-        submitted = _traffic_submit_drawer(page, log)
-    elif passed:
-        log.append("⏸ 有商品未能选中档位，本页不自动提交，请人工核对后处理")
-    return passed, failed, submitted
+    passed = []
+    excluded = []  # 被 Temu 提交校验拒绝（要求更高价格）、从本组剔除的 SPU
+    for attempt in range(6):
+        passed, missing = _traffic_apply_decisions(page, decisions, log, record=(attempt == 0))
+        log.append("✅ 价格通过 " + str(len(passed)) + " 个：" + ",".join(passed))
+        log.append("❌ 价格不通过 " + str(len(failed)) + " 个：" + (",".join(failed) if failed else "无"))
+        # 提交条件：当前抽屉里真实存在的决策行全部点中（clicked 按行计、decisions 按 SPU 去重，用集合判断）。
+        # 缺行的 SPU 不阻塞提交（2026-08-08 查实：深页分析抽屉会拿到过期快照/幻影数据——
+        # 同一 SPU+站点行连价格都一字不差地出现在多个页码的分析里，甚至包含已提交成功的商品；
+        # 只有按当前真实勾选重开的抽屉可信。幻影/已漂走的 SPU 等后续轮次遇到真身再处理）。
+        if missing:
+            log.append(f"ℹ️ {len(missing)} 个 SPU 不在当前抽屉（分析快照过期或已流出本页），按实际在抽屉的 {len(passed)} 个处理：{','.join(sorted(missing))}")
+        if not (passed and set(passed) >= (set(decisions.keys()) - set(missing))):
+            if passed:
+                log.append("⏸ 有商品未能选中档位，本页不自动提交，请人工核对后处理")
+            return passed, failed, False
+        submitted, rej = _traffic_submit_drawer(page, log)
+        if submitted:
+            return passed, failed, True
+        if not rej or rej in excluded or rej not in decisions:
+            return passed, failed, False
+        # 连最少让价档都被 Temu 拒绝的 SPU：剔除出本组，剩余商品重开抽屉重试提交；
+        # 并记入 TRAFFIC_REJECTED_SPUS，后续页/后续轮次分析阶段直接跳过，不再浪费剔除流程
+        excluded.append(rej)
+        TRAFFIC_REJECTED_SPUS.add(rej)
+        failed.append(rej)
+        d0 = decisions.get(rej) or {}
+        _traffic_blacklist_add(rej, d0.get("site", ""), "Temu拒绝（要求更高价格，已剔除）")
+        _traffic_record({"spu": rej, "site": d0.get("site", ""), "price": d0.get("price", ""),
+                         "floor": d0.get("floor", ""), "level": "", "discount": "", "final": "",
+                         "status": "Temu拒绝（要求更高价格，已剔除）"})
+        decisions = {k: v for k, v in decisions.items() if k not in excluded}
+        log.append(f"⚠️ SPU {rej} 被 Temu 拒绝（要求更高价格），从本组剔除，剩余 {len(decisions)} 个重试提交")
+        if not decisions:
+            return passed, failed, False
+        st = _traffic_page_state(page)
+        _traffic_close_drawer(page, log, target_page=st["pageNo"])
+        _traffic_select_spus(page, list(decisions.keys()), log)
+        if not _traffic_click_batch_button(page, log):
+            log.append("⚠️ 重开抽屉时提示商品调价中，本组剩余改为人工处理")
+            return passed, failed, False
+    return passed, failed, False
 
 
 def _traffic_apply_pending_filter(page, log):
@@ -5502,7 +6002,7 @@ def _traffic_apply_pending_filter(page, log):
 
 
 def _traffic_page_state(page):
-    """主列表状态：总条数、当前页码、下一页是否可用、可见复选框数、抽屉是否开着。"""
+    """主列表状态：总条数、当前页码、上/下一页是否可用、可见复选框数、抽屉是否开着、每页条数。"""
     return page.evaluate("""() => {
       const drawerEl = [...document.querySelectorAll("div[class*='Drawer_content']")].find(d => {
         const r = d.getBoundingClientRect();
@@ -5516,11 +6016,15 @@ def _traffic_page_state(page):
       const act = document.querySelector("li[class*='PGT_pagerItemActive']");
       const next = document.querySelector("li[class*='PGT_next']");
       const nextDisabled = !next || (next.className||'').toLowerCase().includes('disab');
+      const prev = document.querySelector("li[class*='PGT_prev']");
+      const prevDisabled = !prev || (prev.className||'').toLowerCase().includes('disab');
       const boxes = [...document.querySelectorAll("[class*='CBX_outerWrapper']")]
         .filter(el => el.getBoundingClientRect().width > 0).length;
+      const sizeIpt = document.querySelector("[class*='PGT_sizeSelect'] input");
+      const size = sizeIpt ? (parseInt(sizeIpt.value, 10) || 30) : 30;
       return {total: t ? parseInt(t[1].replace(/,/g,'')) : -1,
               pageNo: act ? parseInt((act.innerText||'').trim(), 10) : -1,
-              nextDisabled, boxes, drawerOpen};
+              nextDisabled, prevDisabled, boxes, drawerOpen, size};
     }""")
 
 
@@ -5534,6 +6038,84 @@ def _traffic_goto_page(page, target, log):
         page.wait_for_timeout(1800)
     cur = _traffic_page_state(page)["pageNo"]
     log.append(f"ℹ️ 已回到第 {cur} 页" + ("" if cur == target else f"（目标第 {target} 页，未能到达，从当前页继续）"))
+
+
+def _traffic_list_signature(page):
+    """主列表前 5 行的 SPU 签名：用于判断跳页后行内容是否真的刷新了。
+    实测页码先变、旧页的行（含勾选状态）会残留 ~1-3s 才被替换，只看页码会在旧行上误操作。"""
+    try:
+        return page.evaluate("""() => {
+      const rows = [...document.querySelectorAll("tr")].filter(tr =>
+        (tr.innerText||'').includes('SPU ID') && !tr.closest("div[class*='Drawer_content']"));
+      return rows.slice(0, 5).map(tr => {
+        const m = (tr.innerText||'').match(/SPU ID[：:]\\s*(\\d+)/);
+        return m ? m[1] : '';
+      }).join(',');
+    }""")
+    except Exception:
+        return ""
+
+
+def _traffic_goto_page_num(page, target, log):
+    """跳到指定页码：优先直接点目标页码数字；点不到就点「不超过目标的最大可见页码」
+    大步靠近（分页器只渲染当前页附近的页码），最后才用上/下一页步进。返回实际到达的页码。"""
+    miss = 0
+    for _ in range(200):
+        if TRAFFIC_STOP.is_set():
+            break
+        st = _traffic_page_state(page)
+        cur = st["pageNo"]
+        if cur < 1:
+            miss += 1
+            if miss >= 10:
+                log.append(f"⚠️ 列表 ~15 秒未加载（可能网络异常），放弃跳转到第 {target} 页")
+                break
+            page.wait_for_timeout(1500)
+            continue
+        miss = 0
+        if cur == target or (cur < target and st["nextDisabled"]) or (cur > target and st["prevDisabled"]):
+            break
+        prev_sig = _traffic_list_signature(page)
+        page.evaluate("""(args) => {
+          const items = [...document.querySelectorAll("li[class*='PGT_pagerItem']")];
+          const nums = items
+            .map(li => ({li, n: parseInt((li.innerText||'').trim(), 10)}))
+            .filter(x => !isNaN(x.n));
+          const exact = nums.find(x => x.n === args.target);
+          if (exact) { exact.li.click(); return 'num'; }
+          if (args.target > args.cur) {
+            const cand = nums.filter(x => x.n > args.cur && x.n <= args.target)
+              .sort((a, b) => b.n - a.n)[0];
+            if (cand) { cand.li.click(); return 'hop'; }
+            const n = document.querySelector("li[class*='PGT_next']");
+            if (n) { n.click(); return 'step'; }
+          } else {
+            const cand = nums.filter(x => x.n < args.cur && x.n >= args.target)
+              .sort((a, b) => a.n - b.n)[0];
+            if (cand) { cand.li.click(); return 'hop'; }
+            const p = document.querySelector("li[class*='PGT_prev']");
+            if (p) { p.click(); return 'step'; }
+          }
+          return null;
+        }""", {"target": target, "cur": cur})
+        # 轮询等页码变化，变了就立刻继续，不吃满固定等待
+        changed = False
+        for _ in range(6):
+            page.wait_for_timeout(300)
+            if _traffic_page_state(page)["pageNo"] != cur:
+                changed = True
+                break
+        if changed:
+            # 页码变了 ≠ 行内容刷新了（2026-08-08 实测旧页行连勾选状态残留 ~1-3s），
+            # 等行签名变化再走，否则预筛/勾选会打在旧页的过期行上（点了 24 个实际勾中 0 个）
+            for _ in range(14):
+                if _traffic_list_signature(page) != prev_sig:
+                    break
+                page.wait_for_timeout(300)
+    cur = _traffic_page_state(page)["pageNo"]
+    if cur != target:
+        log.append(f"⚠️ 未能到达第 {target} 页（当前第 {cur} 页），从当前页继续")
+    return cur
 
 
 def _traffic_drawer_confirm_dialog_js():
@@ -5617,13 +6199,20 @@ def _traffic_close_drawer(page, log, target_page=None):
             page.wait_for_timeout(1500)
         return clicked
 
+    def wait_closed(max_ms=2500):
+        """轮询等抽屉关闭，关了就立刻返回，不吃满固定等待。"""
+        for _ in range(max_ms // 250):
+            if not drawer_open():
+                return True
+            page.wait_for_timeout(250)
+        return not drawer_open()
+
     # ① 真实鼠标点击（不加 force：Playwright 会等按钮稳定、滚动进视口再点，最接近手动点击）
     try:
         page.locator("div[class*='Drawer_content'] button", has_text="取消").last.click(timeout=6000)
-        page.wait_for_timeout(2000)
     except Exception:
         pass
-    if not drawer_open():
+    if wait_closed():
         return True
     handle_confirm()
     if not drawer_open():
@@ -5634,8 +6223,7 @@ def _traffic_close_drawer(page, log, target_page=None):
       const cancel = drawer && [...drawer.querySelectorAll("button")].find(b => (b.innerText||'').trim() === '取消');
       if (cancel) cancel.click();
     }""")
-    page.wait_for_timeout(2000)
-    if not drawer_open():
+    if wait_closed():
         return True
     handle_confirm()
     if not drawer_open():
@@ -5682,15 +6270,71 @@ def _traffic_select_spus(page, spus, log):
     log.append(f"✅ 已按通过清单重新勾选：本页 {r['matched']} 行，调整 {r['toggled']} 个复选框")
     if r["matched"] == 0:
         raise RuntimeError("主列表未加载出商品行，无法按通过清单勾选。")
-    page.wait_for_timeout(1000)
+    page.wait_for_timeout(400)
+    # 勾选状态校验（2026-08-08 排障用）：区分「勾选本身错」和「重开抽屉快照错」
+    chk = page.evaluate("""() => {
+      const rows = [...document.querySelectorAll("tr")].filter(tr =>
+        (tr.innerText||'').includes('SPU ID') && !tr.closest("div[class*='Drawer_content']"));
+      let on = 0;
+      for (const tr of rows) {
+        const lb = tr.querySelector("label[class*='CBX_outerWrapper']");
+        if (lb && lb.getAttribute('data-checked') === 'true') on++;
+      }
+      return {on, total: rows.length};
+    }""")
+    log.append(f"   勾选校验：主列表 {chk['total']} 行中已勾 {chk['on']} 行")
     return r
 
 
-def _traffic_loop(page, log):
-    """分页主循环：筛选待开启 → 每页 全选+批量开启+按规则选档位 → 全过自动提交 → 翻下一页，直到最后。
+def _traffic_set_id_query(page, text, log, tag=""):
+    """把 text 填进「商品ID查询」输入框（placeholder 含「多个查询」）并点「查询」。
+    text 为空串 = 清空查询恢复完整列表。React 受控输入框必须用原生 setter + input 事件。"""
+    r = page.evaluate("""(text) => {
+      const ipt = [...document.querySelectorAll('input')].find(i => (i.placeholder||'').includes('多个查询'));
+      if (!ipt) return 'no-input';
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(ipt, text);
+      ipt.dispatchEvent(new Event('input', {bubbles: true}));
+      ipt.dispatchEvent(new Event('change', {bubbles: true}));
+      const btn = [...document.querySelectorAll('button')].find(b => (b.innerText||'').trim() === '查询');
+      if (!btn) return 'no-btn';
+      btn.click();
+      return 'ok';
+    }""", text)
+    if r != 'ok':
+        raise RuntimeError(f"商品ID查询操作失败（{r}），页面结构可能变化。")
+    page.wait_for_timeout(3000)
+    if tag:
+        log.append(tag)
 
-    翻页策略（2026-08-07 用户确认）：已开启商品不会离开列表，每轮处理完（无论是否提交）
-    都直接点「下一页」，绝不留在当前页重复全选（会触发「部分商品不可开启」弹窗）。
+
+def _traffic_cleanup_zombies(page, log, threshold=15):
+    """僵尸抽屉（关闭后滑出屏幕但留在 DOM）会随开窗次数无限堆积、拖慢页面，
+    堆积超过 threshold 个时刷新页面清理（刷新是唯一可靠的清理方式），刷新后重选「待开启」筛选。"""
+    try:
+        n = page.evaluate("() => document.querySelectorAll(\"div[class*='Drawer_content']\").length")
+    except Exception:
+        return
+    if not n or n <= threshold:
+        return
+    log.append(f"🧹 DOM 中已堆积 {n} 个抽屉元素，刷新页面清理…")
+    try:
+        page.reload(timeout=30000)
+    except Exception:
+        pass
+    page.wait_for_timeout(5000)
+    _traffic_apply_pending_filter(page, log)
+
+
+def _traffic_loop(page, log):
+    """主循环（2026-08-08 用户确认改为顺序逐页，取代 1/5/3/2/4 交错 + 窗口前移）：
+
+    按 1→2→3→4→… 顺序逐页处理，越过末页后回第 1 页开始下一趟；
+    连续两趟全列表无提交 → 收工。垃圾页有黑名单预筛兜底（~2s 跳过），
+    不再需要交错回访/窗口前移来绕开垃圾；顺序页码也让抽屉数据紧跟当前页，
+    减少深页分析抽屉拿到过期快照（幻影数据）的概率。
+    每页流程（_traffic_batch_enable）：黑名单预筛 → 勾选非垃圾行开抽屉 → 只分析 →
+    全通过直接选档提交 / 部分通过关抽屉重勾重开后选档提交（部分提交）。
     返回 (passed, failed, submitted_pages, manual_pages)。
     """
     all_passed, all_failed = [], []
@@ -5698,9 +6342,12 @@ def _traffic_loop(page, log):
     manual_pages = 0
     _traffic_apply_pending_filter(page, log)
 
-    last_sig = None
-    no_progress = 0
-    for rnd in range(1, 900):
+    target = 0           # 顺序逐页：每轮 +1
+    load_fails = 0
+    junk_pages = 0       # 整页都是滞留垃圾（价格不通过/被拒/读不出价/黑名单），不算「需人工」
+    sweep_submitted = False  # 本趟扫描（第 1 页 → 越过末页）是否有提交
+    empty_sweeps = 0
+    for rnd in range(1, 2000):
         if TRAFFIC_STOP.is_set():
             log.append("⏹ 收到停止信号，已安全停止（已提交的页不受影响）。")
             break
@@ -5708,69 +6355,135 @@ def _traffic_loop(page, log):
         if st["drawerOpen"]:
             _traffic_close_drawer(page, log, target_page=st["pageNo"])
             st = _traffic_page_state(page)
-        sig = (st["total"], st["pageNo"], st["boxes"], st["drawerOpen"])
-        if sig == last_sig:
-            no_progress += 1
-            if no_progress >= 3:
-                log.append("❌ 连续多轮页面状态无变化（列表未加载或页面结构可能已变）。循环停止，请刷新页面后重试。")
-                break
-        else:
-            no_progress = 0
-        last_sig = sig
-        log.append(f"—— 第 {rnd} 轮（当前第 {st['pageNo']} 页，待开启共 {st['total']} 条）——")
+        _traffic_cleanup_zombies(page, log)
         if st["total"] == 0:
-            log.append("✅ 没有待开启的商品了，循环结束")
+            # 列表接口抽风会间歇返回 0 条（2026-08-07 实测），刷新重查确认是真的空了再收工
+            empty_confirmed = True
+            for _ in range(2):
+                log.append("⏳ 读到 0 条，刷新页面确认列表是否真的空了…")
+                try:
+                    page.reload(timeout=30000)
+                except Exception:
+                    pass
+                page.wait_for_timeout(6000)
+                _traffic_apply_pending_filter(page, log)
+                page.wait_for_timeout(3000)
+                if _traffic_page_state(page)["total"] != 0:
+                    empty_confirmed = False
+                    break
+            if empty_confirmed:
+                log.append("✅ 没有待开启的商品了，循环结束")
+                break
+            st = _traffic_page_state(page)
+        if st["total"] < 0 or st["size"] < 1:
+            log.append("❌ 未读到列表总数（页面可能未加载完）。循环停止，请刷新页面后重试。")
             break
-        if st["boxes"] == 0:
-            # 当前页读不到商品（加载异常或结构变化），停下来人工检查，不回退页码
-            log.append("❌ 当前页未读到商品列表（可能未加载完成）。循环停止，请刷新页面后重试。")
-            break
+        tp = -(-st["total"] // st["size"])  # 总页数，向上取整
+        if target + 1 > tp:
+            # 一趟扫描越过末页：这趟有提交 → 回第 1 页继续；连续两趟全列表无提交 → 收工
+            if sweep_submitted:
+                empty_sweeps = 0
+            else:
+                empty_sweeps += 1
+                if empty_sweeps >= 2:
+                    log.append("✅ 连续两趟全列表扫描都没有可提交的商品，循环结束")
+                    break
+                log.append("🔁 整趟扫描没有提交，回到第 1 页再扫一趟确认…")
+            sweep_submitted = False
+            target = 0
+        target += 1
+        log.append(f"—— 第 {rnd} 轮：处理第 {target} 页（待开启共 {st['total']} 条）——")
 
         try:
-            passed, failed, submitted = _traffic_batch_enable(page, log)
+            _traffic_check_stop()
+            _traffic_goto_page_num(page, target, log)
+            pno = target
+            # 列表未加载（Temu 限流/网络异常）时主动恢复：点「查询」→ 刷新页面 → 兜底等待
+            loaded = False
+            for attempt in range(3):
+                stp = _traffic_page_state(page)
+                if stp["pageNo"] >= 1 and stp["boxes"] > 1:
+                    loaded = True
+                    break
+                if attempt == 0:
+                    log.append(f"⏳ 第 {pno} 页列表未加载，点「查询」重新触发（1/3）…")
+                    try:
+                        _traffic_set_id_query(page, "", log)  # 空串 = 清空查询条件，纯重新触发查询
+                    except Exception:
+                        page.evaluate("""() => {
+                          const b = [...document.querySelectorAll('button')].find(b => (b.innerText||'').trim() === '查询');
+                          if (b) b.click();
+                        }""")
+                    page.wait_for_timeout(12000)
+                    # 点「查询」后列表会重置回第 1 页，必须跳回原页码
+                    _traffic_goto_page_num(page, pno, log)
+                    page.wait_for_timeout(3000)
+                elif attempt == 1:
+                    log.append(f"⏳ 第 {pno} 页列表仍未加载，刷新页面重试（2/3）…")
+                    try:
+                        page.reload(timeout=30000)
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(6000)
+                    try:
+                        _traffic_apply_pending_filter(page, log)
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(3000)
+                    _traffic_goto_page_num(page, pno, log)
+                    page.wait_for_timeout(5000)
+                else:
+                    log.append(f"⏳ 第 {pno} 页列表未加载，等待 30 秒重试（3/3）…")
+                    page.wait_for_timeout(30000)
+            if not loaded:
+                load_fails += 1
+                if load_fails >= 3:
+                    # 连续加载失败 = 大概率被限流，暂停 3 分钟等解除，不再空扫
+                    log.append("⏸ 连续 3 页加载失败，暂停 3 分钟等限流解除…")
+                    for _ in range(18):
+                        _traffic_check_stop()
+                        page.wait_for_timeout(10000)
+                    load_fails = 0
+                else:
+                    log.append(f"⚠️ 第 {pno} 页列表持续未加载（可能被限流），跳过本页")
+                continue
+            load_fails = 0
+            try:
+                passed, failed, submitted = _traffic_batch_enable(page, log)
+            except _TrafficStopped:
+                raise
+            except Exception as e:
+                log.append(f"❌ 第 {pno} 页处理异常：{e}，跳过本页")
+                try:
+                    _traffic_close_drawer(page, log, target_page=pno)
+                except Exception:
+                    pass
+                continue
+            all_passed += passed
+            all_failed += failed
+            if submitted:
+                submitted_pages += 1
+                sweep_submitted = True
+            else:
+                _traffic_close_drawer(page, log, target_page=pno)
+                if passed:
+                    manual_pages += 1   # 有通过的商品但没提交成功，需要人工核对
+                else:
+                    junk_pages += 1     # 整页都是滞留垃圾（价格不通过/被拒/读不出价）
+            # 页间间隔，降低触发 Temu 限流的频率
+            page.wait_for_timeout(2500)
         except _TrafficStopped:
             log.append("⏹ 收到停止信号，已安全停止（已提交的页不受影响）。")
             try:
-                _traffic_close_drawer(page, log, target_page=st["pageNo"])
+                _traffic_close_drawer(page, log)
             except Exception:
                 pass
             break
-        except Exception as e:
-            log.append(f"❌ 本轮处理异常：{e}。循环停止，请人工检查后从页面继续。")
-            break
-        all_passed += passed
-        all_failed += failed
-        if submitted:
-            submitted_pages += 1
-        else:
-            manual_pages += 1
-
-        if not submitted:
-            # 未提交时抽屉还开着，先关掉；提交成功后抽屉会自己关，跳过避免误触发刷新兜底
-            _traffic_close_drawer(page, log, target_page=st["pageNo"])
-        page.wait_for_timeout(1500)
-        # 已开启的商品不会离开列表，所以无论本页是否提交，都直接翻下一页，
-        # 避免留在当前页重复全选到已开启商品（会触发「部分商品不可开启」弹窗）
-        st2 = _traffic_page_state(page)
-        if st2["nextDisabled"]:
-            log.append("✅ 已到最后一页，循环结束")
-            break
-        ok = page.evaluate("""() => {
-          const n = document.querySelector("li[class*='PGT_next']");
-          if (!n) return false;
-          n.click();
-          return true;
-        }""")
-        if not ok:
-            log.append("⚠️ 未找到「下一页」按钮，循环结束")
-            break
-        log.append(f"➡️ 翻到第 {st2['pageNo'] + 1} 页继续")
-        page.wait_for_timeout(2500)
     else:
-        log.append("⚠️ 已达最大轮数上限（900），循环停止")
+        log.append("⚠️ 已达最大轮数上限（2000），循环停止")
 
     log.append(f"📊 汇总：自动提交 {submitted_pages} 页；未提交（需人工）{manual_pages} 页；"
-               f"价格通过 {len(all_passed)} 个；价格不通过 {len(all_failed)} 个")
+               f"整页垃圾跳过 {junk_pages} 页；价格通过 {len(all_passed)} 个；价格不通过 {len(all_failed)} 个")
     log.append(f"📄 每条明细（SPU/站点/所选价格等）已记录到 {TRAFFIC_RECORD_FILE}")
     return all_passed, all_failed, submitted_pages, manual_pages
 
@@ -5813,6 +6526,38 @@ def _traffic_run(task_id):
             log.append(f"ℹ️ 页面 URL：{page.url}")
             page.wait_for_timeout(800)
 
+            def _sku_map_sniffer(resp):
+                """从列表接口的 JSON 响应里挖 skuId→goodsId(SPU) 映射
+                （提交报错「submit higher custom price」只给 sku，抽屉行只有 SPU，靠它对应）。"""
+                try:
+                    if 'json' not in (resp.headers.get('content-type') or ''):
+                        return
+                    body = resp.json()
+                except Exception:
+                    return
+
+                def walk(o, ctx_goods=None):
+                    if isinstance(o, dict):
+                        # productId = 页面展示的「SPU ID」（goodsId 是内部货号，对不上行）
+                        g = (o.get('productId') or o.get('spuId') or o.get('goodsId') or ctx_goods)
+                        skl = o.get('productSkuIdList') or o.get('skuIdList')
+                        if g and isinstance(skl, list):
+                            for s in skl:
+                                TRAFFIC_SKU_MAP[str(s)] = str(g)
+                        sku = o.get('skuId') or o.get('sku_id')
+                        if sku and g:
+                            TRAFFIC_SKU_MAP[str(sku)] = str(g)
+                        for v in o.values():
+                            walk(v, g)
+                    elif isinstance(o, list):
+                        for v in o:
+                            walk(v, ctx_goods)
+                walk(body)
+            try:
+                page.on("response", _sku_map_sniffer)
+            except Exception:
+                pass
+
             try:
                 passed, failed, sub_pages, manual_pages = _traffic_loop(page, log)
             except Exception as e:
@@ -5846,10 +6591,21 @@ def api_traffic_start():
     """② 用户点「好了」：启动后台接管任务；立即返回 task_id，前端轮询 /api/traffic/status。"""
     import uuid
     TRAFFIC_STOP.clear()
+    TRAFFIC_REJECTED_SPUS.clear()
+    TRAFFIC_RECORDED_ONCE.clear()
+    TRAFFIC_BLACKLIST.clear()
+    n_rej = _traffic_load_rejected_spus()
+    n_bl = _traffic_load_blacklist()
     task_id = uuid.uuid4().hex
     with TRAFFIC_TASKS_LOCK:
         TRAFFIC_TASKS[task_id] = {"lock": threading.Lock(), "log": [],
                                   "done": False, "result": None, "error": None}
+        if n_rej:
+            TRAFFIC_TASKS[task_id]["log"].append(
+                f"ℹ️ 已从记录文件预载 {len(TRAFFIC_REJECTED_SPUS)} 个被 Temu 拒绝过的 SPU，本轮直接跳过不再尝试提交")
+        if n_bl:
+            TRAFFIC_TASKS[task_id]["log"].append(
+                f"ℹ️ 已预载黑名单 {len(TRAFFIC_BLACKLIST)} 个已知垃圾（(SPU,站点)，{TRAFFIC_BLACKLIST_TTL_DAYS} 天过期），命中直接跳过不再分析")
     t = threading.Thread(target=_traffic_run, args=(task_id,), daemon=True)
     t.start()
     return jsonify({"ok": True, "task_id": task_id})
@@ -5934,11 +6690,17 @@ def api_activity_status():
         if not state_info:
             state_info = None
 
+        # 等待用户勾选：引擎在 WAIT_USER_SELECT 步骤把候选活动放进 meta.candidates
+        waiting_select = bool(state_info) and state_info.get("current_step") == "WAIT_USER_SELECT"
+        candidates = (state_info.get("meta", {}) or {}).get("candidates", []) if state_info else []
+
         return jsonify({
             "status": display_status,
             "started_at": activity_task.get("started_at"),
             "elapsed_sec": elapsed,
             "log": logs,
+            "waiting_select": waiting_select,
+            "candidates": candidates if waiting_select else [],
             "state_info": {
                 "current_step": state_info.get("current_step"),
                 "completed_steps": state_info.get("completed_steps", []),
@@ -5946,6 +6708,41 @@ def api_activity_status():
                 "meta": state_info.get("meta", {}),
             } if state_info else None,
         })
+
+
+@app.route('/api/activity/select', methods=['POST'])
+def api_activity_select():
+    """提交用户勾选的活动主题，写入 user_selection.json 供引擎消费。"""
+    data = request.get_json(silent=True) or {}
+    themes = data.get("themes", [])
+    if not isinstance(themes, list) or not themes or not all(isinstance(t, str) for t in themes):
+        return jsonify({"success": False, "message": "themes 必须是非空字符串数组"}), 400
+
+    # 引擎必须正在等待勾选，否则拒绝（防止写入后无人消费）
+    state_info = _read_activity_state()
+    if not state_info or state_info.get("current_step") != "WAIT_USER_SELECT":
+        return jsonify({"success": False, "message": "引擎当前不在等待勾选状态（可能已超时或尚未列出活动）"}), 409
+
+    # 校验勾选的活动必须在候选列表中
+    valid = {c.get("name") for c in (state_info.get("meta", {}) or {}).get("candidates", [])}
+    selected = []
+    for t in themes:
+        if t in valid and t not in selected:
+            selected.append(t)
+    if not selected:
+        return jsonify({"success": False, "message": "勾选的活动都不在候选列表中，请刷新后重试"}), 400
+
+    payload = {"themes": selected, "time": datetime.now().isoformat()}
+    tmp = ACTIVITY_SELECTION_FILE + ".tmp"
+    try:
+        os.makedirs(os.path.dirname(ACTIVITY_SELECTION_FILE), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        os.replace(tmp, ACTIVITY_SELECTION_FILE)  # 原子写入，避免引擎读到半截文件
+    except Exception as e:
+        return jsonify({"success": False, "message": f"写入勾选文件失败: {e}"}), 500
+
+    return jsonify({"success": True, "message": f"已提交 {len(selected)} 个活动，继续执行", "themes": selected})
 
 
 @app.route('/retail_price')
@@ -6911,12 +7708,12 @@ def _find_category_for_stem(stem):
 def _load_presets():
     """同步 CSV→presets.json（若 CSV 更新）并读取 templates。"""
     try:
-        sys.path.insert(0, str(Path(r"E:/Kimi Code/scripts")))
+        sys.path.insert(0, str(KIMI_SCRIPTS_DIR))
         import sync_presets_from_csv
         sync_presets_from_csv.sync_if_stale()
     except Exception:
         pass
-    p = Path(r"E:/Kimi Code/white_t_mockup/presets.json")
+    p = WHITE_T_PRESETS
     try:
         return json.loads(p.read_text(encoding="utf-8")).get("templates", {})
     except Exception:
@@ -7439,7 +8236,7 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
                                 log(f"WARN: AI sidecar 写入失败 {target_file}: {e}")
 
         # 建立溯源关系（AI 图 → INBOX 原图）
-        lovart_reg_path = Path("D:/Semems WB/WB_REGISTRY/registry.json")
+        lovart_reg_path = WB_REGISTRY_FILE
         lovart_reg = {}
         if lovart_reg_path.exists():
             try:
