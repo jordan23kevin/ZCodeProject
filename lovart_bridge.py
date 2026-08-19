@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.5.1
+Y2 Bridge Server v2.6.1
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
@@ -308,7 +308,7 @@ _PORTABLE  = (_PKG_ROOT / "lovart-official").is_dir()
 import sys as _sys
 if r"D:\Semems" not in _sys.path:
     _sys.path.insert(0, r"D:\Semems")
-from wb_category import root_for as _cat_root, DEFAULT_CAT as _DEFAULT_CAT
+from wb_category import root_for as _cat_root, DEFAULT_CAT as _DEFAULT_CAT, id_prefix_for as _cat_prefix
 
 if _PORTABLE:
     BASE_DIR       = _PKG_ROOT / "data"                    # 相当于本机 D:/Semems WB
@@ -379,6 +379,144 @@ PEIYI_CATEGORIES = {
     "W黑": MATERIAL_DIR / "W黑",
     "B黑": MATERIAL_DIR / "B黑",
 }
+
+# ============================================================================
+# 胚衣素材库品类化（多品类第3步）：按 cat 解析数据根，缺省 wb 行为与改造前一致
+# ============================================================================
+from wb_category import categories as _cat_all, material_categories as _cat_material_cats
+
+def _peiyi_dirs(cat=None):
+    """品类 cat 的胚衣分类目录映射 {分类名: Path}；非法品类返回 None。
+
+    wb（缺省）下返回的目录与 PEIYI_CATEGORIES 完全一致（D:\Semems WB_MATERIAL\...）。
+    """
+    cat = cat or _DEFAULT_CAT
+    if cat not in _cat_all():
+        return None
+    if _PORTABLE and cat == _DEFAULT_CAT:
+        base = MATERIAL_DIR                  # 便携包布局：保持原 BASE_DIR/"03_MATERIAL"
+    else:
+        base = _cat_root(cat) / "03_MATERIAL"
+    return {name: base / name for name in _cat_material_cats(cat)}
+
+
+def _request_cat():
+    """从当前请求解析品类：query string / form / JSON body 的 cat 字段，缺省 wb。"""
+    cat = request.args.get('cat') or request.form.get('cat')
+    if not cat:
+        try:
+            cat = (request.get_json(silent=True) or {}).get('cat')
+        except Exception:
+            cat = None
+    return cat or _DEFAULT_CAT
+
+
+def _peiyi_request_dirs():
+    """从当前请求解析品类并返回 (cat, dirs)；cat 未注册时 dirs 为 None，端点据此返回 400。"""
+    cat = _request_cat()
+    return cat, _peiyi_dirs(cat)
+
+
+def _peiyi_cat_qs(cat):
+    """回传给前端 URL 的品类串：wb（缺省）不追加，保持旧 URL 逐字节不变。"""
+    return '' if cat == _DEFAULT_CAT else '?cat=' + urllib.parse.quote(cat)
+
+
+# ============================================================================
+# 控制台品类化（多品类第5步）：INBOX 卡片墙 / 生图 / AI对比 / 上款 按 cat 解析。
+# wb（缺省）返回值与既有全局常量完全一致，保证老流程逐字节不变。
+# ============================================================================
+
+def _cat_ctx(cat=None):
+    """按品类解析数据目录上下文 dict；cat 缺省 wb。
+
+    返回键：cat / prefix / inbox / projects / hover_cache / ai_trash / ai_thumb / upload_thumb
+    wb 下全部为既有全局常量对象本身（不是重建路径），行为与改造前一致。
+    """
+    cat = cat or _DEFAULT_CAT
+    if cat == _DEFAULT_CAT:
+        return {
+            "cat": cat,
+            "prefix": "DX",
+            "inbox": INBOX_DIR,
+            "projects": PROJECTS_DIR,
+            "hover_cache": HOVER_CACHE,
+            "ai_trash": AI_TRASH_DIR,
+            "ai_thumb": AI_THUMB_DIR,
+            "upload_thumb": UPLOAD_THUMB_DIR,
+        }
+    root = _cat_root(cat)          # 未注册品类在此抛 KeyError，调用方先校验
+    return {
+        "cat": cat,
+        "prefix": _cat_prefix(cat),
+        "inbox": root / "01_INBOX",
+        "projects": root / "02_PROJECTS",
+        "hover_cache": root / "01_INBOX" / "_hover_cache",
+        "ai_trash": root / "_ai_trash",
+        "ai_thumb": root / "_ai_review_thumbs",
+        "upload_thumb": root / "_upload_thumbs",
+    }
+
+
+def _resolve_request_cat():
+    """解析并校验当前请求的 cat。返回 (cat, error_response)；非法 cat 时 cat=None。"""
+    cat = _request_cat()
+    if cat not in _cat_all():
+        return None, (jsonify({
+            "ok": False,
+            "error": f"未知品类: {cat!r}（已注册: {sorted(_cat_all())}）",
+        }), 400)
+    return cat, None
+
+
+def _dx_re(prefix: str) -> re.Pattern:
+    """按品类编号前缀编译项目目录名正则（wb→^DX\\d+(?:BW|B|W)?$，与原有字面量一致）。"""
+    return re.compile(rf"^{re.escape(prefix)}\d+(?:BW|B|W)?$")
+
+
+def _cat_not_ready(cat: str, feature: str, reason: str):
+    """非 wb 品类在某功能尚未接入时的统一明确报错（避免静默写错目录）。"""
+    return jsonify({
+        "ok": False,
+        "error": f"品类 {cat} 的「{feature}」尚未接入：{reason}",
+    }), 400
+
+
+def _gen_paths(cat=None):
+    """生图管线的品类路径上下文；cat 缺省 wb。
+
+    返回键：cat / prefix / inbox / projects / registry / uid_manifest / wb_registry / prompt
+    wb（缺省）下全部为既有全局常量对象本身，行为与改造前逐字节一致。
+    """
+    cat = cat or _DEFAULT_CAT
+    if cat == _DEFAULT_CAT:
+        return {
+            "cat": cat,
+            "prefix": "DX",
+            "inbox": INBOX_DIR,
+            "projects": PROJECTS_DIR,
+            "registry": REGISTRY_FILE,
+            "uid_manifest": UID_MANIFEST_FILE,
+            "wb_registry": WB_REGISTRY_FILE,
+            # wb 提示词：仅重新生图时注入 LOVART_PROMPT_FILE，普通生图由脚本默认读取，
+            # 保持原有行为不变
+            "prompt": LOVART_DIR / "config" / "POD AI VIRAL FACTORY v3.md",
+            "always_prompt": False,
+        }
+    root = _cat_root(cat)          # 未注册品类在此抛 KeyError，调用方先校验
+    return {
+        "cat": cat,
+        "prefix": _cat_prefix(cat),
+        "inbox": root / "01_INBOX",
+        "projects": root / "02_PROJECTS",
+        "registry": root / ".image_registry.json",
+        "uid_manifest": root / ".generation_uid_manifest.json",
+        "wb_registry": root / "WB_REGISTRY" / "registry.json",
+        # 卫衣提示词：LOVART_PROMPT_FILE 覆盖视为完整 prompt（不再拼接脚本内置 CONCEPT），
+        # 故文件内自带 concrete request 段
+        "prompt": LOVART_DIR / "config" / f"POD AI VIRAL FACTORY v3 - {'Hoodie' if cat == 'hoodie' else cat}.md",
+        "always_prompt": True,
+    }
 # 各分类底色（JPG 输出）：白胚衣用白底、黑胚衣用黑底
 PEIYI_BG = {
     "W白": (255, 255, 255),
@@ -393,6 +531,10 @@ PEIYI_ALLOWED_EXT = ('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff')
 PEIYI_MASK_SUFFIXES = (
     '_occluder.png', '_occluder_mask.png', '_body_mask.png',
     '_parse.png', '_alpha.png',
+    # 卫衣抽绳遮罩（白=绳子）及其衍生预览/分层示意：不进主画廊
+    '_drawstring_mask.png', '_drawstring_preview.png', '_drawstring_layered_demo.png',
+    # 手动 PS 遮罩侧车
+    '_manual.png',
 )
 # 每张素材侧车(.meta.json)记录的5个贴图参数，与 胚衣参数表_模板.csv 第5-9列一致
 PEIYI_META_FIELDS = [
@@ -406,19 +548,46 @@ PEIYI_META_KEYS = [k for k, _, _ in PEIYI_META_FIELDS]
 
 # 贴图（AI 去背贴图）相关常量
 if _PORTABLE:
-    TPL_ROOT   = _PKG_ROOT / "1胚衣" / "_tpl"    # _tpl/<款名>/ 扭曲素材根
-    CSV_PATH   = _PKG_ROOT / "docs" / "胚衣参数表_模板.csv"
     MOCKUP_PY  = "python"
     MOCKUP_ROOT = _PKG_ROOT                       # white_t_mockup 所在目录（运行 -m white_t_mockup）
     PY_PACKAGES = PYTHONPATH
 else:
-    TPL_ROOT = Path(r"D:\Semems\1胚衣\_tpl")          # _tpl/<款名>/ 扭曲素材根
-    CSV_PATH = Path(r"E:\Kimi Code\docs\胚衣参数表_模板.csv")
     MOCKUP_PY = Path(r"C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe")
     MOCKUP_ROOT = Path(r"E:/Kimi Code")              # white_t_mockup 所在目录（运行 -m white_t_mockup）
     PY_PACKAGES = "E:/python_packages"
 MOCKUP_OUT = BASE_DIR / "03_MOCKUP_OUT"          # 贴图成品输出
 ZCODE_PROJECT = Path(__file__).resolve().parent  # 本文件所在目录（peiyi_mask / tpl_generator 在此）
+
+# ── 贴图常量品类化（多品类第4步）────────────────────────────────────────────
+# wb（缺省）返回值与改造前常量逐字节一致；hoodie 指向 D:\Semems Hoodie 下对应位置，
+# 只解析不创建（目录可不存在，等卫衣模板标定后落地）。
+def tpl_root_for(cat=None):
+    """_tpl/<款名>/ 扭曲素材根（按品类）。"""
+    cat = cat or _DEFAULT_CAT
+    if _PORTABLE and cat == _DEFAULT_CAT:
+        return _PKG_ROOT / "1胚衣" / "_tpl"
+    if cat == _DEFAULT_CAT:
+        return Path(r"D:\Semems\1胚衣\_tpl")
+    return _cat_root(cat) / "1胚衣" / "_tpl"
+
+def csv_path_for(cat=None):
+    """胚衣参数表 CSV（按品类）。"""
+    cat = cat or _DEFAULT_CAT
+    if _PORTABLE and cat == _DEFAULT_CAT:
+        return _PKG_ROOT / "docs" / "胚衣参数表_模板.csv"
+    if cat == _DEFAULT_CAT:
+        return Path(r"E:\Kimi Code\docs\胚衣参数表_模板.csv")
+    return _cat_root(cat) / "docs" / "胚衣参数表_模板.csv"
+
+def mockup_out_for(cat=None):
+    """贴图成品输出目录（按品类）；wb 与 MOCKUP_OUT 完全一致。"""
+    cat = cat or _DEFAULT_CAT
+    if cat == _DEFAULT_CAT:
+        return MOCKUP_OUT
+    return _cat_root(cat) / "03_MOCKUP_OUT"
+
+TPL_ROOT = tpl_root_for()      # 兼容旧引用：wb 值与原常量逐字节一致
+CSV_PATH = csv_path_for()
 
 # ============================================================================
 # 其它散点路径（便携包/本机双套）
@@ -429,14 +598,41 @@ if _PORTABLE:
     WB_LISTING_DIR     = _PKG_ROOT / "wb上款"
     TEMU_ANALYSIS_DIR  = _PKG_ROOT / "temu分析"
     KIMI_SCRIPTS_DIR   = _PKG_ROOT / "scripts"
-    WHITE_T_PRESETS    = _PKG_ROOT / "white_t_mockup" / "presets.json"
 else:
     WB_REGISTRY_FILE   = BASE_DIR / "WB_REGISTRY" / "registry.json"
     CHECK_REM_SCRIPT   = BASE_DIR / "04_OS" / "engine" / "check_rem.py"
     WB_LISTING_DIR     = Path(r"E:\Claude code\wb上款")
     TEMU_ANALYSIS_DIR  = Path(r"E:/Kimi Code/temu分析")
     KIMI_SCRIPTS_DIR   = Path(r"E:/Kimi Code/scripts")
-    WHITE_T_PRESETS    = Path(r"E:/Kimi Code/white_t_mockup/presets.json")
+
+def white_t_presets_for(cat=None):
+    """white_t_mockup presets.json（按品类）；wb 与原 WHITE_T_PRESETS 逐字节一致。"""
+    cat = cat or _DEFAULT_CAT
+    if _PORTABLE and cat == _DEFAULT_CAT:
+        return _PKG_ROOT / "white_t_mockup" / "presets.json"
+    if cat == _DEFAULT_CAT:
+        return Path(r"E:/Kimi Code/white_t_mockup/presets.json")
+    return _cat_root(cat) / "white_t_mockup" / "presets.json"
+
+WHITE_T_PRESETS = white_t_presets_for()
+
+# ── 贴图引擎插件化（多品类第4步）────────────────────────────────────────────
+if str(ZCODE_PROJECT) not in sys.path:
+    sys.path.insert(0, str(ZCODE_PROJECT))
+from engine.garment_plugin import plugin_for as _garment_plugin_for, MockupConfig as _MockupConfig
+
+def _mockup_cfg(cat=None):
+    """按品类组装贴图插件配置；wb 各字段与改造前常量逐字节一致。"""
+    cat = cat or _DEFAULT_CAT
+    return _MockupConfig(
+        mockup_py=MOCKUP_PY,
+        mockup_root=MOCKUP_ROOT,
+        mockup_out=mockup_out_for(cat),
+        py_packages=PY_PACKAGES,
+        zcode_project=ZCODE_PROJECT,
+        tpl_root=tpl_root_for(cat),
+        presets_path=white_t_presets_for(cat),
+    )
 
 
 def _single_thread_env(base_env):
@@ -581,40 +777,52 @@ def _port_ready(host, port, timeout=2):
     return False
 
 
-def _check_rem_daemon():
-    """后台守护线程：Bridge 启动后保持 check_rem.py（端口 8766）常驻运行。
+# 去背预览服务：每个品类一个独立实例（单进程服务单一品类，互不串类）
+_CHECK_REM_INSTANCES = [("wb", 8766), ("hoodie", 8767)]
+_CHECK_REM_PORT_FOR_CAT = {cat: port for cat, port in _CHECK_REM_INSTANCES}
 
-    使用 CREATE_NO_WINDOW 启动，避免依赖桌面窗口（无头/后台环境下也能拉起）；
-    输出重定向到 check_rem_daemon.log 便于排查。每 5 秒检测一次端口，
-    若 check_rem 崩溃退出会自动重拉，实现自愈。
-    """
+
+def _check_rem_ensure(cat, port):
+    """拉起（若未运行）指定品类/端口的 check_rem.py。"""
     import subprocess
     script = CHECK_REM_SCRIPT
     if not script.exists():
-        print("  [check_rem daemon] 脚本不存在，跳过守护", flush=True)
+        print(f"  [check_rem daemon] 脚本不存在，跳过 {cat}@{port}", flush=True)
         return
-    log_path = script.parent / "check_rem_daemon.log"
+    if _port_ready("127.0.0.1", port, timeout=3):
+        return
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    log_path = script.parent / f"check_rem_daemon_{port}.log"
+    try:
+        env = dict(os.environ)
+        env["OPEN_BROWSER"] = "0"
+        logf = open(log_path, "a", encoding="utf-8")
+        logf.write(f"[{ts}] 端口 {port}({cat}) 未就绪，启动 check_rem.py ...\n")
+        logf.flush()
+        proc = subprocess.Popen(
+            [sys.executable, str(script), "--cat", cat, "--port", str(port)],
+            cwd=str(script.parent),
+            env=env,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+        )
+        print(f"  [check_rem daemon] 已启动 check_rem.py cat={cat} port={port} (PID={proc.pid})", flush=True)
+    except Exception as e:
+        print(f"  [check_rem daemon] 启动失败 cat={cat} port={port}: {e}", flush=True)
+
+
+def _check_rem_daemon():
+    """后台守护线程：保持各品类 check_rem.py 常驻（wb@8766 / hoodie@8767）。
+
+    使用 CREATE_NO_WINDOW 启动，避免依赖桌面窗口（无头/后台环境下也能拉起）；
+    输出重定向到 check_rem_daemon_{port}.log 便于排查。每 5 秒检测一次端口，
+    若 check_rem 崩溃退出会自动重拉，实现自愈。
+    """
     while True:
         try:
-            if not _port_ready("127.0.0.1", 8766, timeout=3):
-                ts = time.strftime("%Y-%m-%d %H:%M:%S")
-                try:
-                    env = dict(os.environ)
-                    env["OPEN_BROWSER"] = "0"
-                    logf = open(log_path, "a", encoding="utf-8")
-                    logf.write(f"[{ts}] 端口 8766 未就绪，启动 check_rem.py ...\n")
-                    logf.flush()
-                    proc = subprocess.Popen(
-                        [sys.executable, str(script)],
-                        cwd=str(script.parent),
-                        env=env,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                        stdout=logf,
-                        stderr=subprocess.STDOUT,
-                    )
-                    print(f"  [check_rem daemon] 已启动 check_rem.py (PID={proc.pid})", flush=True)
-                except Exception as e:
-                    print(f"  [check_rem daemon] 启动失败: {e}", flush=True)
+            for cat, port in _CHECK_REM_INSTANCES:
+                _check_rem_ensure(cat, port)
             time.sleep(5)
         except Exception:
             time.sleep(5)
@@ -746,23 +954,25 @@ def get_python() -> str:
 # Registry 操作
 # ---------------------------------------------------------------------------
 
-def load_registry() -> dict:
-    """加载 .image_registry.json，不存在则返回空骨架"""
-    if REGISTRY_FILE.exists():
+def load_registry(path=None) -> dict:
+    """加载 .image_registry.json，不存在则返回空骨架。path 缺省为 wb 全局 REGISTRY_FILE（行为不变）。"""
+    path = path or REGISTRY_FILE
+    if path.exists():
         try:
-            with open(REGISTRY_FILE, 'r', encoding='utf-8') as f:
+            with open(path, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             return {"version": 3, "images": {}, "groups": {}, "uid_index": {}, "name_index": {}}
     return {"version": 3, "images": {}, "groups": {}, "uid_index": {}, "name_index": {}}
 
 
-def save_registry(reg: dict):
-    """原子写入 registry（先写 .tmp 再 rename，防止写半截）"""
-    tmp = REGISTRY_FILE.with_suffix(".json.tmp")
+def save_registry(reg: dict, path=None):
+    """原子写入 registry（先写 .tmp 再 rename，防止写半截）。path 缺省为 wb 全局 REGISTRY_FILE（行为不变）。"""
+    path = path or REGISTRY_FILE
+    tmp = path.with_suffix(".json.tmp")
     with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(reg, f, indent=2, ensure_ascii=False)
-    tmp.replace(REGISTRY_FILE)
+    tmp.replace(path)
 
 
 def ensure_registry_v4(reg: dict) -> dict:
@@ -987,10 +1197,10 @@ def compute_md5(filepath: str) -> str:
     return h.hexdigest()
 
 
-def get_next_uid(reg: dict) -> str:
-    """生成下一个 UID: DX{YYYYMMDD}_{NNNN}，每日从 0001 开始"""
+def get_next_uid(reg: dict, prefix: str = "DX") -> str:
+    """生成下一个 UID: {prefix}{YYYYMMDD}_{NNNN}，每日从 0001 开始。prefix 缺省 DX（wb 行为不变）"""
     today = datetime.now().strftime("%Y%m%d")
-    prefix = f"DX{today}_"
+    prefix = f"{prefix}{today}_"
     max_seq = 0
     for uid in reg.get("uid_index", {}):
         if uid.startswith(prefix):
@@ -1054,15 +1264,17 @@ def auto_uppercase_inbox():
 # 悬停预览缩略图（500px 缓存）
 # ---------------------------------------------------------------------------
 
-def get_hover_thumb(filename: str) -> Path:
-    """生成或返回 500px 宽度的预览缓存图"""
+def get_hover_thumb(filename: str, inbox_dir: Path = None, cache_dir: Path = None) -> Path:
+    """生成或返回 500px 宽度的预览缓存图；inbox_dir/cache_dir 缺省为 wb 常量（行为不变）"""
     from PIL import Image
+    inbox_dir = inbox_dir or INBOX_DIR
+    cache_dir = cache_dir or HOVER_CACHE
     safe = os.path.basename(filename)
-    src = INBOX_DIR / safe
+    src = inbox_dir / safe
     if not src.exists():
         return None
-    HOVER_CACHE.mkdir(parents=True, exist_ok=True)
-    thumb_file = HOVER_CACHE / f"{safe}_500.jpg"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    thumb_file = cache_dir / f"{safe}_500.jpg"
     # 缓存有效：源文件未修改
     if thumb_file.exists() and thumb_file.stat().st_mtime >= src.stat().st_mtime:
         return thumb_file
@@ -1111,21 +1323,23 @@ class SHFILEOPSTRUCTW(ctypes.Structure):
     ]
 
 
-def move_to_trash(filename: str) -> bool:
-    """将 INBOX 中的文件移到本地 回收站 目录"""
+def move_to_trash(filename: str, inbox_dir: Path = None, trash_dir: Path = None) -> bool:
+    """将 INBOX 中的文件移到本地 回收站 目录；目录缺省为 wb 常量（行为不变）"""
+    inbox_dir = inbox_dir or INBOX_DIR
+    trash_dir = trash_dir or TRASH_DIR
     safe = os.path.basename(filename)
-    src = INBOX_DIR / safe
+    src = inbox_dir / safe
     if not src.exists():
         return False
-    TRASH_DIR.mkdir(parents=True, exist_ok=True)
-    dst = TRASH_DIR / safe
+    trash_dir.mkdir(parents=True, exist_ok=True)
+    dst = trash_dir / safe
     # 防重名
     if dst.exists():
         stem, ext = os.path.splitext(safe)
-        dst = TRASH_DIR / f"{stem}_{int(time.time())}{ext}"
+        dst = trash_dir / f"{stem}_{int(time.time())}{ext}"
     shutil.move(str(src), str(dst))
     # 清理 hover 缓存
-    for f in (INBOX_DIR / "_hover_cache").glob(f"{safe}*"):
+    for f in (inbox_dir / "_hover_cache").glob(f"{safe}*"):
         try: f.unlink()
         except: pass
     return True
@@ -1305,10 +1519,11 @@ def list_ai_trash() -> list:
 # INBOX 重命名：B/W → BW（如 2B.png → 2BW.png）
 # ---------------------------------------------------------------------------
 
-def rename_to_bw(filename: str) -> tuple:
-    """将 B 或 W 文件改名为 BW。
+def rename_to_bw(filename: str, inbox_dir: Path = None) -> tuple:
+    """将 B 或 W 文件改名为 BW。inbox_dir 缺省为 wb 常量（行为不变）
     返回 (ok, new_name, msg)
     """
+    inbox_dir = inbox_dir or INBOX_DIR
     safe = os.path.basename(filename)
     m = re.match(r'^(\d+)([BW])(\.png)$', safe, re.IGNORECASE)
     if not m:
@@ -1318,8 +1533,8 @@ def rename_to_bw(filename: str) -> tuple:
     if suffix not in ("B", "W"):
         return False, "", f"{safe} 已是 BW 或 WB 格式"
     new_name = f"{num}BW.png"
-    src = INBOX_DIR / safe
-    dst = INBOX_DIR / new_name
+    src = inbox_dir / safe
+    dst = inbox_dir / new_name
     if dst.exists():
         return False, "", f"{new_name} 已存在"
     src.rename(dst)
@@ -1343,15 +1558,18 @@ def _dx_dir_date(d: Path) -> str:
         return ""
 
 
-def _scan_upload_projects():
+def _scan_upload_projects(projects_dir: Path = None, prefix: str = "DX", thumb_dir: Path = None):
     """扫描所有 DX 的 03_UPLOAD，返回 [{dx, date, files:[{name,mtime}]}]
     date 统一按 DX 文件夹建立日期分类，不再按文件最后更新时间。
+    projects_dir/prefix 缺省为 wb 常量（行为不变）。
     """
+    projects_dir = projects_dir or PROJECTS_DIR
+    dx_re = _dx_re(prefix)
     projects = []
-    if not PROJECTS_DIR.exists():
+    if not projects_dir.exists():
         return projects
-    for d in sorted(PROJECTS_DIR.iterdir()):
-        if not d.is_dir() or not re.match(r"^DX\d+(?:BW|B|W)?$", d.name):
+    for d in sorted(projects_dir.iterdir()):
+        if not d.is_dir() or not dx_re.match(d.name):
             continue
         up_dir = d / "03_UPLOAD"
         if not up_dir.is_dir():
@@ -1365,7 +1583,7 @@ def _scan_upload_projects():
             if ext not in ('.png', '.jpg', '.jpeg', '.webp'):
                 continue
             src_mtime = int(f.stat().st_mtime)
-            thumb = _upload_thumb_path(dx, f.name)
+            thumb = _upload_thumb_path(dx, f.name, thumb_dir=thumb_dir)
             thumb_mtime = int(thumb.stat().st_mtime) if thumb.exists() else src_mtime
             files.append({"name": f.name, "mtime": src_mtime, "thumb_mtime": thumb_mtime})
         if not files:
@@ -1375,8 +1593,9 @@ def _scan_upload_projects():
     return projects
 
 
-def _scan_ai_review_projects():
+def _scan_ai_review_projects(projects_dir: Path = None, prefix: str = "DX"):
     """扫描所有 DX 项目的 01_AI 目录，直接在同一目录内配对原图与 AI 生成图。
+    projects_dir/prefix 缺省为 wb 常量（行为不变）。
 
     约定：每个 DX/01_AI 中同时存放原图（如 1BW.png）和生成图（如 DX0283_BW.png）。
     配对方式：
@@ -1403,14 +1622,16 @@ def _scan_ai_review_projects():
       }
     ]
     """
+    projects_dir = projects_dir or PROJECTS_DIR
+    dx_re = _dx_re(prefix)
     projects = []
-    if not PROJECTS_DIR.exists():
+    if not projects_dir.exists():
         return projects
 
     INBOX_NAME_RE = re.compile(r'^(\d+)(B|W|BW|WB)\.(png|jpg|jpeg|webp)$', re.IGNORECASE)
 
-    for d in sorted(PROJECTS_DIR.iterdir()):
-        if not d.is_dir() or not re.match(r"^DX\d+(?:BW|B|W)?$", d.name):
+    for d in sorted(projects_dir.iterdir()):
+        if not d.is_dir() or not dx_re.match(d.name):
             continue
         dx = d.name
         ai_dir = d / "01_AI"
@@ -1648,22 +1869,25 @@ def _role_from_ai_name(filename: str, dx: str) -> str:
     return ""
 
 
-def _upload_thumb_path(dx: str, filename: str) -> Path:
-    """返回 03_UPLOAD 缩略图缓存文件路径（不检查是否存在、不生成）。"""
+def _upload_thumb_path(dx: str, filename: str, thumb_dir: Path = None) -> Path:
+    """返回 03_UPLOAD 缩略图缓存文件路径（不检查是否存在、不生成）。thumb_dir 缺省 wb 常量"""
+    thumb_dir = thumb_dir or UPLOAD_THUMB_DIR
     safe_name = re.sub(r'[\\/*?:"<>|]', '_', filename)
-    return UPLOAD_THUMB_DIR / f"{dx}__{safe_name}.jpg"
+    return thumb_dir / f"{dx}__{safe_name}.jpg"
 
 
-def _get_upload_thumb(dx: str, filename: str):
+def _get_upload_thumb(dx: str, filename: str, projects_dir: Path = None, thumb_dir: Path = None, prefix: str = "DX"):
     """返回 03_UPLOAD 缩略图路径（不存在或源文件已更新则重新生成 220px 高）。
-    优先使用已缓存缩略图；透明 PNG 则合成白底。"""
-    if "/" in filename or "\\" in filename or not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
+    优先使用已缓存缩略图；透明 PNG 则合成白底。目录/前缀缺省为 wb 常量（行为不变）"""
+    projects_dir = projects_dir or PROJECTS_DIR
+    thumb_dir = thumb_dir or UPLOAD_THUMB_DIR
+    if "/" in filename or "\\" in filename or not _dx_re(prefix).match(dx):
         return None
-    src = PROJECTS_DIR / dx / "03_UPLOAD" / filename
+    src = projects_dir / dx / "03_UPLOAD" / filename
     if not src.exists():
         return None
-    UPLOAD_THUMB_DIR.mkdir(parents=True, exist_ok=True)
-    thumb_file = _upload_thumb_path(dx, filename)
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    thumb_file = _upload_thumb_path(dx, filename, thumb_dir=thumb_dir)
     # 缓存有效：缩略图存在且严格比源文件新（mtime 相等时认为可能已更新，重新生成）
     if thumb_file.exists():
         try:
@@ -1700,20 +1924,25 @@ def _get_upload_thumb(dx: str, filename: str):
         return None
 
 
-def _get_ai_thumb(dx: str, filename: str, source: str = "01_AI"):
+def _get_ai_thumb(dx: str, filename: str, source: str = "01_AI",
+                  projects_dir: Path = None, ai_trash_dir: Path = None,
+                  ai_thumb_dir: Path = None, prefix: str = "DX"):
     """返回 01_AI 或回收站中 AI 图的缩略图路径（不存在则生成 300px 高）。
-    source: '01_AI' 或 'trash'"""
-    if "/" in filename or "\\" in filename or not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
+    source: '01_AI' 或 'trash'；目录/前缀缺省为 wb 常量（行为不变）"""
+    projects_dir = projects_dir or PROJECTS_DIR
+    ai_trash_dir = ai_trash_dir or AI_TRASH_DIR
+    ai_thumb_dir = ai_thumb_dir or AI_THUMB_DIR
+    if "/" in filename or "\\" in filename or not _dx_re(prefix).match(dx):
         return None
     if source == "trash":
-        src = AI_TRASH_DIR / dx / filename
+        src = ai_trash_dir / dx / filename
     else:
-        src = PROJECTS_DIR / dx / "01_AI" / filename
+        src = projects_dir / dx / "01_AI" / filename
     if not src.exists():
         return None
-    AI_THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    ai_thumb_dir.mkdir(parents=True, exist_ok=True)
     safe_name = re.sub(r'[\\/*?:"<>|]', '_', filename)
-    thumb_file = AI_THUMB_DIR / f"{dx}__{safe_name}.jpg"
+    thumb_file = ai_thumb_dir / f"{dx}__{safe_name}.jpg"
     if thumb_file.exists() and thumb_file.stat().st_mtime > src.stat().st_mtime:
         return thumb_file
     try:
@@ -1743,11 +1972,12 @@ def _get_ai_thumb(dx: str, filename: str, source: str = "01_AI"):
         return None
 
 
-def _get_ai_original(dx: str, filename: str):
-    """返回 01_AI 中 AI 图的原图路径"""
-    if "/" in filename or "\\" in filename or not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
+def _get_ai_original(dx: str, filename: str, projects_dir: Path = None, prefix: str = "DX"):
+    """返回 01_AI 中 AI 图的原图路径；目录/前缀缺省为 wb 常量（行为不变）"""
+    projects_dir = projects_dir or PROJECTS_DIR
+    if "/" in filename or "\\" in filename or not _dx_re(prefix).match(dx):
         return None
-    src = PROJECTS_DIR / dx / "01_AI" / filename
+    src = projects_dir / dx / "01_AI" / filename
     if not src.exists():
         return None
     return src
@@ -1850,17 +2080,18 @@ def api_fix_mismatch():
 # INBOX 分组逻辑
 # ---------------------------------------------------------------------------
 
-def group_inbox_files() -> list:
+def group_inbox_files(inbox_dir: Path = None) -> list:
     """
-    将 INBOX 中的 .png 按数字编号分组。
+    将 INBOX 中的 .png 按数字编号分组。inbox_dir 缺省为 wb 常量（行为不变）
     例如: 1B.png + 1W.png → group "1"
           13BW.png        → group "13"
     返回: [{"group_number": int, "images": [...], "count": int, "types": [...]}, ...]
     """
-    if not INBOX_DIR.exists():
+    inbox_dir = inbox_dir or INBOX_DIR
+    if not inbox_dir.exists():
         return []
 
-    files = [f for f in os.listdir(INBOX_DIR)
+    files = [f for f in os.listdir(inbox_dir)
              if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')) and not f.startswith('_')]
 
     groups = {}
@@ -1871,7 +2102,7 @@ def group_inbox_files() -> list:
             continue
         num = m.group(1)
         suffix = m.group(2).upper()
-        fp = INBOX_DIR / fname
+        fp = inbox_dir / fname
         groups.setdefault(num, []).append({
             "filename": fname,
             "suffix": suffix,
@@ -1905,35 +2136,47 @@ def index():
 
 @app.route('/api/inbox')
 def api_inbox():
-    """返回 INBOX 所有图片及分组信息"""
-    if not INBOX_DIR.exists():
+    """返回 INBOX 所有图片及分组信息（?cat= 缺省 wb，行为与改造前一致）"""
+    cat, err = _resolve_request_cat()
+    if err:
+        return err
+    ctx = _cat_ctx(cat)
+    inbox_dir = ctx["inbox"]
+    if not inbox_dir.exists():
         return jsonify({"images": [], "groups": [], "total": 0})
 
     all_files = []
-    for fname in os.listdir(INBOX_DIR):
+    for fname in os.listdir(inbox_dir):
         if not fname.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')) or fname.startswith('_'):
             continue
-        fp = INBOX_DIR / fname
+        fp = inbox_dir / fname
         try:
             st = fp.stat()
             all_files.append({
                 "filename": fname,
                 "size": st.st_size,
-                "preview_url": f"/api/preview/{fname}",
+                "preview_url": f"/api/preview/{fname}" + _peiyi_cat_qs(cat),
                 "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
             })
         except OSError:
             continue
 
-    groups = group_inbox_files()
-    return jsonify({"images": all_files, "groups": groups, "total": len(all_files)})
+    groups = group_inbox_files(inbox_dir)
+    payload = {"images": all_files, "groups": groups, "total": len(all_files)}
+    if cat != _DEFAULT_CAT:
+        payload["cat"] = cat          # wb 响应体与改造前逐字节一致
+    return jsonify(payload)
 
 
 @app.route('/api/preview/<path:filename>')
 def api_preview(filename):
-    """返回原图（由前端 CSS 控制显示大小）"""
+    """返回原图（由前端 CSS 控制显示大小）；?cat= 缺省 wb"""
+    cat, err = _resolve_request_cat()
+    if err:
+        return err
+    ctx = _cat_ctx(cat)
     safe_name = os.path.basename(filename)
-    filepath = INBOX_DIR / safe_name
+    filepath = ctx["inbox"] / safe_name
     if not filepath.exists():
         abort(404)
     try:
@@ -1951,9 +2194,13 @@ def api_preview(filename):
 
 @app.route('/api/hover/<path:filename>')
 def api_hover(filename):
-    """返回 500px 悬停预览图（JPEG 白底）"""
+    """返回 500px 悬停预览图（JPEG 白底）；?cat= 缺省 wb"""
+    cat, err = _resolve_request_cat()
+    if err:
+        return err
+    ctx = _cat_ctx(cat)
     safe_name = os.path.basename(filename)
-    thumb = get_hover_thumb(safe_name)
+    thumb = get_hover_thumb(safe_name, inbox_dir=ctx["inbox"], cache_dir=ctx["hover_cache"])
     if not thumb:
         abort(404)
     return send_file(str(thumb), mimetype='image/jpeg', max_age=3600)
@@ -1961,15 +2208,27 @@ def api_hover(filename):
 
 @app.route('/api/inbox/group')
 def api_inbox_group():
-    """仅返回分组信息（前端页面可用来刷新分组）"""
-    groups = group_inbox_files()
-    return jsonify({"groups": groups, "total_groups": len(groups)})
+    """仅返回分组信息（前端页面可用来刷新分组）；?cat= 缺省 wb"""
+    cat, err = _resolve_request_cat()
+    if err:
+        return err
+    ctx = _cat_ctx(cat)
+    groups = group_inbox_files(ctx["inbox"])
+    payload = {"groups": groups, "total_groups": len(groups)}
+    if cat != _DEFAULT_CAT:
+        payload["cat"] = cat
+    return jsonify(payload)
 
 
 @app.route('/api/generate', methods=['POST'])
 def api_generate():
-    """启动 Lovart 生图任务"""
+    """启动 Lovart 生图任务（?cat= 缺省 wb；非 wb 品类走品类独立目录/注册表/提示词）"""
     global task_state
+
+    cat, err = _resolve_request_cat()
+    if err:
+        return err
+    gp = _gen_paths(cat)
 
     with _lock:
         if task_state["status"] == "running":
@@ -1981,7 +2240,7 @@ def api_generate():
         if not selected:
             return jsonify({"error": "请至少选择一张图片"}), 400
 
-        missing = [f for f in selected if not (INBOX_DIR / f).exists()]
+        missing = [f for f in selected if not (gp["inbox"] / f).exists()]
         if missing:
             return jsonify({"error": f"以下文件不存在: {', '.join(missing)}"}), 400
 
@@ -1997,17 +2256,22 @@ def api_generate():
             "groups_total": 0,
             "task_id": task_id,
         }
+        if cat != _DEFAULT_CAT:
+            task_state["cat"] = cat      # wb 状态体与改造前逐字节一致
         _save_state()
 
     # 后台线程执行
-    t = threading.Thread(target=_run_generation, args=(selected, task_id), daemon=True)
+    t = threading.Thread(target=_run_generation, args=(selected, task_id), kwargs={"cat": cat}, daemon=True)
     t.start()
 
-    return jsonify({
+    resp = {
         "status": "started",
         "task_id": task_id,
         "message": f"已启动生图任务，处理 {len(selected)} 张图片",
-    })
+    }
+    if cat != _DEFAULT_CAT:
+        resp["cat"] = cat              # wb 响应体与改造前逐字节一致
+    return jsonify(resp)
 
 
 @app.route('/api/status')
@@ -2229,18 +2493,22 @@ def api_projects():
 
 @app.route('/api/open/<path:folder>')
 def api_open_folder(folder):
-    """在文件管理器中打开指定文件夹"""
+    """在文件管理器中打开指定文件夹（?cat= 缺省 wb，wb 行为不变）"""
     # 支持: DX0001, DX0001/01_AI, DX0001/02_REM_BG, DX0001/03_UPLOAD, INBOX
+    cat, err = _resolve_request_cat()
+    if err:
+        return err
+    ctx = _cat_ctx(cat)
     parts = folder.replace('\\', '/').split('/')
     first = parts[0]
-    if first.startswith('DX'):
-        target = PROJECTS_DIR / first
+    if first.startswith(ctx["prefix"]):
+        target = ctx["projects"] / first
         if len(parts) > 1:
             sub = parts[1]
             if sub in ('01_AI', '02_REM_BG', '03_UPLOAD'):
                 target = target / sub
     elif first == 'INBOX':
-        target = INBOX_DIR
+        target = ctx["inbox"]
         if len(parts) > 1:
             target = target / parts[1]
     else:
@@ -2256,14 +2524,18 @@ def api_open_folder(folder):
 
 @app.route('/api/delete', methods=['POST'])
 def api_delete():
-    """将指定文件移到本地 回收站 目录"""
+    """将指定文件移到本地 回收站 目录（?cat= 缺省 wb；非 wb 品类移入其自身 INBOX/回收站，不跨品类）"""
+    cat, err = _resolve_request_cat()
+    if err:
+        return err
+    ctx = _cat_ctx(cat)
     data = request.get_json(silent=True) or {}
     filename = data.get("file", "")
     safe = os.path.basename(filename)
-    filepath = INBOX_DIR / safe
+    filepath = ctx["inbox"] / safe
     if not filepath.exists():
         return jsonify({"ok": False, "error": "文件不存在"}), 404
-    ok = move_to_trash(safe)
+    ok = move_to_trash(safe, inbox_dir=ctx["inbox"], trash_dir=ctx["inbox"] / "回收站")
     if ok:
         return jsonify({"ok": True, "msg": f"{safe} 已移到本地回收站"})
     else:
@@ -2368,10 +2640,14 @@ def api_open_recycle():
 
 @app.route('/api/rename', methods=['POST'])
 def api_rename():
-    """将 B/W 图片改名为 BW（如 2B.png → 2BW.png）"""
+    """将 B/W 图片改名为 BW（如 2B.png → 2BW.png）；?cat= 缺省 wb"""
+    cat, err = _resolve_request_cat()
+    if err:
+        return err
+    ctx = _cat_ctx(cat)
     data = request.get_json(silent=True) or {}
     filename = data.get("file", "")
-    ok, new_name, msg = rename_to_bw(filename)
+    ok, new_name, msg = rename_to_bw(filename, inbox_dir=ctx["inbox"])
     if ok:
         return jsonify({"ok": True, "new_name": new_name, "msg": msg})
     else:
@@ -2393,11 +2669,18 @@ def ai_review_page():
 
 @app.route('/api/ai-review/projects')
 def api_ai_review_projects():
-    """返回所有 DX 的 INBOX 原图与 01_AI 生成图配对列表"""
+    """返回所有 DX 的 INBOX 原图与 01_AI 生成图配对列表（?cat= 缺省 wb）"""
+    cat, err = _resolve_request_cat()
+    if err:
+        return err
+    ctx = _cat_ctx(cat)
     try:
-        projects = _scan_ai_review_projects()
+        projects = _scan_ai_review_projects(projects_dir=ctx["projects"], prefix=ctx["prefix"])
         dates = sorted({p["date"] for p in projects if p["date"]}, reverse=True)
-        return jsonify({"ok": True, "projects": projects, "dates": dates, "total": len(projects)})
+        payload = {"ok": True, "projects": projects, "dates": dates, "total": len(projects)}
+        if cat != _DEFAULT_CAT:
+            payload["cat"] = cat
+        return jsonify(payload)
     except Exception as e:
         import traceback
         print(f"[AIReview] /api/ai-review/projects 错误: {e}\n{traceback.format_exc()}")
@@ -2406,12 +2689,18 @@ def api_ai_review_projects():
 
 @app.route('/api/ai-review/thumb')
 def api_ai_review_thumb():
-    """返回 01_AI 中 AI 图的缩略图"""
+    """返回 01_AI 中 AI 图的缩略图（?cat= 缺省 wb）"""
+    cat, err = _resolve_request_cat()
+    if err:
+        return err
+    ctx = _cat_ctx(cat)
     dx = request.args.get("dx", "").strip()
     filename = request.args.get("file", "").strip()
-    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not filename:
+    if not _dx_re(ctx["prefix"]).match(dx) or not filename:
         return "bad params", 400
-    thumb = _get_ai_thumb(dx, filename, source="01_AI")
+    thumb = _get_ai_thumb(dx, filename, source="01_AI",
+                          projects_dir=ctx["projects"], ai_trash_dir=ctx["ai_trash"],
+                          ai_thumb_dir=ctx["ai_thumb"], prefix=ctx["prefix"])
     if not thumb:
         return "no thumb", 404
     r = make_response(send_file(str(thumb), mimetype="image/jpeg"))
@@ -2421,12 +2710,16 @@ def api_ai_review_thumb():
 
 @app.route('/api/ai-review/original')
 def api_ai_review_original():
-    """返回 01_AI 中 AI 图的原图（供悬停放大）"""
+    """返回 01_AI 中 AI 图的原图（供悬停放大）；?cat= 缺省 wb"""
+    cat, err = _resolve_request_cat()
+    if err:
+        return err
+    ctx = _cat_ctx(cat)
     dx = request.args.get("dx", "").strip()
     filename = request.args.get("file", "").strip()
-    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not filename:
+    if not _dx_re(ctx["prefix"]).match(dx) or not filename:
         return "bad params", 400
-    src = _get_ai_original(dx, filename)
+    src = _get_ai_original(dx, filename, projects_dir=ctx["projects"], prefix=ctx["prefix"])
     if not src:
         return "not found", 404
     ct = "image/png" if filename.lower().endswith(".png") else "image/jpeg"
@@ -2437,12 +2730,18 @@ def api_ai_review_original():
 
 @app.route('/api/ai-review/trash-thumb')
 def api_ai_review_trash_thumb():
-    """返回回收站中 AI 图的缩略图"""
+    """返回回收站中 AI 图的缩略图（?cat= 缺省 wb）"""
+    cat, err = _resolve_request_cat()
+    if err:
+        return err
+    ctx = _cat_ctx(cat)
     dx = request.args.get("dx", "").strip()
     filename = request.args.get("file", "").strip()
-    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not filename:
+    if not _dx_re(ctx["prefix"]).match(dx) or not filename:
         return "bad params", 400
-    thumb = _get_ai_thumb(dx, filename, source="trash")
+    thumb = _get_ai_thumb(dx, filename, source="trash",
+                          projects_dir=ctx["projects"], ai_trash_dir=ctx["ai_trash"],
+                          ai_thumb_dir=ctx["ai_thumb"], prefix=ctx["prefix"])
     if not thumb:
         return "no thumb", 404
     r = make_response(send_file(str(thumb), mimetype="image/jpeg"))
@@ -2522,6 +2821,11 @@ def _cleanup_duplicate_sources(dx: str, source_file: str):
 def api_ai_review_regenerate():
     """对指定 01_AI 中的原图重新生图（会重新生成其所在整组）。"""
     global task_state
+    cat, cat_err = _resolve_request_cat()
+    if cat_err:
+        return cat_err
+    if cat != _DEFAULT_CAT:
+        return _cat_not_ready(cat, "重新生图", "生图管线目前为 T 恤专用，卫衣管线尚未标定。")
     data = request.get_json(silent=True) or {}
     dx = data.get("dx", "").strip()
     source_file = data.get("source_file", "").strip()
@@ -2615,6 +2919,11 @@ def api_ai_review_regenerate_batch():
           因为 LOVART_REGEN_DX_MAP 以文件名为 key。
     """
     global task_state
+    cat, cat_err = _resolve_request_cat()
+    if cat_err:
+        return cat_err
+    if cat != _DEFAULT_CAT:
+        return _cat_not_ready(cat, "批量重新生图", "生图管线目前为 T 恤专用，卫衣管线尚未标定。")
     data = request.get_json(silent=True) or {}
     items = data.get("items", [])
 
@@ -2742,6 +3051,11 @@ def api_ai_review_regenerate_batch():
 @app.route('/api/ai-review/delete-ai', methods=['POST'])
 def api_ai_review_delete_ai():
     """将 AI 图移入回收站"""
+    cat, cat_err = _resolve_request_cat()
+    if cat_err:
+        return cat_err
+    if cat != _DEFAULT_CAT:
+        return _cat_not_ready(cat, "AI 图回收", "AI 回收站目前为 T 恤专用，卫衣尚未标定。")
     data = request.get_json(silent=True) or {}
     dx = data.get("dx", "").strip()
     filename = data.get("file", "").strip()
@@ -2756,6 +3070,11 @@ def api_ai_review_delete_ai():
 @app.route('/api/ai-review/restore-ai', methods=['POST'])
 def api_ai_review_restore_ai():
     """从回收站还原 AI 图"""
+    cat, cat_err = _resolve_request_cat()
+    if cat_err:
+        return cat_err
+    if cat != _DEFAULT_CAT:
+        return _cat_not_ready(cat, "AI 图还原", "AI 回收站目前为 T 恤专用，卫衣尚未标定。")
     data = request.get_json(silent=True) or {}
     dx = data.get("dx", "").strip()
     filename = data.get("file", "").strip()
@@ -2769,7 +3088,12 @@ def api_ai_review_restore_ai():
 
 @app.route('/api/ai-review/trash')
 def api_ai_review_trash():
-    """返回 AI 图回收站列表"""
+    """返回 AI 图回收站列表（仅 wb；非 wb 品类明确报错）"""
+    cat, cat_err = _resolve_request_cat()
+    if cat_err:
+        return cat_err
+    if cat != _DEFAULT_CAT:
+        return _cat_not_ready(cat, "AI 回收站", "AI 回收站目前为 T 恤专用，卫衣尚未标定。")
     try:
         items = list_ai_trash()
         return jsonify({"ok": True, "items": items, "count": len(items)})
@@ -2779,7 +3103,12 @@ def api_ai_review_trash():
 
 @app.route('/api/ai-review/empty-trash', methods=['POST'])
 def api_ai_review_empty_trash():
-    """永久清空 AI 图回收站"""
+    """永久清空 AI 图回收站（仅 wb）"""
+    cat, cat_err = _resolve_request_cat()
+    if cat_err:
+        return cat_err
+    if cat != _DEFAULT_CAT:
+        return _cat_not_ready(cat, "清空 AI 回收站", "AI 回收站目前为 T 恤专用，卫衣尚未标定。")
     if not AI_TRASH_DIR.exists():
         return jsonify({"ok": True, "count": 0, "msg": "回收站为空"})
     count = 0
@@ -3027,15 +3356,20 @@ def api_lineage_register():
 
 @app.route('/api/launch-check-rem', methods=['POST'])
 def api_launch_check_rem():
-    """确保去背预览服务（端口 8766）已就绪，并返回状态。
+    """确保去背预览服务（按品类分端口）已就绪，并返回状态与端口。
 
     实际页面打开由前端直接执行 window.open，这里只负责兜底拉起 check_rem.py。
-    check_rem.py 通常由 Bridge 启动时的守护线程保持常驻。
+    check_rem.py 通常由 Bridge 启动时的守护线程保持常驻（各品类独立实例）。
     """
-    # 兜底：若守护线程还没把 check_rem 拉起来，等最多 2 秒
-    if not _port_ready("127.0.0.1", 8766, timeout=2):
-        return jsonify({"ok": False, "error": "去背预览服务未就绪，请稍后再试"}), 503
-    return jsonify({"ok": True, "msg": "去背预览服务已就绪"})
+    data = request.get_json(silent=True) or {}
+    cat = data.get("cat", _DEFAULT_CAT)
+    port = _CHECK_REM_PORT_FOR_CAT.get(cat, 8766)
+    # 兜底：若守护线程还没把 check_rem 拉起来，主动拉一次并再等一会儿让服务 bind
+    if not _port_ready("127.0.0.1", port, timeout=2):
+        _check_rem_ensure(cat, port)
+        if not _port_ready("127.0.0.1", port, timeout=5):
+            return jsonify({"ok": False, "error": "去背预览服务未就绪，请稍后再试"}), 503
+    return jsonify({"ok": True, "msg": "去背预览服务已就绪", "port": port, "cat": cat})
 
 
 @app.route('/upload')
@@ -3047,24 +3381,69 @@ def upload_page():
     return "<h1>upload.html not found</h1>", 404
 
 
+def _upload_listing_profile_ready(cat: str) -> bool:
+    """非 wb 品类的上款前置条件：listing profile 已标定。
+
+    判定：categories.json 中该品类配置了 "listing_profile" 字段，
+    或其数据根下存在 listing_profile.json。wb 永远视为已就绪。
+    """
+    if cat == _DEFAULT_CAT:
+        return True
+    try:
+        cfg = _cat_all().get(cat, {})
+        if cfg.get("listing_profile"):
+            return True
+        if (_cat_root(cat) / "listing_profile.json").exists():
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _upload_cat_guard():
+    """上款相关端点的品类守卫。
+
+    返回 (cat, ctx, error_response)。非法 cat → 400；非 wb 且缺 listing profile → 明确报错。
+    """
+    cat, err = _resolve_request_cat()
+    if err:
+        return None, None, err
+    if cat != _DEFAULT_CAT and not _upload_listing_profile_ready(cat):
+        return None, None, _cat_not_ready(cat, "上款",
+            "卫衣 listing profile / 提示词尚未标定（缺 listing_profile.json 或 categories.json 配置），"
+            "为避免上错款已拦截。")
+    return cat, _cat_ctx(cat), None
+
+
 @app.route('/api/upload/projects')
 def api_upload_projects():
-    """返回所有含 03_UPLOAD 成品的 DX 列表，并标记是否在线已上款"""
-    projects = _scan_upload_projects()
+    """返回所有含 03_UPLOAD 成品的 DX 列表，并标记是否在线已上款（?cat= 缺省 wb）"""
+    cat, ctx, err = _upload_cat_guard()
+    if err:
+        return err
+    projects = _scan_upload_projects(projects_dir=ctx["projects"], prefix=ctx["prefix"],
+                                     thumb_dir=ctx["upload_thumb"])
     online_set = _read_online_listed()
     for p in projects:
         p["online_listed"] = p.get("dx", "") in online_set
-    return jsonify({"ok": True, "projects": projects, "online_updated_at": _online_listed_updated_at(), "online_mode": _online_listed_mode()})
+    payload = {"ok": True, "projects": projects, "online_updated_at": _online_listed_updated_at(), "online_mode": _online_listed_mode()}
+    if cat != _DEFAULT_CAT:
+        payload["cat"] = cat
+    return jsonify(payload)
 
 
 @app.route('/api/upload/thumb')
 def api_upload_thumb():
-    """返回 03_UPLOAD 缩略图"""
+    """返回 03_UPLOAD 缩略图（?cat= 缺省 wb）"""
+    cat, ctx, err = _upload_cat_guard()
+    if err:
+        return err
     dx = request.args.get("dx", "")
     filename = request.args.get("file", "")
-    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not filename:
+    if not _dx_re(ctx["prefix"]).match(dx) or not filename:
         return "bad params", 400
-    thumb = _get_upload_thumb(dx, filename)
+    thumb = _get_upload_thumb(dx, filename, projects_dir=ctx["projects"],
+                              thumb_dir=ctx["upload_thumb"], prefix=ctx["prefix"])
     if not thumb:
         return "no thumb", 404
     r = make_response(send_file(str(thumb), mimetype="image/jpeg"))
@@ -3074,12 +3453,15 @@ def api_upload_thumb():
 
 @app.route('/api/upload/original')
 def api_upload_original():
-    """返回 03_UPLOAD 原图（供悬停放大）"""
+    """返回 03_UPLOAD 原图（供悬停放大）；?cat= 缺省 wb"""
+    cat, ctx, err = _upload_cat_guard()
+    if err:
+        return err
     dx = request.args.get("dx", "")
     filename = request.args.get("file", "")
-    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not filename:
+    if not _dx_re(ctx["prefix"]).match(dx) or not filename:
         return "bad params", 400
-    src = PROJECTS_DIR / dx / "03_UPLOAD" / filename
+    src = ctx["projects"] / dx / "03_UPLOAD" / filename
     if not src.exists():
         return "not found", 404
     ct = "image/png" if filename.lower().endswith(".png") else "image/jpeg"
@@ -3090,19 +3472,22 @@ def api_upload_original():
 
 @app.route('/api/upload/delete', methods=['POST'])
 def api_upload_delete():
-    """将 03_UPLOAD 中的成品图删除到系统回收站"""
+    """将 03_UPLOAD 中的成品图删除到系统回收站（?cat= 缺省 wb）"""
+    cat, ctx, err = _upload_cat_guard()
+    if err:
+        return err
     data = request.get_json(force=True, silent=True) or {}
     dx = (data.get("dx") or request.args.get("dx", "")).strip()
     filename = (data.get("file") or request.args.get("file", "")).strip()
-    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not filename or "/" in filename or "\\" in filename:
+    if not _dx_re(ctx["prefix"]).match(dx) or not filename or "/" in filename or "\\" in filename:
         return jsonify({"ok": False, "error": "参数非法"}), 400
-    target = PROJECTS_DIR / dx / "03_UPLOAD" / filename
+    target = ctx["projects"] / dx / "03_UPLOAD" / filename
     if not target.exists():
         return jsonify({"ok": False, "error": "文件不存在"}), 404
     ok = send_to_recycle_bin(str(target))
     if ok:
         safe_name = re.sub(r'[\\/*?:"<>|]', '_', filename)
-        for tf in UPLOAD_THUMB_DIR.glob(f"{dx}__{safe_name}.*"):
+        for tf in ctx["upload_thumb"].glob(f"{dx}__{safe_name}.*"):
             try:
                 tf.unlink()
             except Exception:
@@ -3219,7 +3604,10 @@ def _remove_from_title_cache(dx_list):
 
 @app.route('/api/upload/progress')
 def api_upload_progress():
-    """返回 wb_listing.py 写入的上款进度 JSON，并合并历史已完成记录"""
+    """返回 wb_listing.py 写入的上款进度 JSON，并合并历史已完成记录（?cat= 缺省 wb）"""
+    cat, ctx, err = _upload_cat_guard()
+    if err:
+        return err
     data = {
         "ok": True,
         "running": False,
@@ -3272,6 +3660,9 @@ def api_upload_refresh_online_listed():
     mode=incremental（默认）：日常增量，翻到上次边界款为止，集合相减自动移除下架款；首次运行全量建库
     mode=deep：深度清理，翻完所有页，全量覆盖（准确移除所有已下架款，并重置边界）
     """
+    cat, ctx, cat_err = _upload_cat_guard()
+    if cat_err:
+        return cat_err
     mode = (request.args.get("mode") or "incremental").lower()
     if mode not in ("incremental", "deep"):
         mode = "incremental"
@@ -3415,15 +3806,20 @@ def api_open_file():
     filename = request.args.get("file", "").strip()
     sub = request.args.get("sub", "01_AI").strip()
 
+    cat, cat_err = _resolve_request_cat()
+    if cat_err:
+        return cat_err
+    ctx = _cat_ctx(cat)
+
     if not dx or not filename:
         return jsonify({"ok": False, "error": "缺少 dx 或 file"}), 400
     if "/" in filename or "\\" in filename or ".." in filename:
         return jsonify({"ok": False, "error": "非法文件名"}), 400
 
     if sub == "INBOX":
-        folder = INBOX_DIR
-    elif sub in ("01_AI", "02_REM_BG", "03_UPLOAD") and re.match(r"^DX\d+(?:BW|B|W)?$", dx):
-        folder = PROJECTS_DIR / dx / sub
+        folder = ctx["inbox"]
+    elif sub in ("01_AI", "02_REM_BG", "03_UPLOAD") and _dx_re(ctx["prefix"]).match(dx):
+        folder = ctx["projects"] / dx / sub
     else:
         return jsonify({"ok": False, "error": "非法 sub 参数"}), 400
 
@@ -3452,6 +3848,9 @@ def api_batch_upload():
     """批量上款：调用 E:\Claude code\wb上款\wb_listing.py 逐个 DX 上款。
     可通过环境变量 LOVART_UPLOAD_SCRIPT 覆盖脚本路径。
     """
+    cat, ctx, cat_err = _upload_cat_guard()
+    if cat_err:
+        return cat_err
     data = request.get_json(silent=True) or {}
     dx_list = data.get("dx_list", [])
     force = data.get("force", False)
@@ -6880,13 +7279,16 @@ def _peiyi_process_image(src_path: str, category: str, dest_path: str):
 def api_peiyi_upload():
     """批量上传素材：按 category 自动处理并存入对应文件夹。"""
     category = request.form.get('category', '')
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': f'未知分类: {category}'}), 400
     files = request.files.getlist('files')
     if not files:
         return jsonify({'ok': False, 'error': '未收到文件'}), 400
 
-    dest_dir = PEIYI_CATEGORIES[category]
+    dest_dir = peiyi_dirs[category]
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     # 按进入顺序命名：颜色 + 面 + 序号（黑W1, 黑W2 ...；白B1 ...）
@@ -6959,12 +7361,15 @@ def _meta_filled(meta):
 def api_peiyi_list():
     """列出各分类已存素材（用于画廊预览），含每张图的贴图参数 meta。"""
     category = request.args.get('category', '')
-    if category and category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category and category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
-    cats = [category] if category else list(PEIYI_CATEGORIES.keys())
+    cats = [category] if category else list(peiyi_dirs.keys())
     out = {}
     for c in cats:
-        d = PEIYI_CATEGORIES[c]
+        d = peiyi_dirs[c]
         items = []
         if d.exists():
             for fn in os.listdir(d):
@@ -6991,9 +7396,9 @@ def api_peiyi_list():
                             meta['bw'].setdefault(k, None)
                     # 只有五项全部填写才算完成；部分填写仍视为待填，排在最前
                     unfilled = not _meta_filled(meta)
-                    # 双面款(W+B)第二组参数缺失标记（仅 W白/W黑 需要两组；B面只一组）
+                    # 双面款(W+B)第二组参数缺失标记（所有正面 W* 分类需要两组；B面只一组）
                     bw_missing = False
-                    if category in ('W白', 'W黑'):
+                    if category and category[0] == 'W':
                         bw_missing = not _meta_filled(meta.get('bw'))
                     # 遮罩状态（body_mask / occluder_mask / occluder / parse）
                     stem, _ = os.path.splitext(fn)
@@ -7019,14 +7424,16 @@ def api_peiyi_list():
                     ]:
                         mp = d / (stem + suffix)
                         if mp.exists():
-                            mask_urls[key] = f'/api/peiyi/material/{urllib.parse.quote(c)}/{urllib.parse.quote(mp.name)}'
+                            mask_urls[key] = (f'/api/peiyi/material/{urllib.parse.quote(c)}/{urllib.parse.quote(mp.name)}'
+                                              + _peiyi_cat_qs(_cat))
                     # 最新一版遮罩评分（用于图片墙角标），读不到则 None
                     score_info = _peiyi_latest_score(d, stem)
                     items.append({
                         'name': fn,
                         'size': st.st_size,
                         # URL 编码文件名/分类，避免中文路径导致浏览器无法加载图片
-                        'url': f'/api/peiyi/material/{urllib.parse.quote(c)}/{urllib.parse.quote(fn)}',
+                        'url': (f'/api/peiyi/material/{urllib.parse.quote(c)}/{urllib.parse.quote(fn)}'
+                                + _peiyi_cat_qs(_cat)),
                         'modified': datetime.fromtimestamp(st.st_mtime).isoformat(),
                         'meta': meta,
                         'unfilled': unfilled,
@@ -7077,17 +7484,98 @@ def _peiyi_latest_score(category_dir, stem):
         return None
 
 
+# ---------------------------------------------------------------------------
+# 抽绳遮罩工具服务 (8777) —— 由「卫衣·胚衣制作」页面生命周期控制：
+# 页面加载时 ensure 启动，页面关闭时 stop。不再由 bridge 启动脚本拉起。
+# ---------------------------------------------------------------------------
+_DS_PROC = None
+_DS_PY = r"C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe"
+_DS_SERVER = r"D:\Semems Hoodie\drawstring_tool\drawstring_server.py"
+_DS_PORT = 8777
+
+
+def _ds_port_listening():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        return s.connect_ex(("127.0.0.1", _DS_PORT)) == 0
+    finally:
+        s.close()
+
+
+def _ds_kill_by_port():
+    """兜底：杀掉 8777 端口上任何残留监听进程（含非本进程启动的）。"""
+    killed = []
+    try:
+        out = subprocess.check_output(["netstat", "-ano"],
+                                      stderr=subprocess.DEVNULL).decode("gbk", "ignore")
+        for line in out.splitlines():
+            if (":%d" % _DS_PORT) in line and "LISTENING" in line:
+                pid = line.split()[-1]
+                if pid.isdigit():
+                    try:
+                        subprocess.call(["taskkill", "/PID", pid, "/F"],
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        killed.append(int(pid))
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return killed
+
+
+@app.route("/api/drawstring/ensure", methods=["POST"])
+def api_drawstring_ensure():
+    """确保抽绳工具服务在运行；未运行则拉起。"""
+    global _DS_PROC
+    if _ds_port_listening():
+        return jsonify({"ok": True, "already": True})
+    try:
+        _DS_PROC = subprocess.Popen(
+            [_DS_PY, _DS_SERVER],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=0x00000008,  # DETACHED_PROCESS：不弹控制台窗口
+        )
+        # 轮询等待服务起来（最多 ~4s）
+        import time
+        for _ in range(40):
+            if _ds_port_listening():
+                return jsonify({"ok": True, "started": True, "pid": _DS_PROC.pid})
+            time.sleep(0.1)
+        return jsonify({"ok": False, "error": "started but 8777 not listening"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.route("/api/drawstring/stop", methods=["POST"])
+def api_drawstring_stop():
+    """关闭抽绳工具服务（页面关闭时调用）。"""
+    global _DS_PROC
+    killed = []
+    if _DS_PROC is not None and _DS_PROC.poll() is None:
+        try:
+            _DS_PROC.kill()
+            killed.append(_DS_PROC.pid)
+        except Exception:
+            pass
+    _DS_PROC = None
+    killed += _ds_kill_by_port()  # 兜底清理端口上残留
+    return jsonify({"ok": True, "killed": killed})
+
+
 @app.route('/api/peiyi/scores')
 def api_peiyi_scores():
     """汇总所有胚衣最新一版的评分（低分可一眼标红）。
     评分在“生成遮罩”时写入 _mask_versions/<stem>/vNNN/score.json。"""
     category = request.args.get('category', '')
-    if category and category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category and category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
-    cats = [category] if category else list(PEIYI_CATEGORIES.keys())
+    cats = [category] if category else list(peiyi_dirs.keys())
     rows = []
     for c in cats:
-        d = PEIYI_CATEGORIES[c]
+        d = peiyi_dirs[c]
         if not d.exists():
             continue
         for fn in os.listdir(d):
@@ -7121,10 +7609,11 @@ def api_peiyi_material(category, filename):
     （Cache-Control: no-store, no-cache），确保预览/画廊实时反映最新内容；
     并按真实扩展名返回正确 MIME（PNG 遮罩不再被当成 JPEG，避免渲染异常）。
     """
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None or category not in peiyi_dirs:
         abort(404)
     safe = os.path.basename(filename)
-    fp = PEIYI_CATEGORIES[category] / safe
+    fp = peiyi_dirs[category] / safe
     if not fp.exists():
         abort(404)
     ext = os.path.splitext(safe)[1].lower().lstrip('.')
@@ -7152,10 +7641,13 @@ _PEIYI_VERSION_FILE_KEYS = [
 def api_peiyi_versions(category, stem):
     """列出某胚衣的所有遮罩版本（每个版本的分数/时间/指标/各层遮罩图URL/是否当前）。
     数据来自 _mask_versions/<stem>/vNNN/ + latest.txt。"""
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
     stem = os.path.basename(stem)
-    d = PEIYI_CATEGORIES[category]
+    d = peiyi_dirs[category]
     vroot = d / "_mask_versions" / stem
     current = None
     versions = []
@@ -7181,7 +7673,8 @@ def api_peiyi_versions(category, stem):
                 if (vd / (stem + suffix)).exists():
                     urls[key] = (f'/api/peiyi/version_file/{urllib.parse.quote(category)}'
                                  f'/{urllib.parse.quote(stem)}/{urllib.parse.quote(vd.name)}'
-                                 f'/{urllib.parse.quote(stem + suffix)}')
+                                 f'/{urllib.parse.quote(stem + suffix)}'
+                                 + _peiyi_cat_qs(_cat))
             versions.append({
                 'version': vd.name,
                 'score': info.get('score'),
@@ -7199,12 +7692,13 @@ def api_peiyi_versions(category, stem):
 @app.route('/api/peiyi/version_file/<category>/<stem>/<version>/<path:filename>')
 def api_peiyi_version_file(category, stem, version, filename):
     """返回某胚衣某版本目录里的遮罩图片（禁用缓存，按真实扩展名给 MIME）。"""
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None or category not in peiyi_dirs:
         abort(404)
     stem = os.path.basename(stem)
     version = os.path.basename(version)
     safe = os.path.basename(filename)
-    fp = PEIYI_CATEGORIES[category] / "_mask_versions" / stem / version / safe
+    fp = peiyi_dirs[category] / "_mask_versions" / stem / version / safe
     if not fp.exists():
         abort(404)
     ext = os.path.splitext(safe)[1].lower().lstrip('.')
@@ -7226,11 +7720,14 @@ def api_peiyi_use_version():
     category = data.get('category', '')
     stem = os.path.basename(data.get('stem', ''))
     version = os.path.basename(data.get('version', ''))
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
     if not stem or not version:
         return jsonify({'ok': False, 'error': '缺少 stem/version'}), 400
-    d = PEIYI_CATEGORIES[category]
+    d = peiyi_dirs[category]
     vdir = d / "_mask_versions" / stem / version
     if not vdir.exists():
         return jsonify({'ok': False, 'error': '版本不存在'}), 404
@@ -7319,10 +7816,13 @@ def api_peiyi_open():
     data = request.get_json(silent=True) or {}
     category = data.get('category', '')
     name = data.get('name', '')
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
     safe = os.path.basename(name)
-    fp = PEIYI_CATEGORIES[category] / safe
+    fp = peiyi_dirs[category] / safe
     if not fp.exists():
         return jsonify({'ok': False, 'error': '文件不存在'}), 404
     try:
@@ -7338,10 +7838,13 @@ def api_peiyi_delete():
     data = request.get_json(silent=True) or {}
     category = data.get('category', '')
     name = data.get('name', '')
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
     safe = os.path.basename(name)
-    fp = PEIYI_CATEGORIES[category] / safe
+    fp = peiyi_dirs[category] / safe
     if not fp.exists():
         return jsonify({'ok': False, 'error': '文件不存在'}), 404
     try:
@@ -7364,9 +7867,12 @@ def api_peiyi_reindex():
     用于手动拖入、尚未按规则命名的图片。两遍重命名避免同名冲突。"""
     data = request.get_json(silent=True) or {}
     category = data.get('category', '')
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
-    d = PEIYI_CATEGORIES[category]
+    d = peiyi_dirs[category]
     if not d.exists():
         return jsonify({'ok': True, 'renamed': 0, 'msg': '空文件夹'})
     prefix = (category[1] if len(category) > 1 else '') + category[0]
@@ -7408,10 +7914,13 @@ def api_peiyi_meta():
     data = request.get_json(silent=True) or {}
     category = data.get('category', '')
     name = data.get('name', '')
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
     safe = os.path.basename(name)
-    d = PEIYI_CATEGORIES[category]
+    d = peiyi_dirs[category]
     if not (d / safe).exists():
         return jsonify({'ok': False, 'error': '文件不存在'}), 404
     stem, _ = os.path.splitext(safe)
@@ -7459,10 +7968,13 @@ def api_peiyi_mask():
     data = request.get_json(silent=True) or {}
     category = data.get('category', '')
     name = data.get('name', '')
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
     safe = os.path.basename(name)
-    d = PEIYI_CATEGORIES[category]
+    d = peiyi_dirs[category]
     fp = d / safe
     if not fp.exists():
         return jsonify({'ok': False, 'error': '文件不存在'}), 404
@@ -7514,7 +8026,10 @@ def api_peiyi_correct_preview():
     click_y = data.get('y')
     mode = data.get('mode', 'add_occ')
 
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
     if click_x is None or click_y is None:
         return jsonify({'ok': False, 'error': '缺少点击坐标 x, y'}), 400
@@ -7522,7 +8037,7 @@ def api_peiyi_correct_preview():
         return jsonify({'ok': False, 'error': f'未知模式: {mode}'}), 400
 
     safe = os.path.basename(name)
-    d = PEIYI_CATEGORIES[category]
+    d = peiyi_dirs[category]
     fp = d / safe
     if not fp.exists():
         return jsonify({'ok': False, 'error': '文件不存在'}), 404
@@ -7546,10 +8061,13 @@ def api_peiyi_correct_confirm():
     category = data.get('category', '')
     name = data.get('name', '')
 
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
     safe = os.path.basename(name)
-    d = PEIYI_CATEGORIES[category]
+    d = peiyi_dirs[category]
     fp = d / safe
     if not fp.exists():
         return jsonify({'ok': False, 'error': '文件不存在'}), 404
@@ -7573,10 +8091,13 @@ def api_peiyi_correct_cancel():
     category = data.get('category', '')
     name = data.get('name', '')
 
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
     safe = os.path.basename(name)
-    d = PEIYI_CATEGORIES[category]
+    d = peiyi_dirs[category]
     fp = d / safe
     if not fp.exists():
         return jsonify({'ok': False, 'error': '文件不存在'}), 404
@@ -7596,10 +8117,13 @@ def api_peiyi_correct_check():
     category = data.get('category', '')
     name = data.get('name', '')
 
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
     safe = os.path.basename(name)
-    d = PEIYI_CATEGORIES[category]
+    d = peiyi_dirs[category]
     fp = d / safe
     if not fp.exists():
         return jsonify({'ok': False, 'error': '文件不存在'}), 404
@@ -7615,10 +8139,13 @@ def api_peiyi_correct_check():
 @app.route('/api/peiyi/working_file/<category>/<stem>/<path:filename>')
 def api_peiyi_working_file(category, stem, filename):
     """提供 _working 临时目录的预览图"""
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
     safe = os.path.basename(filename)
-    fp = PEIYI_CATEGORIES[category] / "_mask_versions" / stem / "_working" / safe
+    fp = peiyi_dirs[category] / "_mask_versions" / stem / "_working" / safe
     if not fp.exists():
         return jsonify({'ok': False, 'error': '文件不存在'}), 404
     return send_file(str(fp))
@@ -7632,12 +8159,15 @@ def api_peiyi_delete_version():
     stem = data.get('stem', '')
     version = data.get('version', '')
 
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
     if not stem or not version:
         return jsonify({'ok': False, 'error': '缺少 stem 或 version'}), 400
 
-    d = PEIYI_CATEGORIES[category]
+    d = peiyi_dirs[category]
     try:
         import peiyi_correct
         result = peiyi_correct.delete_version(d, stem, version)
@@ -7659,10 +8189,13 @@ def api_peiyi_import_manual():
     category = data.get('category', '')
     name = data.get('name', '')
 
-    if category not in PEIYI_CATEGORIES:
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
     safe = os.path.basename(name)
-    d = PEIYI_CATEGORIES[category]
+    d = peiyi_dirs[category]
     fp = d / safe
     if not fp.exists():
         return jsonify({'ok': False, 'error': '文件不存在'}), 404
@@ -7682,18 +8215,20 @@ def api_peiyi_import_manual():
 # ============================================================================
 # 贴图（AI 去背贴图）：自动按胚衣数据 + 遮罩 + 扭曲精准贴入
 # ============================================================================
-def _resolve_peiyi_embryo(category, name):
-    """素材库图片路径、款名 stem、衫色（按分类名含 黑/白 推断）。"""
+def _resolve_peiyi_embryo(category, name, dirs=None):
+    """素材库图片路径、款名 stem、衫色（按分类名含 黑/白 推断）。dirs 缺省 = wb 四大分类。"""
+    dirs = dirs or PEIYI_CATEGORIES
     safe = os.path.basename(name)
-    fp = PEIYI_CATEGORIES[category] / safe
+    fp = dirs[category] / safe
     stem = fp.stem
     color = "black" if "黑" in category else "white"
     return fp, stem, color
 
 
-def _find_category_for_stem(stem):
-    """按款名 stem 在四大分类里反查 category + 文件名。"""
-    for cat, d in PEIYI_CATEGORIES.items():
+def _find_category_for_stem(stem, dirs=None):
+    """按款名 stem 在四大分类里反查 category + 文件名。dirs 缺省 = wb 四大分类。"""
+    dirs = dirs or PEIYI_CATEGORIES
+    for cat, d in dirs.items():
         if not d.exists():
             continue
         cand = d / f"{stem}.jpg"
@@ -7705,7 +8240,7 @@ def _find_category_for_stem(stem):
     return None, None
 
 
-def _load_presets():
+def _load_presets(cat=None):
     """同步 CSV→presets.json（若 CSV 更新）并读取 templates。"""
     try:
         sys.path.insert(0, str(KIMI_SCRIPTS_DIR))
@@ -7713,7 +8248,7 @@ def _load_presets():
         sync_presets_from_csv.sync_if_stale()
     except Exception:
         pass
-    p = WHITE_T_PRESETS
+    p = white_t_presets_for(cat)
     try:
         return json.loads(p.read_text(encoding="utf-8")).get("templates", {})
     except Exception:
@@ -7729,13 +8264,14 @@ def _preset_key_for_stem(stem, presets):
     return None
 
 
-def _embryo_fields(category, name, presets):
+def _embryo_fields(category, name, presets, dirs=None):
     """读取5个贴图字段：素材库 .meta.json 优先，CSV→presets 兜底。
 
     注意：meta 未填写的字段必须显式视为「缺失」（None），不能用 670 这类
     魔法默认值占位，否则会挡住 presets 的同名字段（如中心点x）。
     """
-    meta = _peiyi_read_meta(PEIYI_CATEGORIES[category], name) or {}
+    dirs = dirs or PEIYI_CATEGORIES
+    meta = _peiyi_read_meta(dirs[category], name) or {}
 
     def _num(v):
         if v is None or v == "":
@@ -7774,18 +8310,13 @@ def _embryo_fields(category, name, presets):
     return {"final_w": fw, "final_h": fh, "rotation": rot, "top_y": ty, "center_x": cx}
 
 
-def _ensure_tpl(stem, fp):
-    """确保 _tpl/<款名>/ 存在（自动生成扭曲素材）。返回 tpl_dir 或 None。"""
-    tpl_dir = TPL_ROOT / stem
-    if (tpl_dir / "mask.png").exists():
-        return tpl_dir
-    try:
-        import tpl_generator
-        out_dir, cov, hint, src = tpl_generator.generate_tpl_for_material(str(fp), TPL_ROOT)
-        return out_dir
-    except Exception as e:
-        print(f"[贴图] _tpl 生成失败 {stem}: {e}", flush=True)
-        return None
+def _ensure_tpl(stem, fp, cat=None):
+    """确保 _tpl/<款名>/ 存在（自动生成扭曲素材）。返回 tpl_dir 或 None。
+
+    实现已迁入 engine/t_shirt.py（TShirtPlugin.load_template），此处仅按品类分发；
+    wb 路径与改造前逐字节一致。
+    """
+    return _garment_plugin_for(cat, cfg=_mockup_cfg(cat)).load_template(stem, fp)
 
 
 def _ensure_occluder(fp, category):
@@ -7827,93 +8358,13 @@ def _remove_white_bg(path):
         pass
 
 
-def _run_white_t_mockup(design_path, out_path, preset_key, fp, fields, tpl_dir, color, occluder):
-    env = _single_thread_env(os.environ)
-    env["PYTHONPATH"] = f"{MOCKUP_ROOT};{PY_PACKAGES}"
-    # 彻底关闭 cv2 内部多线程：后台进程里 cv2 的 warp/remap 多线程偶发段错误，
-    # 关闭后基本不再崩溃（白 T 恤合成依赖 displacement 扭曲，最易触发）
-    env["OPENCV_DISABLE_THREADING"] = "1"
-    env["OMP_NUM_THREADS"] = "1"
-    env["MKL_NUM_THREADS"] = "1"
-    env["OPENBLAS_NUM_THREADS"] = "1"
-    env["NUMEXPR_NUM_THREADS"] = "1"
-    env["VECLIB_MAXIMUM_THREADS"] = "1"
+def _run_white_t_mockup(design_path, out_path, preset_key, fp, fields, tpl_dir, color, occluder, cat=None):
+    """实现已迁入 engine/t_shirt.py（TShirtPlugin.place_design），此处仅按品类分发；
 
-    cmd = [str(MOCKUP_PY), "-m", "white_t_mockup", str(design_path), str(out_path)]
-    if preset_key:
-        cmd += ["--preset", preset_key]
-    else:
-        cmd += ["--template", str(fp)]
-    cmd += [
-        "--final-w", str(int(fields["final_w"])),
-        "--final-h", str(int(fields["final_h"])),
-        "--rotate", str(fields["rotation"]),
-        "--effective-top-y", str(int(fields["top_y"])),
-        "--effective-center-x", str(int(fields["center_x"])),
-        "--disp-strength", "12",
-        "--shadow-opacity", "0.22",
-        "--highlight-opacity", "0.22",
-    ]
-    if tpl_dir:
-        cmd += ["--tpl-dir", str(tpl_dir)]
-    cmd += ["--for-black-shirt" if color == "black" else "--for-white-shirt"]
-    if occluder:
-        cmd += ["--occluder", str(occluder)]
-
-    dbg = MOCKUP_OUT / "_mockup_run.log"
-    try:
-        with open(dbg, "w", encoding="utf-8") as f:
-            f.write("CMD: " + " ".join(cmd) + "\n")
-            f.write("CWD: " + str(MOCKUP_ROOT) + "\n")
-            f.write("PYTHONPATH: " + env["PYTHONPATH"] + "\n")
-            f.write("OPENCV_DISABLE_THREADING: " + env.get("OPENCV_DISABLE_THREADING", "") + "\n")
-    except Exception:
-        pass
-
-    startupinfo = None
-    if os.name == "nt":
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-
-    last = None
-    import time as _t
-    for attempt in range(1, 4):
-        out_log = MOCKUP_OUT / f"_mockup_stdout_{attempt}.log"
-        err_log = MOCKUP_OUT / f"_mockup_stderr_{attempt}.log"
-        try:
-            with open(out_log, "w", encoding="utf-8", errors="replace") as of, \
-                 open(err_log, "w", encoding="utf-8", errors="replace") as ef:
-                r = subprocess.run(
-                    cmd, cwd=str(MOCKUP_ROOT), env=env,
-                    stdin=subprocess.DEVNULL,
-                    stdout=of, stderr=ef,
-                    timeout=300,
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-                    startupinfo=startupinfo,
-                )
-        except Exception as e:
-            import traceback as _tb
-            r = type("_R", (), {"returncode": -1, "stdout": "",
-                                "stderr": f"[bridge] 启动异常: {_tb.format_exc()}"})()
-        try:
-            r.stdout = out_log.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            r.stdout = ""
-        try:
-            r.stderr = err_log.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            r.stderr = ""
-        try:
-            with open(dbg, "a", encoding="utf-8") as f:
-                f.write(f"attempt {attempt}: rc={r.returncode} stderr={r.stderr[:200]}\n")
-        except Exception:
-            pass
-        last = r
-        if r.returncode == 0:
-            break
-        _t.sleep(2)  # cv2 偶发段错误，重试常能成功
-    return last
+    wb 路径与改造前逐字节一致；hoodie 由桩插件抛 NotImplementedError（等待卫衣模板标定）。
+    """
+    return _garment_plugin_for(cat, cfg=_mockup_cfg(cat)).place_design(
+        design_path, out_path, preset_key, fp, fields, tpl_dir, color, occluder)
 
 
 @app.route('/api/mockup', methods=['POST'])
@@ -7936,43 +8387,55 @@ def api_mockup():
         names = [t.strip() for t in templates.split(',') if t.strip()]
         auto_bg = request.form.get('auto_remove_bg') == '1'
 
-        MOCKUP_OUT.mkdir(parents=True, exist_ok=True)
-        des_path = MOCKUP_OUT / f"_des_{datetime.now().strftime('%H%M%S%f')}.png"
+        # 品类化（第4步）：cat 缺省 wb，wb 路径与改造前逐字节一致
+        cat = _request_cat()
+        peiyi_dirs = _peiyi_dirs(cat)
+        if peiyi_dirs is None:
+            return jsonify({'ok': False, 'error': f'未知品类: {cat}'}), 400
+        cfg = _mockup_cfg(cat)
+
+        cfg.mockup_out.mkdir(parents=True, exist_ok=True)
+        des_path = cfg.mockup_out / f"_des_{datetime.now().strftime('%H%M%S%f')}.png"
         design.save(str(des_path))
         if auto_bg:
             _remove_white_bg(des_path)
 
-        presets = _load_presets()
+        presets = _load_presets(cat)
         results = []
         for t in names:
             if '/' in t:
                 category, name = t.split('/', 1)
             else:
-                category, name = _find_category_for_stem(t)
-            if not category or category not in PEIYI_CATEGORIES:
+                category, name = _find_category_for_stem(t, peiyi_dirs)
+            if not category or category not in peiyi_dirs:
                 results.append({'template': t, 'ok': False, 'error': '未找到该胚衣（请检查素材库分类）'})
                 continue
-            fp, stem, color = _resolve_peiyi_embryo(category, name)
+            fp, stem, color = _resolve_peiyi_embryo(category, name, peiyi_dirs)
             if not fp.exists():
                 results.append({'template': t, 'ok': False, 'error': f'素材库图片不存在: {fp.name}'})
                 continue
-            fields = _embryo_fields(category, name, presets)
+            fields = _embryo_fields(category, name, presets, peiyi_dirs)
             if not fields['final_w'] or not fields['final_h']:
                 results.append({'template': t, 'ok': False,
                                 'error': '该胚衣缺少缩放后宽/高（请在素材库填写，或检查胚衣参数表）'})
                 continue
             pkey = _preset_key_for_stem(stem, presets)
-            tpl_dir = _ensure_tpl(stem, fp)
-            occ = _ensure_occluder(fp, category)
-            out_path = MOCKUP_OUT / f"{stem}_{datetime.now().strftime('%H%M%S%f')}.jpg"
-            r = _run_white_t_mockup(des_path, out_path, pkey, fp, fields, tpl_dir, color, occ)
+            try:
+                tpl_dir = _ensure_tpl(stem, fp, cat)
+                occ = _ensure_occluder(fp, category)
+                out_path = cfg.mockup_out / f"{stem}_{datetime.now().strftime('%H%M%S%f')}.jpg"
+                r = _run_white_t_mockup(des_path, out_path, pkey, fp, fields, tpl_dir, color, occ, cat)
+            except NotImplementedError as e:
+                # 桩品类（如 hoodie）：等待对应模板标定
+                results.append({'template': t, 'ok': False, 'error': str(e)})
+                continue
             if r.returncode != 0:
                 err = (r.stderr or r.stdout or '')[-600:]
                 results.append({'template': t, 'ok': False, 'error': err})
                 continue
             results.append({
                 'template': t, 'ok': True,
-                'url': f"/api/mockup/result/{out_path.name}",
+                'url': f"/api/mockup/result/{out_path.name}" + _peiyi_cat_qs(cat),
                 'fields': fields, 'color': color,
                 'used_tpl': tpl_dir is not None, 'used_occluder': occ is not None,
                 'preset': pkey,
@@ -7986,9 +8449,11 @@ def api_mockup():
 
 @app.route('/api/mockup/result/<path:filename>')
 def api_mockup_result(filename):
+    # 品类化（第4步）：cat 缺省 wb，wb 与改造前一致（MOCKUP_OUT）
+    mdir = mockup_out_for(_request_cat())
     safe = os.path.basename(filename)
-    fp = MOCKUP_OUT / safe
-    if not fp.exists() or fp.resolve().parent != MOCKUP_OUT.resolve():
+    fp = mdir / safe
+    if not fp.exists() or fp.resolve().parent != mdir.resolve():
         abort(404)
     return send_file(str(fp), mimetype='image/jpeg', max_age=0)
 
@@ -7997,12 +8462,23 @@ def api_mockup_result(filename):
 # 后台生图任务
 # ============================================================================
 
-def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
-    """后台执行 Lovart 管线"""
+def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, cat: str = None):
+    """后台执行 Lovart 管线。cat 缺省 wb（行为与改造前一致）；非 wb 品类走品类独立目录/注册表。"""
     global task_state
     start_ts = datetime.now()
 
-    reg = load_registry()
+    # 品类上下文（wb 下全部为既有全局常量，行为不变）
+    gp = _gen_paths(cat)
+    g_cat        = gp["cat"]
+    g_prefix     = gp["prefix"]
+    g_inbox      = gp["inbox"]
+    g_projects   = gp["projects"]
+    g_registry   = gp["registry"]
+    g_manifest   = gp["uid_manifest"]
+    g_wb_reg     = gp["wb_registry"]
+    g_prompt     = gp["prompt"]
+
+    reg = load_registry(g_registry)
     reg = ensure_registry_v4(reg)
 
     try:
@@ -8011,7 +8487,7 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
 
         # ── 1. 分配 UID / group_id ──────────────────────────────
         selected_set = set(selected_files)
-        inbox_groups = group_inbox_files()
+        inbox_groups = group_inbox_files(g_inbox)
 
         uid_map = {}       # filename → uid
         group_map = {}     # group_number → group_id
@@ -8038,9 +8514,9 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
                 if fname not in selected_set:
                     continue
 
-                uid = get_next_uid(reg)
+                uid = get_next_uid(reg, g_prefix)
                 uid_map[fname] = uid
-                md5_val = compute_md5(str(INBOX_DIR / fname))
+                md5_val = compute_md5(str(g_inbox / fname))
 
                 entry = {
                     "md5": md5_val,
@@ -8070,7 +8546,7 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
                 reg["groups"][gid]["source_files"].append(fname)
                 uid_map[fname] = uid
 
-        save_registry(reg)
+        save_registry(reg, g_registry)
         log(f"已分配 {len(uid_map)} 个 UID，{len(group_map)} 个 group_id")
 
         # ── 1b. 写入 UID manifest ─────────────────
@@ -8092,8 +8568,8 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
                     "group_id": gid,
                     "role": role,
                 }
-            UID_MANIFEST_FILE.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
-            log(f"已写入 UID manifest: {UID_MANIFEST_FILE.name}")
+            g_manifest.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+            log(f"已写入 UID manifest: {g_manifest.name}")
         except Exception as e:
             log(f"WARN: UID manifest 写入失败: {e}")
 
@@ -8111,13 +8587,22 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
         env["LOVART_INSECURE_SSL"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUNBUFFERED"] = "1"
-        env["BRIDGE_UID_MANIFEST"] = str(UID_MANIFEST_FILE)
+        env["BRIDGE_UID_MANIFEST"] = str(g_manifest)
+        # 品类注入：数据根 + 款号前缀（wb 下与脚本内缺省值相同，行为不变）
+        if g_cat == _DEFAULT_CAT:
+            env["SEMEMS_ROOT"] = str(BASE_DIR)      # 便携包=包根 data/，本机=D:\Semems WB，与脚本缺省一致
+        else:
+            env["SEMEMS_ROOT"] = str(_cat_root(g_cat))
+        env["LOVART_ID_PREFIX"] = g_prefix
+        # 非 wb 品类：始终注入品类提示词（覆盖视为完整 prompt，文件自带 concrete request）
+        if gp["always_prompt"] and g_prompt.exists():
+            env["LOVART_PROMPT_FILE"] = str(g_prompt)
         # 强制生成：用户点“开始 Lovart 生图”即明确要生图，忽略去重
         # （原图编号会复用, 每批从1开始, 否则正常生图会被旧记录误拦）
         env["LOVART_FORCE"] = "1"
         # 重新生图时使用统一提示词文件，并传入目标 DX 复用映射
         if task_id and task_id.startswith("TASK_REGEN_"):
-            prompt_path = LOVART_DIR / "config" / "POD AI VIRAL FACTORY v3.md"
+            prompt_path = g_prompt
             if prompt_path.exists():
                 env["LOVART_PROMPT_FILE"] = str(prompt_path)
             # reuse_dx 可以是单个 DX（str）或 filename -> dx 映射（dict）
@@ -8151,16 +8636,16 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
 
         # ── 4. 更新 registry ────────────────────────────────────
         log("更新注册表，建立溯源关系...")
-        reg = load_registry()
+        reg = load_registry(g_registry)
         reg = ensure_registry_v4(reg)
 
-        # 扫描 Lovart 生成的 DX 文件夹，关联 group + 建立溯源
-        if PROJECTS_DIR.exists():
+        # 扫描 Lovart 生成的 {prefix} 文件夹，关联 group + 建立溯源
+        if g_projects.exists():
             cutoff = start_ts.timestamp()
-            for d in sorted(os.listdir(PROJECTS_DIR)):
-                if not d.startswith('DX'):
+            for d in sorted(os.listdir(g_projects)):
+                if not d.startswith(g_prefix):
                     continue
-                ai_dir = PROJECTS_DIR / d / "01_AI"
+                ai_dir = g_projects / d / "01_AI"
                 if not ai_dir.exists():
                     continue
 
@@ -8168,7 +8653,7 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
                 if dir_mtime < cutoff:
                     continue
 
-                sm_path = PROJECTS_DIR / d / "source_map.json"
+                sm_path = g_projects / d / "source_map.json"
                 if not sm_path.exists():
                     continue
 
@@ -8218,10 +8703,11 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
                             reg["groups"][gid]["dx_folder"] = d
                             reg["groups"][gid]["status"] = "generated"
 
-                        # 写入 AI sidecar 与 uid_map
-                        if wb_meta:
+                        # 写入 AI sidecar 与 uid_map（wb_meta 的 05_META 根为 wb 专用，仅 wb 写入；
+                        # 卫衣等品类的 sidecar 体系待标定，注册表已记录完整溯源，不影响主流程）
+                        if wb_meta and g_cat == _DEFAULT_CAT:
                             try:
-                                ai_path = PROJECTS_DIR / d / "01_AI" / target_file
+                                ai_path = g_projects / d / "01_AI" / target_file
                                 if ai_path.exists():
                                     inbox_name = img_info.get("inbox_original_name", "")
                                     wb_meta.register_ai(
@@ -8236,7 +8722,7 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
                                 log(f"WARN: AI sidecar 写入失败 {target_file}: {e}")
 
         # 建立溯源关系（AI 图 → INBOX 原图）
-        lovart_reg_path = WB_REGISTRY_FILE
+        lovart_reg_path = g_wb_reg
         lovart_reg = {}
         if lovart_reg_path.exists():
             try:
@@ -8257,14 +8743,17 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
             if src_md5 and src_md5 in reg.get("images", {}):
                 _register_provenance(reg, md5_key, src_md5, "ai_gen")
 
-        save_registry(reg)
+        save_registry(reg, g_registry)
         log("注册表更新完成（含溯源关系）")
 
-        # 通知 check_rem 刷新缓存，确保新 DX 立即在去背预览页显示
-        try:
-            urlopen("http://127.0.0.1:8766/refresh", timeout=3)
-        except Exception:
-            pass
+        # 通知对应品类的 check_rem 刷新缓存，确保新款立即在去背预览页显示
+        # （各品类独立实例，按 g_cat 找端口通知，不再只通知 wb 的 8766）
+        _refresh_port = _CHECK_REM_PORT_FOR_CAT.get(g_cat)
+        if _refresh_port:
+            try:
+                urlopen(f"http://127.0.0.1:{_refresh_port}/refresh", timeout=3)
+            except Exception:
+                pass
 
         # ── 6. 完成 ─────────────────────────────────────────────
         task_state["status"] = "completed"
@@ -8285,10 +8774,10 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None):
 
         # 尝试恢复文件
         try:
-            td = INBOX_DIR / EXCLUDE_DIR
+            td = g_inbox / EXCLUDE_DIR
             if td.exists():
                 for fname in list(os.listdir(td)):
-                    shutil.move(str(td / fname), str(INBOX_DIR / fname))
+                    shutil.move(str(td / fname), str(g_inbox / fname))
                 td.rmdir()
         except Exception:
             pass
@@ -8319,7 +8808,7 @@ if __name__ == '__main__':
         save_registry(reg)
 
     print("╔══════════════════════════════════════════╗")
-    print("║   Y2 Bridge Server v2.3.22              ║")
+    print("║   Y2 Bridge Server v2.6.1              ║")
     if renamed:
         print(f"║   AutoUppercase: {renamed} files          ║")
     print("║                                         ║")

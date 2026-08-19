@@ -3,65 +3,126 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Y2 控制台</title>
+<title>Temu 工作台</title>
 <style>
+  /* 配色与密度借用 mission-control dashboard 参考（musepool pu9ToBED）：
+     底 #050810 / 面板 #0c1220·#111a2b / 1px 发丝边 #1a2540；
+     主 accent 青 #22d3ee（激活态/链接/勾选），语义色 薄荷 #34d399（就绪/主操作）、
+     琥珀 #fbbf24（运行/警告）、红 #f87171（错误/危险）。
+     UI 标签与数据用等宽字体，正文中文走系统中文字体栈。 */
+  :root {
+    --bg: #050810;
+    --panel: #0c1220;
+    --panel-2: #111a2b;
+    --well: #070c16;
+    --line: #1a2540;
+    --line-soft: #131c30;
+    --text: #dbe4f3;
+    --text-dim: #7d8daa;
+    --accent: #22d3ee;
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --err: #f87171;
+    --mono: "Cascadia Code", "JetBrains Mono", Consolas, "PingFang SC", "Microsoft YaHei", monospace;
+  }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-    background: #0f1117; color: #e1e4e8;
-    min-height: 100vh; padding: 18px;
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; padding: 14px 18px 18px;
   }
   .container { max-width: 1600px; margin: 0 auto; }
-  a { color: #58a6ff; text-decoration: none; }
+  a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
   /* Header */
   .header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 14px 22px; background: #161b22;
-    border: 1px solid #30363d; border-radius: 8px; margin-bottom: 16px;
+    padding: 12px 20px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 8px 8px 0 0;
   }
-  .header h1 { font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .header h1 { font-size: 19px; font-weight: 600; display: flex; align-items: center; gap: 10px; letter-spacing: .02em; }
+  .cat-badge {
+    font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .12em;
+    color: var(--accent); border: 1px solid var(--accent);
+    padding: 2px 10px; border-radius: 999px; opacity: .9;
+  }
   .header-right { display: flex; align-items: center; gap: 14px; }
   .status-badge {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 4px 14px; border-radius: 12px;
     font-size: 13px; font-weight: 500; border: 1px solid;
   }
-  .status-idle   { background: #0d4420; color: #7ee787; border-color: #238636; }
-  .status-running{ background: #442d0a; color: #f7c843; border-color: #9e6a03; }
-  .status-completed{ background: #0d4420; color: #7ee787; border-color: #238636; }
-  .status-error  { background: #4d1a1a; color: #f87171; border-color: #a42c2c; }
+  .status-idle   { background: #06281f; color: var(--ok); border-color: #14532d; }
+  .status-running{ background: #2c2210; color: var(--warn); border-color: #6b4e0b; }
+  .status-completed{ background: #06281f; color: var(--ok); border-color: #14532d; }
+  .status-error  { background: #2c1215; color: var(--err); border-color: #6e2028; }
   .spinner {
     display: inline-block; width: 14px; height: 14px;
-    border: 2px solid #8b949e; border-top-color: transparent;
+    border: 2px solid var(--text-dim); border-top-color: transparent;
     border-radius: 50%; animation: spin .6s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* ===== 品类 Tab（segmented control：透明 pill + 1px 边，激活态 accent 填充） ===== */
+  .cat-tabs {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--panel); border: 1px solid var(--line); border-top: none;
+    padding: 8px 20px; margin-bottom: 16px; border-radius: 0 0 8px 8px;
+  }
+  .cat-tabs-label {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .18em;
+    color: var(--text-dim); user-select: none;
+  }
+  .cat-tab {
+    font-size: 13px; font-weight: 500; color: var(--text-dim);
+    background: transparent; border: 1px solid var(--line);
+    padding: 5px 18px; border-radius: 999px; cursor: pointer;
+    transition: border-color .15s, color .15s, background .15s;
+  }
+  .cat-tab:hover { border-color: var(--accent); color: var(--text); }
+  .cat-tab.active {
+    background: var(--accent); border-color: var(--accent);
+    color: #04121a; font-weight: 700;
+  }
+
   /* Buttons */
   .btn {
     display: inline-flex; align-items: center; gap: 5px;
-    padding: 7px 16px; border-radius: 6px; font-size: 13px; font-weight: 500;
+    padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500;
     cursor: pointer; border: 1px solid; transition: .1s;
-    background: #21262d; color: #c9d1d9; border-color: #30363d; white-space: nowrap;
+    background: var(--panel-2); color: var(--text); border-color: var(--line); white-space: nowrap;
   }
-  .btn:hover { background: #30363d; }
+  .btn:hover { border-color: var(--accent); }
   .btn:active { transform: scale(0.97); }
   .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn-primary { background: #238636; color: #fff; border-color: #2ea043; }
-  .btn-primary:hover:not(:disabled) { background: #2ea043; }
+  .btn-primary { background: var(--ok); color: #04121a; border-color: var(--ok); font-weight: 600; }
+  .btn-primary:hover:not(:disabled) { background: #4be0aa; border-color: #4be0aa; }
+
+  /* 功能分组：字距小标签分层，不套卡片 */
+  .fn-groups { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  .fn-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .fn-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .18em;
+    color: var(--text-dim); min-width: 64px; user-select: none;
+  }
+  .fn-group + .fn-group { border-top: 1px solid var(--line-soft); padding-top: 6px; }
+  .soon-badge {
+    font-family: var(--mono); font-size: 9px; letter-spacing: .08em;
+    color: var(--warn); border: 1px solid var(--warn);
+    border-radius: 4px; padding: 0 5px; margin-left: 2px;
+  }
 
   /* Section */
   .section {
-    background: #161b22; border: 1px solid #30363d;
+    background: var(--panel); border: 1px solid var(--line);
     border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;
   }
   .section-title {
     font-size: 15px; font-weight: 600; margin-bottom: 12px;
     display: flex; align-items: center; justify-content: space-between;
   }
-  .section-title .count { font-size: 12px; color: #8b949e; font-weight: 400; }
+  .section-title .count { font-size: 12px; color: var(--text-dim); font-weight: 400; }
   .toolbar {
     display: flex; align-items: center; gap: 8px;
     margin-bottom: 12px; flex-wrap: wrap;
@@ -74,20 +135,20 @@
     gap: 12px;
   }
   .gcard {
-    background: #0d1117; border: 1px solid #30363d;
+    background: var(--well); border: 1px solid var(--line);
     border-radius: 8px; overflow: hidden;
   }
   .gcard-head {
     display: flex; align-items: center; gap: 10px;
-    padding: 8px 12px; background: #161b22;
-    border-bottom: 1px solid #21262d;
+    padding: 8px 12px; background: var(--panel);
+    border-bottom: 1px solid var(--panel-2);
   }
   .gcard-head .gcb {
-    width: 16px; height: 16px; accent-color: #238636; cursor: pointer;
+    width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer;
   }
-  .gcard-head .glabel { font-weight: 600; font-size: 14px; color: #58a6ff; }
-  .gcard-head .gtypes { font-size: 11px; color: #8b949e; }
-  .gcard-head .gcount { font-size: 11px; color: #8b949e; margin-left: auto; }
+  .gcard-head .glabel { font-weight: 600; font-size: 14px; color: var(--accent); }
+  .gcard-head .gtypes { font-size: 11px; color: var(--text-dim); }
+  .gcard-head .gcount { font-size: 11px; color: var(--text-dim); margin-left: auto; }
 
   /* Consistent image cells: fixed 150px width, flex layout */
   .gcard-body {
@@ -101,33 +162,33 @@
     position: relative;
   }
   .img-cell {
-    border: 2px solid #30363d; border-radius: 6px; overflow: hidden;
-    background: #1a1a1a; cursor: pointer; transition: .12s;
+    border: 2px solid var(--line); border-radius: 6px; overflow: hidden;
+    background: #0a0f1a; cursor: pointer; transition: .12s;
     position: relative;
   }
-  .img-cell:hover { border-color: #58a6ff; }
-  .img-cell.checked { border-color: #238636; box-shadow: 0 0 0 2px #23863666; }
+  .img-cell:hover { border-color: var(--accent); }
+  .img-cell.checked { border-color: var(--accent); box-shadow: 0 0 0 2px #22d3ee44; }
   .img-cell .cb {
     position: absolute; top: 4px; left: 4px; z-index: 2;
-    width: 16px; height: 16px; cursor: pointer; accent-color: #238636;
+    width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent);
   }
   .img-cell .role-tag {
     position: absolute; top: 4px; right: 4px; z-index: 2;
     font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 4px;
     background: rgba(0,0,0,.7); backdrop-filter: blur(2px);
   }
-  .role-tag.B  { color: #79c0ff; border: 1px solid #58a6ff; }
-  .role-tag.W  { color: #f0c674; border: 1px solid #f0c674; }
+  .role-tag.B  { color: #7ce7f5; border: 1px solid var(--accent); }
+  .role-tag.W  { color: var(--warn); border: 1px solid var(--warn); }
   .role-tag.BW { color: #d2a8ff; border: 1px solid #d2a8ff; }
-  .role-tag.WB { color: #7ee787; border: 1px solid #7ee787; }
+  .role-tag.WB { color: var(--ok); border: 1px solid var(--ok); }
 
   .img-cell .thumb {
     width: 150px; height: 150px;
     object-fit: contain; display: block;
-    background: #1a1a1a;
+    background: #0a0f1a;
   }
   .img-cell .fname {
-    padding: 2px 6px 3px; font-size: 10px; color: #8b949e;
+    padding: 2px 6px 3px; font-size: 10px; color: var(--text-dim);
     text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   /* Action buttons overlay */
@@ -142,123 +203,123 @@
     border: none; cursor: pointer; font-weight: 600;
     transition: .1s; line-height: 1.6;
   }
-  .act-del { background: #e53935cc; color: #fff; }
-  .act-del:hover { background: #e53935; }
-  .act-bw { background: #4caf50cc; color: #fff; }
-  .act-bw:hover { background: #4caf50; }
+  .act-del { background: #f87171cc; color: #1f0707; }
+  .act-del:hover { background: var(--err); }
+  .act-bw { background: #34d399cc; color: #04121a; }
+  .act-bw:hover { background: var(--ok); }
 
   /* Status */
   .progress-bar {
-    width: 100%; height: 5px; background: #21262d; border-radius: 3px;
+    width: 100%; height: 5px; background: var(--panel-2); border-radius: 3px;
     overflow: hidden; margin: 8px 0;
   }
   .progress-bar .fill {
-    height: 100%; background: #238636; border-radius: 3px;
+    height: 100%; background: var(--accent); border-radius: 3px;
     transition: width .5s ease;
   }
-  .status-text { font-size: 14px; color: #c9d1d9; margin: 6px 0; }
+  .status-text { font-size: 14px; color: var(--text); margin: 6px 0; }
   .log-box {
-    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    background: var(--well); border: 1px solid var(--line); border-radius: 6px;
     padding: 8px 12px; max-height: 160px; overflow-y: auto;
-    font-family: "Cascadia Code", monospace; font-size: 12px; line-height: 1.6;
+    font-family: var(--mono); font-size: 12px; line-height: 1.6;
   }
-  .log-box .entry { color: #8b949e; }
+  .log-box .entry { color: var(--text-dim); }
   .log-box .entry.error { color: #f87171; }
-  .log-box .entry.ok { color: #7ee787; }
-  .log-box .entry.warn { color: #f7c843; }
+  .log-box .entry.ok { color: var(--ok); }
+  .log-box .entry.warn { color: var(--warn); }
 
   /* Projects */
   .proj-table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .proj-table th {
-    text-align: left; padding: 7px 10px; border-bottom: 1px solid #30363d;
-    color: #8b949e; font-weight: 500; font-size: 12px;
+    text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line);
+    color: var(--text-dim); font-weight: 500; font-size: 12px;
   }
-  .proj-table td { padding: 7px 10px; border-bottom: 1px solid #21262d; }
-  .proj-table tr:hover td { background: #0d1117; }
-  .proj-table .dx-link { color: #58a6ff; font-weight: 500; cursor: pointer; }
+  .proj-table td { padding: 7px 10px; border-bottom: 1px solid var(--panel-2); }
+  .proj-table tr:hover td { background: var(--well); }
+  .proj-table .dx-link { color: var(--accent); font-weight: 500; cursor: pointer; }
   .proj-table .dx-link:hover { text-decoration: underline; }
   .proj-table .tag {
     display: inline-block; font-size: 10px; padding: 1px 6px;
-    border-radius: 8px; background: #21262d; color: #8b949e; margin-right: 4px;
+    border-radius: 8px; background: var(--panel-2); color: var(--text-dim); margin-right: 4px;
   }
   .folder-btn { cursor: pointer; font-size: 15px; padding: 2px 6px; border-radius: 4px; }
-  .folder-btn:hover { background: #30363d; }
+  .folder-btn:hover { background: var(--line); }
 
   /* Date-grouped project accordion */
   .date-group {
-    border: 1px solid #30363d; border-radius: 6px;
+    border: 1px solid var(--line); border-radius: 6px;
     margin-bottom: 6px; overflow: hidden;
   }
   .date-head {
     display: flex; align-items: center; gap: 10px;
-    padding: 8px 14px; background: #0d1117; cursor: pointer;
+    padding: 8px 14px; background: var(--well); cursor: pointer;
     user-select: none; transition: .1s;
   }
-  .date-head:hover { background: #161b22; }
-  .date-arrow { font-size: 10px; color: #8b949e; width: 14px; text-align: center; }
-  .date-label { font-weight: 600; font-size: 14px; color: #c9d1d9; }
-  .date-count { font-size: 12px; color: #8b949e; margin-left: auto; }
-  .date-today { font-size: 10px; background: #238636; color: #fff; padding: 1px 8px; border-radius: 8px; font-weight: 600; }
+  .date-head:hover { background: var(--panel); }
+  .date-arrow { font-size: 10px; color: var(--text-dim); width: 14px; text-align: center; }
+  .date-label { font-weight: 600; font-size: 14px; color: var(--text); }
+  .date-count { font-size: 12px; color: var(--text-dim); margin-left: auto; }
+  .date-today { font-size: 10px; background: var(--ok); color: #04121a; padding: 1px 8px; border-radius: 8px; font-weight: 600; }
   .date-body { display: none; }
   .date-body .proj-row {
     display: flex; gap: 8px;
     padding: 8px 14px 8px 30px; transition: .1s;
-    border-top: 1px solid #21262d; font-size: 13px;
+    border-top: 1px solid var(--panel-2); font-size: 13px;
   }
-  .date-body .proj-row:hover { background: #161b22; }
+  .date-body .proj-row:hover { background: var(--panel); }
   .date-body .p-left {
     display: flex; flex-direction: column; gap: 4px;
     min-width: 90px; flex-shrink: 0;
   }
-  .date-body .dx-link { color: #58a6ff; font-weight: 600; cursor: pointer; font-size: 14px; }
+  .date-body .dx-link { color: var(--accent); font-weight: 600; cursor: pointer; font-size: 14px; }
   .date-body .dx-link:hover { text-decoration: underline; }
   .date-body .p-detail { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .date-body .p-line {
     display: flex; align-items: center; gap: 6px;
     font-size: 12px;
   }
-  .date-body .p-label { color: #8b949e; white-space: nowrap; min-width: 80px; flex-shrink: 0; }
+  .date-body .p-label { color: var(--text-dim); white-space: nowrap; min-width: 80px; flex-shrink: 0; }
   .date-body .p-files {
     display: flex; flex-wrap: wrap; gap: 3px 8px;
     overflow: hidden;
   }
   .date-body .pfile {
-    color: #c9d1d9; cursor: pointer; padding: 1px 4px;
+    color: var(--text); cursor: pointer; padding: 1px 4px;
     border-radius: 3px; transition: .1s;
   }
-  .date-body .pfile:hover { background: #30363d; color: #58a6ff; }
-  .date-body .pfile-bad { color: #f85149; background: #2d1a1a; border-radius: 3px; padding: 1px 5px; font-weight: 600; }
-  .date-body .pfile-bad:hover { background: #4d2a2a; color: #ff7b72; }
-  .date-body .pdim { color: #484f58; font-size: 11px; }
-  .date-body .p-orig { color: #8b949e; font-size: 10px; }
-  .date-body .proj-bad { background: #2d1a1a; border-left: 3px solid #f85149; }
-  .date-body .proj-bad:hover { background: #3d2a2a !important; }
+  .date-body .pfile:hover { background: var(--line); color: var(--accent); }
+  .date-body .pfile-bad { color: var(--err); background: #2c1215; border-radius: 3px; padding: 1px 5px; font-weight: 600; }
+  .date-body .pfile-bad:hover { background: #3d1a1a; color: #ff9a94; }
+  .date-body .pdim { color: #4d5b74; font-size: 11px; }
+  .date-body .p-orig { color: var(--text-dim); font-size: 10px; }
+  .date-body .proj-bad { background: #2c1215; border-left: 3px solid var(--err); }
+  .date-body .proj-bad:hover { background: #3d1a1a !important; }
   .date-body .p-warn {
-    font-size: 11px; color: #f85149; padding: 2px 0;
+    font-size: 11px; color: var(--err); padding: 2px 0;
     display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   }
   .fix-btn {
     display: inline-block; font-size: 10px; font-weight: 600;
-    background: #238636; color: #fff; padding: 2px 10px; border-radius: 4px;
+    background: var(--ok); color: #04121a; padding: 2px 10px; border-radius: 4px;
     cursor: pointer; transition: .1s; white-space: nowrap;
   }
-  .fix-btn:hover { background: #2ea043; }
+  .fix-btn:hover { background: #4be0aa; }
   .fix-btn:active { transform: scale(0.95); }
   .p-report {
-    font-size: 11px; color: #7ee787; padding: 4px 8px;
-    background: #0d441a; border-radius: 4px; margin: 2px 0; line-height: 1.5;
+    font-size: 11px; color: var(--ok); padding: 4px 8px;
+    background: #06281f; border-radius: 4px; margin: 2px 0; line-height: 1.5;
   }
-  .p-report .r-move { color: #7ee787; }
-  .p-report .r-skip { color: #f7c843; }
+  .p-report .r-move { color: var(--ok); }
+  .p-report .r-skip { color: var(--warn); }
   .p-report .r-err  { color: #f87171; }
   .p-report .r-link {
-    color: #58a6ff; cursor: pointer; text-decoration: underline;
+    color: var(--accent); cursor: pointer; text-decoration: underline;
     text-decoration-style: dotted;
   }
-  .p-report .r-link:hover { color: #79c0ff; }
+  .p-report .r-link:hover { color: #7ce7f5; }
   .date-body .tag {
     display: inline-block; font-size: 9px; padding: 1px 5px;
-    border-radius: 6px; background: #21262d; color: #8b949e;
+    border-radius: 6px; background: var(--panel-2); color: var(--text-dim);
   }
 
   /* Trash grid — match INBOX style exactly */
@@ -268,42 +329,42 @@
   }
   .trash-item {
     width: 150px; flex-shrink: 0;
-    background: #0d1117; border: 2px solid #30363d;
+    background: var(--well); border: 2px solid var(--line);
     border-radius: 6px; overflow: hidden; cursor: pointer;
     transition: .12s; position: relative;
   }
-  .trash-item:hover { border-color: #f0c674; }
+  .trash-item:hover { border-color: var(--warn); }
   .trash-item .thumb {
     width: 150px; height: 150px;
-    object-fit: contain; display: block; background: #1a1a1a;
+    object-fit: contain; display: block; background: #0a0f1a;
   }
   .trash-item .info {
-    padding: 2px 6px 3px; font-size: 10px; color: #8b949e;
+    padding: 2px 6px 3px; font-size: 10px; color: var(--text-dim);
     text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .trash-item .restore-badge {
     position: absolute; top: 4px; right: 4px;
-    font-size: 10px; background: #238636cc; color: #fff;
+    font-size: 10px; background: #34d399cc; color: #04121a;
     padding: 2px 7px; border-radius: 4px; font-weight: 600;
     display: none;
   }
   .trash-item:hover .restore-badge { display: block; }
 
-  .empty-state { text-align: center; padding: 30px; color: #8b949e; }
+  .empty-state { text-align: center; padding: 30px; color: var(--text-dim); }
   .empty-state .big-icon { font-size: 40px; margin-bottom: 10px; }
 
   /* Registry */
   .query-row { display: flex; gap: 8px; margin-bottom: 10px; }
   .query-row input {
     flex: 1; padding: 7px 10px; border-radius: 6px;
-    background: #0d1117; border: 1px solid #30363d; color: #e1e4e8; font-size: 13px;
+    background: var(--well); border: 1px solid var(--line); color: var(--text); font-size: 13px;
   }
-  .query-row input:focus { outline: none; border-color: #58a6ff; }
+  .query-row input:focus { outline: none; border-color: var(--accent); }
   .query-result {
-    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    background: var(--well); border: 1px solid var(--line); border-radius: 6px;
     padding: 8px 12px; max-height: 250px; overflow-y: auto;
   }
-  .query-result pre { margin: 0; white-space: pre-wrap; font-size: 12px; color: #c9d1d9; }
+  .query-result pre { margin: 0; white-space: pre-wrap; font-size: 12px; color: var(--text); }
 
   /* Modal */
   .modal-overlay {
@@ -313,11 +374,11 @@
   }
   .modal-overlay.active { display: flex; }
   .modal-box {
-    background: #161b22; border: 1px solid #30363d;
+    background: var(--panel); border: 1px solid var(--line);
     border-radius: 12px; padding: 24px; max-width: 520px; width: 90%;
   }
   .modal-box h2 { font-size: 18px; margin-bottom: 12px; }
-  .modal-box p { color: #8b949e; margin-bottom: 14px; line-height: 1.6; }
+  .modal-box p { color: var(--text-dim); margin-bottom: 14px; line-height: 1.6; }
   .modal-box .btn-row { display: flex; gap: 8px; justify-content: flex-end; }
 
   /* Hover Preview */
@@ -332,7 +393,7 @@
 
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
 
   @media (max-width: 768px) {
     .header { flex-direction: column; gap: 10px; align-items: flex-start; }
@@ -348,7 +409,7 @@
 
   <!-- HEADER -->
   <div class="header">
-    <h1><span>🔷</span> Y2 控制台</h1>
+    <h1><span>🔷</span> Temu 工作台 <span class="cat-badge" id="catBadge">👕 T恤</span></h1>
     <div class="header-right">
       <span class="status-badge status-idle" id="statusBadge">
         <span class="spinner" id="statusSpinner" style="display:none"></span>
@@ -358,42 +419,56 @@
     </div>
   </div>
 
+  <!-- 品类 Tab：T恤(wb，缺省，URL 无参数) / 卫衣(hoodie，?cat=hoodie 整页跳转) -->
+  <div class="cat-tabs">
+    <span class="cat-tabs-label">品类</span>
+    <button class="cat-tab" data-cat="wb" onclick="location.href='/'">👕 T恤</button>
+    <button class="cat-tab" data-cat="hoodie" onclick="location.href='/?cat=hoodie'">🧥 卫衣</button>
+  </div>
+
   <!-- INBOX -->
   <div class="section">
     <div class="section-title">
-      <span>📂 INBOX <span style="font-size:12px;color:#8b949e;font-weight:400">（鼠标悬停图片显示操作按钮）</span></span>
+      <span>📂 INBOX <span style="font-size:12px;color:var(--text-dim);font-weight:400">（鼠标悬停图片显示操作按钮）</span></span>
       <span class="count" id="inboxCount">加载中…</span>
     </div>
     <div class="toolbar">
       <button class="btn" onclick="toggleSelectAll()" id="selectAllBtn">☑ 全选</button>
-      <span style="color:#8b949e;font-size:13px;margin:0 6px" id="selectedCount">已选 0 张</span>
+      <span style="color:var(--text-dim);font-size:13px;margin:0 6px" id="selectedCount">已选 0 张</span>
       <button class="btn btn-primary" onclick="confirmGenerate()" id="genBtn" disabled>🚀 开始 LOVART 生图</button>
-      <span style="flex:1"></span>
-      <button class="btn" onclick="launchCheckRem()" title="启动 AI vs 去背 对比预览">🔍 去背预览</button>
-      <button class="btn" onclick="window.open('/ai-review','_blank')" title="原图与AI生图对比">🎨 AI对比</button>
-      <button class="btn" onclick="window.open('/upload','_blank')" title="打开上款页面，批量上传03_UPLOAD成品">📤 上款</button>
-      <button class="btn" onclick="window.open('/pricing','_blank')" title="打开 Temu 核价页面">💰 核价</button>
-      <button class="btn" onclick="window.open('/retail_price','_blank')" title="打开 Temu 建议零售价填写页面">📝 建议零售价</button>
-      <button class="btn" onclick="window.open('/activity','_blank')" title="打开 Temu 报活动页面">🎉 报活动</button>
-      <button class="btn" onclick="window.open('/order-price','_blank')" title="打开 Temu 价格申报视角：一键进入并自动点「待卖家确认」+ 设每页200条">📉 价格申报</button>
-      <button class="btn" onclick="window.open('/traffic','_blank')" title="打开 Temu 流量加速器：登录进页面后点「好了」，脚本接管自动开启">🚀 流量加速</button>
-      <button class="btn" onclick="window.open('/peiyi','_blank')" title="打开胚衣制作页面，分类上传素材并自动处理为 1340×1785 @ 72DPI">🧵 胚衣制作</button>
-      <button class="btn" onclick="scanProvenance()" title="扫描所有文件建立溯源关系">🔗 溯源扫描</button>
-      <button class="btn" onclick="toggleTrashPanel()" title="查看回收站文件">🗑 回收站 <span id="trashCount" style="color:#8b949e;font-size:11px"></span></button>
-      <button class="btn" onclick="emptyTrash()" title="将本地回收站文件送入系统回收站">🧹 清空回收站</button>
+    </div>
+    <div class="fn-groups">
+      <div class="fn-group">
+        <span class="fn-label">品类功能</span>
+        <button class="btn" onclick="launchCheckRem()" title="启动 AI vs 去背 对比预览">🔍 去背预览</button>
+        <button class="btn" id="aiReviewBtn" title="原图与AI生图对比">🎨 AI对比</button>
+        <button class="btn" id="uploadBtn" title="打开上款页面，批量上传03_UPLOAD成品">📤 上款<span class="soon-badge" id="uploadSoonBadge" style="display:none">待标定</span></button>
+        <button class="btn" id="peiyiBtn" title="打开胚衣制作页面">🧵 胚衣制作</button>
+      </div>
+      <div class="fn-group">
+        <span class="fn-label">Temu 共用</span>
+        <button class="btn" onclick="window.open('/pricing','_blank')" title="打开 Temu 核价页面">💰 核价</button>
+        <button class="btn" onclick="window.open('/retail_price','_blank')" title="打开 Temu 建议零售价填写页面">📝 建议零售价</button>
+        <button class="btn" onclick="window.open('/activity','_blank')" title="打开 Temu 报活动页面">🎉 报活动</button>
+        <button class="btn" onclick="window.open('/order-price','_blank')" title="打开 Temu 价格申报视角：一键进入并自动点「待卖家确认」+ 设每页200条">📉 价格申报</button>
+        <button class="btn" onclick="window.open('/traffic','_blank')" title="打开 Temu 流量加速器：登录进页面后点「好了」，脚本接管自动开启">🚀 流量加速</button>
+        <button class="btn" onclick="scanProvenance()" title="扫描所有文件建立溯源关系">🔗 溯源扫描</button>
+        <button class="btn" onclick="toggleTrashPanel()" title="查看回收站文件">🗑 回收站 <span id="trashCount" style="color:var(--text-dim);font-size:11px"></span></button>
+        <button class="btn" onclick="emptyTrash()" title="将本地回收站文件送入系统回收站">🧹 清空回收站</button>
+      </div>
     </div>
     <div class="card-grid" id="cardGrid"></div>
     <div id="inboxEmpty" class="empty-state" style="display:none">
       <div class="big-icon">📭</div>
       <p>INBOX 为空</p>
-      <p style="font-size:13px;color:#8b949e">将图片放入 D:\Semems WB\01_INBOX\ 后刷新</p>
+      <p style="font-size:13px;color:var(--text-dim)" id="inboxEmptyHint">将图片放入 D:\Semems WB\01_INBOX\ 后刷新</p>
     </div>
   </div>
 
   <!-- TRASH PANEL -->
   <div class="section" id="trashPanel" style="display:none">
     <div class="section-title">
-      <span>🗑 回收站 <span style="font-size:12px;color:#8b949e;font-weight:400">（点击文件恢复）</span></span>
+      <span>🗑 回收站 <span style="font-size:12px;color:var(--text-dim);font-weight:400">（点击文件恢复）</span></span>
       <span class="count" id="trashCountLabel"></span>
     </div>
     <div class="trash-wrap" id="trashGrid"></div>
@@ -404,7 +479,7 @@
 
   <!-- STATUS -->
   <div class="section">
-    <div class="section-title"><span>📊 状态</span><span id="taskInfo" style="font-size:12px;color:#8b949e;font-weight:400"></span></div>
+    <div class="section-title"><span>📊 状态</span><span id="taskInfo" style="font-size:12px;color:var(--text-dim);font-weight:400"></span></div>
     <div class="progress-bar"><div class="fill" id="progressFill"></div></div>
     <div class="status-text" id="statusProgress">-</div>
     <div class="log-box" id="logBox"></div>
@@ -446,6 +521,19 @@
 
 <script>
 // ============================================================================
+// 品类（顶部 Tab）：T恤=wb（URL 无参数，行为与旧版一字不变）；卫衣=hoodie（?cat=hoodie）
+// ============================================================================
+const CAT = (function () {
+  const c = new URLSearchParams(location.search).get('cat');
+  return c === 'hoodie' ? 'hoodie' : 'wb';
+})();
+const IS_HOODIE = CAT === 'hoodie';
+// 品类相关 URL 统一经此拼接；wb 下原样返回（不带 cat，保持旧 URL 逐字节不变）
+function withCat(url) {
+  if (!IS_HOODIE) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'cat=' + CAT;
+}
+
 const STATE = {
   groups: [],
   selected: new Set(),
@@ -453,6 +541,27 @@ const STATE = {
   generating: false,
   allFiles: [],
 };
+
+// 品类 UI 初始化：Tab 高亮 / 标题徽标 / 品类功能入口链接
+(function initCategoryUI() {
+  document.querySelectorAll('.cat-tab').forEach(b => {
+    b.classList.toggle('active', b.getAttribute('data-cat') === CAT);
+  });
+  const badge = document.getElementById('catBadge');
+  if (IS_HOODIE) {
+    badge.textContent = '🧥 卫衣';
+    document.title = 'Temu 工作台（卫衣）';
+    document.getElementById('inboxEmptyHint').textContent = '将图片放入 D:\\Semems Hoodie\\01_INBOX\\ 后刷新';
+    // 卫衣 listing profile / 提示词尚未标定：上款入口加“待标定”角标
+    document.getElementById('uploadSoonBadge').style.display = '';
+    document.getElementById('uploadBtn').title =
+      '卫衣 listing profile / 提示词尚未标定，上款暂不可用（打开后后端会明确报错）';
+  }
+  // 品类功能入口：卫衣模式下全部带 cat=hoodie；T恤模式 URL 不含 cat
+  document.getElementById('aiReviewBtn').onclick = () => window.open(withCat('/ai-review'), '_blank');
+  document.getElementById('uploadBtn').onclick = () => window.open(withCat('/upload'), '_blank');
+  document.getElementById('peiyiBtn').onclick = () => window.open(withCat('/peiyi'), '_blank');
+})();
 
 async function refreshAll() {
   await Promise.all([loadInbox(), loadProjects(), loadStatus()]);
@@ -463,7 +572,7 @@ async function refreshAll() {
 // ============================================================================
 async function loadInbox() {
   try {
-    const res = await fetch('/api/inbox');
+    const res = await fetch(withCat('/api/inbox'));
     const data = await res.json();
     STATE.groups = data.groups || [];
 
@@ -514,7 +623,7 @@ function renderCards() {
           <input type="checkbox" class="cb" ${checked}
                  onclick="event.stopPropagation();toggleImg('${img.filename}','${gi}')">
           <span class="role-tag ${role}">${role}</span>
-          <img class="thumb" src="/api/preview/${img.filename}"
+          <img class="thumb" src="${withCat('/api/preview/' + img.filename)}"
                alt="${img.filename}" loading="lazy"
                onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23161b22%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2250%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23333%22 font-size=%2230%22>?</text></svg>'">
           <div class="fname">${img.filename}</div>
@@ -577,7 +686,7 @@ async function deleteFile(filename) {
     const res = await fetch('/api/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: filename }),
+      body: JSON.stringify({ file: filename, ...(IS_HOODIE ? { cat: CAT } : {}) }),
     });
     const data = await res.json();
     if (data.ok) {
@@ -595,7 +704,7 @@ async function renameToBW(filename) {
     const res = await fetch('/api/rename', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: filename }),
+      body: JSON.stringify({ file: filename, ...(IS_HOODIE ? { cat: CAT } : {}) }),
     });
     const data = await res.json();
     if (data.ok) {
@@ -648,14 +757,14 @@ async function loadTrash() {
             <div class="fname">${img.filename}</div>
           </div>
           <div class="img-actions">
-            <button class="act-btn" style="background:#238636cc;color:#fff" onclick="event.stopPropagation();restoreFile('${img.filename}')">↩ 恢复</button>
+            <button class="act-btn" style="background:#34d399cc;color:#04121a" onclick="event.stopPropagation();restoreFile('${img.filename}')">↩ 恢复</button>
           </div>
         </div>`;
       }).join('');
 
-      html += `<div class="gcard" style="border-color:#443a1a">
-        <div class="gcard-head" style="background:#1a1a1a;border-color:#443a1a">
-          <span class="glabel" style="color:#f0c674">#${g.group_number}</span>
+      html += `<div class="gcard" style="border-color:#6b4e0b">
+        <div class="gcard-head" style="background:#0a0f1a;border-color:#6b4e0b">
+          <span class="glabel" style="color:var(--warn)">#${g.group_number}</span>
           <span class="gtypes">[${typesLabel}]</span>
           <span class="gcount">${g.count} 张</span>
         </div>
@@ -712,7 +821,7 @@ function showHover(filename, el) {
   if (hoverTimer) clearTimeout(hoverTimer);
   hoverTimer = setTimeout(() => {
     const preview = document.getElementById('hoverPreview');
-    document.getElementById('hoverImg').src = `/api/hover/${filename}`;
+    document.getElementById('hoverImg').src = withCat(`/api/hover/${filename}`);
     preview.style.display = 'block';
     const rect = el.getBoundingClientRect();
     let left = rect.right + 8, top = rect.top;
@@ -738,7 +847,7 @@ function confirmGenerate() {
   const extra = STATE.selected.size > 8 ? `<br>…共 ${STATE.selected.size} 张` : '';
   document.getElementById('confirmText').innerHTML =
     `将使用 Lovart API 为以下 ${STATE.selected.size} 张图片生图：<br><br>
-     <code style="background:#0d1117;padding:6px 10px;border-radius:4px;font-size:13px;display:inline-block">
+     <code style="background:var(--well);padding:6px 10px;border-radius:4px;font-size:13px;display:inline-block">
      ${esc(files)}${extra}</code><br><br>⚠️ 每张约 16 积分`;
   document.getElementById('confirmModal').classList.add('active');
 }
@@ -746,7 +855,7 @@ function closeModal() { document.getElementById('confirmModal').classList.remove
 async function startGenerate() {
   closeModal(); STATE.generating = true; document.getElementById('genBtn').disabled = true; document.getElementById('logBox').innerHTML = '';
   try {
-    const res = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selected: [...STATE.selected] }) });
+    const res = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selected: [...STATE.selected], ...(IS_HOODIE ? { cat: CAT } : {}) }) });
     const data = await res.json();
     if (!res.ok) { addLog('error', `启动失败: ${data.error}`); STATE.generating = false; updateCounts(); return; }
     addLog('ok', `任务已启动: ${data.message}`); startPolling();
@@ -913,10 +1022,17 @@ async function scanProvenance() {
 }
 
 function launchCheckRem() {
+  // 按品类分端口：T恤 wb@8766、卫衣 hoodie@8767，避免选卫衣却打开 T恤 去背预览（串类）
+  const port = IS_HOODIE ? 8767 : 8766;
+  const cat = IS_HOODIE ? 'hoodie' : 'wb';
   // 与 AI 对比按钮一致：直接开新标签，瞬时响应
-  window.open('http://127.0.0.1:8766/', '_blank');
-  // 后台通知 Bridge 兜底（若守护线程还没拉起 check_rem，Bridge 会尝试启动）
-  fetch('/api/launch-check-rem', { method: 'POST' }).catch(() => {});
+  window.open('http://127.0.0.1:' + port + '/', '_blank');
+  // 后台通知 Bridge 兜底（若守护线程还没拉起对应品类的 check_rem，Bridge 会尝试启动）
+  fetch('/api/launch-check-rem', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cat: cat }),
+  }).catch(() => {});
 }
 
 async function fixMismatch(dxId, btn) {
@@ -982,10 +1098,10 @@ async function queryRegistry() {
     if (regData.results && regData.results.length) {
       html += `<pre>${esc(JSON.stringify(regData.results[0], null, 2))}</pre>`;
       if (regData.results[0].source_md5) {
-        html += `<div style="margin-top:6px"><b>🔗 来源 MD5:</b> <code style="color:#58a6ff">${esc(regData.results[0].source_md5)}</code></div>`;
+        html += `<div style="margin-top:6px"><b>🔗 来源 MD5:</b> <code style="color:var(--accent)">${esc(regData.results[0].source_md5)}</code></div>`;
       }
     } else {
-      html += '<div style="color:#8b949e;margin-top:8px">未找到</div>';
+      html += '<div style="color:var(--text-dim);margin-top:8px">未找到</div>';
     }
     html += '</div>';
 
@@ -999,16 +1115,16 @@ async function queryRegistry() {
         const typeIcon = {inbox:'📥', ai_gen:'🎨', rembg:'✂️', upload:'📎'}[node.type] || '❓';
         html += `<div style="display:flex;align-items:center;gap:6px;padding:2px 0;font-size:12px">
           <span>${typeIcon}</span>
-          <span style="color:#c9d1d9">${esc(node.name)}</span>
-          <span style="color:#8b949e;font-size:10px">[${esc(node.type)}]</span>
+          <span style="color:var(--text)">${esc(node.name)}</span>
+          <span style="color:var(--text-dim);font-size:10px">[${esc(node.type)}]</span>
         </div>`;
-        if (i > 0) html += '<div style="color:#30363d;padding-left:14px">↓</div>';
+        if (i > 0) html += '<div style="color:var(--line);padding-left:14px">↓</div>';
       }
       html += '</div>';
     } else if (provData.error) {
       html += `<div style="color:#f87171;margin-top:8px">${esc(provData.error)}</div>`;
     } else {
-      html += '<div style="color:#8b949e;margin-top:8px">无溯源信息（可点击🔗溯源扫描建立）</div>';
+      html += '<div style="color:var(--text-dim);margin-top:8px">无溯源信息（可点击🔗溯源扫描建立）</div>';
     }
 
     // Derived images
@@ -1018,8 +1134,8 @@ async function queryRegistry() {
         const typeIcon = {inbox:'📥', ai_gen:'🎨', rembg:'✂️', upload:'📎'}[d.type] || '❓';
         html += `<div style="display:flex;align-items:center;gap:6px;padding:2px 0;font-size:12px">
           <span>${typeIcon}</span>
-          <span style="color:#c9d1d9">${esc(d.name)}</span>
-          <span style="color:#8b949e;font-size:10px">[${esc(d.type)}]</span>
+          <span style="color:var(--text)">${esc(d.name)}</span>
+          <span style="color:var(--text-dim);font-size:10px">[${esc(d.type)}]</span>
         </div>`;
       }
     }

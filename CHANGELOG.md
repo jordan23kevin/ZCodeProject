@@ -1,5 +1,15 @@
 # Y2 一体化控制系统 — 更新日志
 
+## v2.6.1 (2026-08-19) — 多品类去背预览实例独立（修复卫衣串到 T恤）
+
+- **问题**：Temu 工作台点「去背预览」选卫衣标签却打开 T恤 去背预览页。根因：前端 `launchCheckRem()` 硬编码 8766、后端 `check_rem.py` 写死 DX/T恤根、bridge 守护只拉一个 8766。
+- **改动**：
+  - `lovart_bridge.py` 守护线程改为 `_CHECK_REM_INSTANCES=[("wb",8766),("hoodie",8767)]` 双实例自愈；`/api/launch-check-rem` 接收 `cat` 返回对应端口；AI 生图完成刷新通知按品类端口分发。
+  - `lovart_control.html` 的 `launchCheckRem()` 按 `IS_HOODIE` 开 8766/8767 并传 `cat`。
+  - `engine/check_rem.py`（与 04_OS 副本字节一致）支持 `--cat/--port`，扫描/校验按品类前缀（DX/HX）隔离。
+  - `wb_meitu_batch.py` 扫描/数字提取/自动命名读 `REM_PREFIX` 环境变量（缺省 DX，卫衣 HX）。
+- **验证**：wb@8766 命中 2795 DX 款、hoodie@8767 命中 0 款且互不可见；四端口（8765/8766/8767/8777）均 200。
+
 ## v2.6.0 (2026-08-07) — Temu 流量加速器批量开启子系统
 
 - **功能**：控制台新增「🚀 流量加速」页面（`/traffic` + `traffic.html`）。登录进入 flux-analysis 后点「好了」，脚本接管：逐页 全选 → 批量开启 → 抽屉内按**核价底价规则**选档位（P−L≥底价选最大让价；破价≤10 元选最少让价；破价>10 元判不通过记录 SPU）→ 自动提交（含 MDL 确认框）→ 翻下一页直到最后。每条记录实时写入 `E:\Kimi Code\temu分析\流量加速器记录.xlsx`（openpyxl）。

@@ -1,8 +1,33 @@
-"""01_CHECK_REM v2.2.3 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.3.9 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
-仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个 DX 款的
+仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个款（DX/T恤、HX/卫衣…）的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
+
+功能 v2.3.9（多品类实例独立 · 去背预览分端口）：
+  - 支持 --cat / --port 命令行参数，单进程服务单一品类：T恤 wb@8766、卫衣 hoodie@8767。
+    各实例只扫描自己品类根下的款（DX*/HX* 由 id_prefix_for(cat) 决定），互不可见，
+    彻底修复「选卫衣标签却显示 T恤 去背预览」的串类问题。
+  - 款号发现正则、暂存清理 glob、http 端点 dx 校验全部改为按品类前缀（_ID_RE），
+    不再写死 DX；美图重去背自动注入 REM_PREFIX 环境变量。
+  - 扫描磁盘缓存 _scan_cache.json 按品类根隔离（每实例各扫各的根），天然安全。
+
+功能 v2.3.8（多品类架构第 1 步：零回归重构）：
+  - WB_ROOT 与 wb_meta 的 sys.path 不再写死 D:\Semems WB 字面量，改走品类注册表
+    单一真源 D:\Semems\wb_category.py（root_for(cat)，缺省 wb=T恤）。
+    常量值与改造前逐字节一致，已实测回归。为卫衣（D:\Semems Hoodie，HX 前缀）做准备。
+
+功能 v2.3.7（批量贴图防整批炸死 + 改名联动文件夹后缀）：
+  - 修复「批量贴图跳过很多款就完成了」：BW 合成图兜底注册 ensure_meta 缺 uid 抛
+    ValueError，异常沿 _run_sticker_task 循环炸掉整个批跑线程，剩余几十款全部未处理。
+    两处修复：① _register_uploads 的 BW/贴图兜底注册都带上 uid（沿用旧 sidecar 或按
+    文件 MD5 生成）；② _run_sticker_task 每款加 try/except，单款异常只记失败继续后续款。
+  - wb_meta._atomic_write_json 加 WinError 5 重试（杀软/索引器瞬时占用 .tmp 不再丢元数据）。
+  - 改名（/rename）联动文件夹后缀：改名后保持「文件夹后缀 = 文件角色」，B↔W↔BW 任意方向
+    都跟随（如 DX3428B→DX3428BW、DX2276BW→DX2276W），变体名（黑B5/BW2/白W）按剥掉黑白
+    前缀和版本号后的基础角色算；自定义后缀（RED1 等）不动文件夹。01_AI/02_REM_BG/03_UPLOAD
+    内旧前缀文件、source_map.json、05_META、WB_REGISTRY/registry.json、.meitu_track.json
+    一并跟随对齐，旧名缩略图清理。对齐 DX0694BW 既有惯例（文件名前缀=文件夹全名）。
 
 功能 v2.3.0（命名规则收口到 wb_naming.py）：
   - 新增 engine/wb_naming.py：贴图成品命名规则全系统唯一出处。顶部 FLAT_FMT/MODEL_FMT/
@@ -34,7 +59,7 @@
     本身，无需改 PS 脚本即可显色。白版仍走 enhance_dark_print_for_black_shirt(shirt=white)
     压暗亮部保色。
   - 实测 DX0635：近黑像素 64万→4413、接近白(>245)=0、红字 (101,16,23)→(127,52,59) 保色。
-  - 注意：本进程常驻，改 check_rem.py 后须 kill 端口 8766 进程由 bridge 守护重拉才生效。
+  - 注意：本进程常驻，改 check_rem.py 后须 kill 对应品类端口（T恤 8766 / 卫衣 8767）进程由 bridge 守护重拉才生效。
 
 功能 v2.2.7：
   - 修复单面款（02_REM_BG 只有 W 或只有 B）被误判走平铺图贴图的问题：
@@ -123,11 +148,11 @@
   - 血缘 Hook：去背成功后自动通知 Bridge 注册血缘
   - 全选、款号一致性检查、自动修复、回收站、一键跳转等
 
-端口 8766（避开 01_CHECK 的 8765）。
+端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.3.6"
+__version__ = "2.3.9"
 VERSION = __version__
-import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, numpy as np
+import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, quote
@@ -169,9 +194,14 @@ class _SafeStream:
 sys.stdout = _SafeStream(sys.stdout)
 sys.stderr = _SafeStream(sys.stderr)
 
+# ── 品类根目录单一真源（D:\Semems\wb_category.py，缺省 wb=T恤，行为不变）──
+if r"D:\Semems" not in sys.path:
+    sys.path.insert(0, r"D:\Semems")
+from wb_category import root_for as _cat_root, id_prefix_for as _cat_prefix
+
 # ── UID 元数据系统 ──────────────────────────────────
 try:
-    sys.path.insert(0, r"D:\Semems WB\04_OS\engine")
+    sys.path.insert(0, str(_cat_root() / "04_OS" / "engine"))
     import wb_meta
 except Exception:
     wb_meta = None
@@ -179,12 +209,28 @@ except Exception:
 # ── 命名规则（唯一出处 wb_naming.py）────────────────
 import wb_naming
 
-# ── 路径 ────────────────────────────────────────────
-WB_ROOT   = Path(r"D:\Semems WB")
+# ── 品类 / 端口（命令行参数；缺省 wb@8766，卫衣 hoodie@8767）──
+def _parse_cat_port():
+    """从 sys.argv 解析 --cat / --port（忽略未知参数，避免被其它入口传入的参数误伤）。"""
+    try:
+        _p = argparse.ArgumentParser(add_help=False)
+        _p.add_argument("--cat", default="wb")
+        _p.add_argument("--port", type=int, default=8766)
+        _ns, _ = _p.parse_known_args()
+        return (_ns.cat or "wb"), int(_ns.port or 8766)
+    except Exception:
+        return "wb", 8766
+
+_CAT, _PORT = _parse_cat_port()
+PREFIX = _cat_prefix(_CAT)                       # "DX"（T恤）或 "HX"（卫衣）
+_ID_RE = re.compile(rf"^{re.escape(PREFIX)}\d+(?:BW|B|W)?$")
+
+# ── 路径（按品类根目录单一真源；多实例各自独立扫描自己的根）──
+WB_ROOT   = _cat_root(_CAT)
 BASE      = WB_ROOT / "02_PROJECTS"
 CHECK     = BASE / "01_CHECK_REM"
 THUMB_DIR = CHECK / "_thumbs"
-PORT      = 8766
+PORT      = _PORT
 
 # 美图去背脚本 / 配置 / 跟踪文件
 MEITU_SCRIPT = Path(r"E:\Claude code\WB去背\去背变清晰\wb_meitu_batch.py")
@@ -382,7 +428,7 @@ def _scan_projects_impl():
     """实际全量扫描：返回项目列表。"""
     projects = []
     for d in sorted(BASE.iterdir()):
-        if not d.is_dir() or not re.match(r"^DX\d+(?:BW|B|W)?$", d.name):
+        if not d.is_dir() or not _ID_RE.match(d.name):
             continue
         dx = d.name
         ai_dir = d / "01_AI"
@@ -668,6 +714,13 @@ def rembg_one_file(dx, ai_file):
     shutil.copy2(str(ai_path), str(staging_root / ai_file))
     staged_md5 = [file_md5(str(ai_path))]
 
+    # 4b. 清理其他 DX 的历史残留暂存：美图按 SRC 全量扫描 DX*/01_AI，
+    #     上次异常中断留下的旧文件夹会被重复扫描、未 track 的会被重复处理
+    for stale in TEMP_REMBG.glob(f"{PREFIX}*"):
+        if stale.is_dir() and stale.name != dx:
+            shutil.rmtree(str(stale), ignore_errors=True)
+            print(f"  [重去背] 清理残留暂存 {stale.name}", flush=True)
+
     # 5. 备份并改写 config.json：SRC 指向 _temp_rembg（脚本扫描 DX*/01_AI）
     shutil.copy2(str(MEITU_CONFIG), str(CONFIG_BACKUP))
     cfg = json.loads(MEITU_CONFIG.read_text(encoding="utf-8"))
@@ -695,10 +748,19 @@ def rembg_one_file(dx, ai_file):
     try:
         # 单张重去背：用户已显式指定某张图，跳过 B/W 配对预检（同批量去背的修复），
         # 否则单面款会被 precheck_pairs 判为"配对不完整"而直接退出、美图不弹。
-        proc = run_minimized(
-            [sys.executable, str(MEITU_SCRIPT), "--skip-precheck"],
-            cwd=str(MEITU_SCRIPT.parent),
-        )
+        # 注入 REM_PREFIX：告诉美图脚本按当前品类前缀（DX/HX）扫描暂存目录。
+        _old_rem_prefix = os.environ.get("REM_PREFIX")
+        os.environ["REM_PREFIX"] = PREFIX
+        try:
+            proc = run_minimized(
+                [sys.executable, str(MEITU_SCRIPT), "--skip-precheck"],
+                cwd=str(MEITU_SCRIPT.parent),
+            )
+        finally:
+            if _old_rem_prefix is None:
+                os.environ.pop("REM_PREFIX", None)
+            else:
+                os.environ["REM_PREFIX"] = _old_rem_prefix
         ok = proc.returncode == 0
     except Exception as e:
         ok = False
@@ -807,6 +869,14 @@ def batch_rembg(dx_files):
 
     if not staged:
         return results
+
+    # 1b. 清理历史残留暂存：美图按 SRC 全量扫描 DX*/01_AI，
+    #     上次异常中断没走到步骤7清理的旧文件夹会被重复扫描、未 track 的会被重复处理
+    keep = {dx for dx, *_ in staged}
+    for stale in TEMP_REMBG.glob(f"{PREFIX}*"):
+        if stale.is_dir() and stale.name not in keep:
+            shutil.rmtree(str(stale), ignore_errors=True)
+            print(f"  [批量去背] 清理残留暂存 {stale.name}", flush=True)
 
     # 2. 改写 config.json
     shutil.copy2(str(MEITU_CONFIG), str(CONFIG_BACKUP))
@@ -1329,6 +1399,94 @@ def run_minimized(cmd, cwd=None, wait=True, **extra):
     return subprocess.Popen(cmd, **kwargs)
 
 
+# ── 文件夹跟随改名（文件角色后缀变化时联动）─────────────────────
+def _patch_json_dx(path, old_dx, new_dx):
+    """把 JSON 文本里的 old_dx 词元换成 new_dx（后面紧跟字母/数字时不动，防误伤已改好的新名）。
+    用于 source_map.json / 05_META / WB_REGISTRY / .meitu_track.json。返回是否有改动。"""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except Exception:
+        return False
+    new_text = re.sub(re.escape(old_dx) + r"(?![A-Za-z0-9])", new_dx, text)
+    if new_text == text:
+        return False
+    try:
+        Path(path).write_text(new_text, encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
+def rename_dx_folder(old_dx, new_dx):
+    """文件夹跟随文件角色改名（如 DX3428B → DX3428BW）。
+    换 01_AI/02_REM_BG/03_UPLOAD 内 old_dx_ 前缀文件、source_map.json、05_META、
+    WB_REGISTRY、.meitu_track，最后改文件夹名并清旧名缩略图。
+    返回 (msgs, errs)；不删任何文件（冲突件送回收站）。"""
+    msgs, errs = [], []
+    old_dir = BASE / old_dx
+    new_dir = BASE / new_dx
+    if not old_dir.is_dir():
+        return [], [f"文件夹 {old_dx} 不存在"]
+    if new_dir.exists():
+        return [], [f"目标文件夹 {new_dx} 已存在"]
+    # 1) 子目录内 old_dx_ 前缀文件统一换前缀（DX3428B_B白T.jpg → DX3428BW_B白T.jpg）
+    for sub in ("01_AI", "02_REM_BG", "03_UPLOAD"):
+        d = old_dir / sub
+        if not d.is_dir():
+            continue
+        for fp in sorted(d.iterdir()):
+            if not fp.is_file() or not fp.name.startswith(old_dx + "_"):
+                continue
+            old_name = fp.name
+            dst = d / (new_dx + old_name[len(old_dx):])
+            try:
+                if dst.exists():
+                    send_to_recycle_bin(str(dst))
+                    errs.append(f"旧{dst.name}已送回收站")
+                fp.rename(dst)
+                msgs.append(f"{sub}/{old_name}→{dst.name}")
+            except Exception as e:
+                errs.append(f"{sub}/{old_name} 改名失败: {e}")
+    # 2) source_map.json（dx_id + 文件前缀）
+    sm = old_dir / "source_map.json"
+    if sm.exists() and _patch_json_dx(sm, old_dx, new_dx):
+        msgs.append("source_map.json 已同步")
+    # 3) 文件夹改名（这步失败则元数据保持旧名不动，直接返回）
+    try:
+        old_dir.rename(new_dir)
+        msgs.append(f"文件夹 {old_dx}→{new_dx}")
+    except Exception as e:
+        errs.append(f"文件夹改名失败: {e}")
+        return msgs, errs
+    # 4) 05_META/{dx}（uid_map.json + sidecars）整体改名并对齐内容
+    meta_old = WB_ROOT / "05_META" / old_dx
+    meta_new = WB_ROOT / "05_META" / new_dx
+    if meta_old.is_dir():
+        try:
+            target_dir = meta_new
+            if meta_new.exists():
+                target_dir = meta_old  # 目标已存在则不搬目录，只就地修正内容
+                errs.append(f"05_META/{new_dx} 已存在，uid_map 保留在原目录")
+            else:
+                meta_old.rename(meta_new)
+            for jf in target_dir.rglob("*.json"):
+                _patch_json_dx(jf, old_dx, new_dx)
+            msgs.append("05_META 已同步")
+        except Exception as e:
+            errs.append(f"05_META 同步失败: {e}")
+    # 5) 全局注册表 / 美图处理记录
+    for jf in (WB_ROOT / "WB_REGISTRY" / "registry.json", WB_ROOT / ".meitu_track.json"):
+        if jf.exists() and _patch_json_dx(jf, old_dx, new_dx):
+            msgs.append(f"{jf.name} 已同步")
+    # 6) 旧名缩略图缓存清理
+    for tf in THUMB_DIR.glob(f"{old_dx}__*"):
+        try:
+            tf.unlink()
+        except Exception:
+            pass
+    return msgs, errs
+
+
 # ── HTTP 服务 ───────────────────────────────────────
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -1777,6 +1935,8 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 #psStatus.show {{ display:flex; }}
 #psStatus .dot {{ width:8px; height:8px; border-radius:50%; background:#00e676; }}
 @keyframes psPulse {{ 0% {{ opacity:.85; }} 50% {{ opacity:1; }} 100% {{ opacity:.85; }} }}
+#psStatus .psbar-wrap {{ display:none; width:150px; height:9px; border-radius:5px; background:rgba(255,255,255,.25); overflow:hidden; margin-left:6px; }}
+#psStatus .psbar {{ display:block; height:100%; width:0%; background:#00e676; transition:width .3s ease; }}
 
 </style></head><body>
 <h1>AI 去背 贴图 OS <span class="v">v{__version__}</span></h1>
@@ -1796,7 +1956,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 	  <button onclick="batchInvertRem('black')" id="batchInvertBtn" title="批量反黑：对选中款的所有B/W/BW去背图生成黑版专用图，并自动平铺图贴图+BW合成" style="cursor:pointer;background:#311b92;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>🌑 批量反黑 (0)</button>
 	  <button onclick="batchInvertRem('white')" id="batchInvertWhiteBtn" title="批量反白：对选中款的所有B/W/BW去背图生成白版专用图，并自动平铺图贴图+BW合成" style="cursor:pointer;background:#9575cd;color:#000;border:none;border-radius:4px;font-weight:bold;" disabled>☀ 批量反白 (0)</button>
 	  <button onclick="copyNoSticker()" title="复制当前日期所有未生成成品的款号" style="background:#7b1fa2;">📋 复制缺贴图</button>
-	  <span id="psStatus"><span class="dot"></span><span id="psStatusText">PS 空闲</span></span>
+	  <span id="psStatus"><span class="dot"></span><span id="psStatusText">PS 空闲</span><span id="psBarWrap" class="psbar-wrap"><span id="psBar" class="psbar"></span></span></span>
 	  <span class="cnt" id="cnt">{len(projects)} 款</span>
 	</div>
 	<div class="grid" id="grid">{cards_html}</div>
@@ -1825,7 +1985,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
     # 缩略图
     def _serve_thumb(self, dx, kind, file):
         # 防目录穿越
-        if "/" in file or "\\" in file or "/" in dx or "\\" in dx or not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
+        if "/" in file or "\\" in file or "/" in dx or "\\" in dx or not _ID_RE.match(dx):
             self._send(400, b"bad"); return
         thumb = get_thumb(dx, kind, file)
         if not thumb:
@@ -1839,7 +1999,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
     # 原始图（全分辨率，供悬停预览用）
     def _serve_original(self, dx, kind, file):
-        if "/" in file or "\\" in file or "/" in dx or "\\" in dx or not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
+        if "/" in file or "\\" in file or "/" in dx or "\\" in dx or not _ID_RE.match(dx):
             self._send(400, b"bad"); return
         sub = "01_AI" if kind == "ai" else "02_REM_BG" if kind == "rem" else "03_UPLOAD"
         src = BASE / dx / sub / file
@@ -1855,7 +2015,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
     # 打开文件夹
     def _open_folder(self, dx, which):
-        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
+        if not _ID_RE.match(dx):
             self._send(400, b"bad dx"); return
         sub = "01_AI" if which == "ai" else "02_REM_BG" if which == "rem" else "03_UPLOAD"
         folder = BASE / dx / sub
@@ -1921,7 +2081,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
     # 删除单文件（送回收站）
     def _del_file(self, dx, which, file):
-        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or "/" in file or "\\" in file:
+        if not _ID_RE.match(dx) or "/" in file or "\\" in file:
             self._send_json({"ok": False, "msg": "参数非法"}); return
         sub = "01_AI" if which == "ai" else "02_REM_BG" if which == "rem" else "03_UPLOAD"
         target = BASE / dx / sub / file
@@ -1940,7 +2100,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
     # 重新去背（针对单张 AI 图）
     # HTTP 立即返回，美图在新控制台窗口异步跑；worker 负责同步逻辑 + 释放锁。
     def _rembg(self, dx, file):
-        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
+        if not _ID_RE.match(dx):
             self._send_json({"ok": False, "msg": "DX号非法"}); return
         if not file or "/" in file or "\\" in file:
             self._send_json({"ok": False, "msg": "图片文件参数非法"}); return
@@ -2079,7 +2239,15 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                     except Exception as e:
                         print(f"  [贴图流水线] BW元数据注册失败 {f}: {e}", flush=True)
                 else:
-                    wb_meta.ensure_meta(f, stage="bw", role="黑BW" if is_black else "白BW")
+                    # 源 cut 缺 uid 时的兜底注册：uid 必须带上（优先沿用旧 sidecar 的），
+                    # 否则 ensure_meta → write_meta 缺 uid 抛 ValueError，会炸掉整批贴图线程
+                    # （v2.3.7 前两次批量贴图就是死在这里，剩余几十款全部被跳过）
+                    bw_uid = _meta_for(f).get("uid") or _new_uid(f)
+                    if bw_uid:
+                        try:
+                            wb_meta.ensure_meta(f, uid=bw_uid, stage="bw", role="黑BW" if is_black else "白BW")
+                        except Exception as e:
+                            print(f"  [贴图流水线] BW兜底元数据失败 {f}: {e}", flush=True)
                 continue
 
             # 贴图成品（平铺命名）：DXxxxx_W白T.jpg / DXxxxx_B黑T.jpg 等（面+色，无变体前缀）
@@ -2106,21 +2274,24 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                         break
                 if registered:
                     continue
-            # 兜底：至少保证 sidecar/uid_map 有条目
+            # 兜底：至少保证 sidecar/uid_map 有条目（uid 沿用旧 sidecar 或按内容生成，缺 uid 会抛 ValueError）
             try:
-                wb_meta.ensure_meta(f, stage="sticker", role=_role_from_name(name, dx))
-                wb_meta.register_image_in_map(BASE / dx, _new_uid(f), "", "sticker",
+                fb_uid = _meta_for(f).get("uid") or _new_uid(f)
+                wb_meta.ensure_meta(f, uid=fb_uid, stage="sticker", role=_role_from_name(name, dx))
+                wb_meta.register_image_in_map(BASE / dx, fb_uid, "", "sticker",
                                                 _role_from_name(name, dx), str(f))
             except Exception as e:
                 print(f"  [贴图流水线] 兜底元数据失败 {f}: {e}", flush=True)
 
     @staticmethod
-    def _run_one_sticker(dx, skip_black=False):
+    def _run_one_sticker(dx, skip_black=False, job_sink=None):
         """运行单个 DX 的贴图流水线。
         - 单面款（02_REM_BG 里只有 W 或只有 B）：走模特图贴图（white_t_mockup 胚衣）。
         - 其它（BW / 同时有 B+W / 含黑版）：走平铺图贴图（纯软件 PIL，不再使用 Photoshop）。
         返回 (ok, msg)。贴图流水线本身不开也不关 Photoshop。
-        skip_black=True 时平铺图流程会跳过黑T贴图（用于批量贴图）。"""
+        skip_black=True 时平铺图流程会跳过黑T贴图（用于批量贴图）。
+        job_sink 不为 None 时，单面款只规划任务追加进 job_sink（由调用方批量执行），
+        不再逐张起 white_t_mockup 进程。"""
         rem_dir = BASE / dx / "02_REM_BG"
         up_dir = BASE / dx / "03_UPLOAD"
 
@@ -2197,6 +2368,30 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             if not cuts:
                 return False, f"02_REM_BG 无 {single_role} 面去背图"
             covered = {c for c, _ in cuts if c}
+            if job_sink is not None:
+                # 批量模式：只规划不执行，任务汇总到 job_sink 统一跑（省进程开销）
+                try:
+                    from w_mockup_extra import plan_single_side_jobs
+                    planned = 0
+                    notes_all = []
+                    for color, path in cuts:
+                        if color:
+                            oc = color
+                        else:
+                            rest = [x for x in ("白", "黑") if x not in covered]
+                            if not rest:
+                                continue  # 黑白都已有专用 cut，无颜色 cut 跳过
+                            oc = None if len(rest) == 2 else rest[0]
+                        jobs, notes = plan_single_side_jobs(
+                            dx, BASE, single_role, cut_path=path, only_color=oc)
+                        job_sink.extend(jobs)
+                        planned += len(jobs)
+                        notes_all.extend(notes)
+                    if planned == 0:
+                        return False, "; ".join(notes_all) or f"模特图贴图({single_role})无可行任务"
+                    return True, f"模特图贴图({single_role})已规划 {planned} 张，等待批量执行"
+                except Exception as e:
+                    return False, f"模特图贴图({single_role})规划异常: {e}"
             try:
                 from w_mockup_extra import generate_single_side_mockup
                 results = []
@@ -2303,12 +2498,41 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
             _set_ps_status(True, task_name, "", f"0/{len(dx_list)}", f"共 {len(dx_list)} 款: {', '.join(dx_list)}")
             print(f"\n[PS任务] 开始{task_name}，共 {len(dx_list)} 款: {', '.join(dx_list)}", flush=True)
+            job_sink = []  # 单面款模特图贴图任务：全部款规划完后批量执行（多 worker 常驻进程）
             for idx, dx in enumerate(dx_list, 1):
                 _set_ps_status(True, task_name, dx, f"{idx}/{len(dx_list)}", f"正在处理 {dx}")
-                ok, msg = Handler._run_one_sticker(dx, skip_black=skip_black)
+                try:
+                    ok, msg = Handler._run_one_sticker(dx, skip_black=skip_black, job_sink=job_sink)
+                except Exception as e:
+                    # 单款异常只记失败、继续后续款——不能再让一款炸掉整批（剩余款全被跳过）
+                    ok, msg = False, f"贴图异常: {e}"
+                    print(f"  [PS任务] {dx} 未捕获异常（已跳过该款，继续后续款）: {e}", flush=True)
                 results.append((dx, ok, msg))
                 status = "✅" if ok else "❌"
                 print(f"  {status} {dx}: {msg}", flush=True)
+            # 批量执行所有单面款贴图任务并按款回填结果
+            if job_sink:
+                _set_ps_status(True, task_name, "", "批量贴图执行中", f"共 {len(job_sink)} 张")
+                print(f"[PS任务] 批量执行模特图贴图，共 {len(job_sink)} 张...", flush=True)
+                from w_mockup_extra import run_mockup_jobs
+                exec_res = run_mockup_jobs(job_sink)
+                per_dx = {}
+                for job, jok, err in exec_res:
+                    per_dx.setdefault(job["dx"], []).append((job, jok, err))
+                for i, (dx, ok, msg) in enumerate(results):
+                    entries = per_dx.get(dx)
+                    if not entries:
+                        continue
+                    ok2 = any(jok for _, jok, _ in entries)
+                    n_ok = sum(1 for _, jok, _ in entries if jok)
+                    fails = [f"{j['tag'].split('|', 1)[-1]}: {e}" for j, jok, e in entries if not jok]
+                    msg2 = f"模特图贴图完成 {n_ok}/{len(entries)} 张"
+                    if fails:
+                        msg2 += "；失败: " + "; ".join(fails[:3])
+                    results[i] = (dx, ok2, msg2)
+                    if ok2:
+                        Handler._register_uploads(dx)
+                    print(f"  {'✅' if ok2 else '❌'} {dx}: {msg2}", flush=True)
             _set_ps_status(True, task_name, "", f"{len(dx_list)}/{len(dx_list)}", "全部完成")
             print(f"[PS任务] 全部完成\n", flush=True)
         finally:
@@ -2323,7 +2547,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
     def _ps_sticker(self, dx):
         if not dx:
             self._send_json({"ok": False, "msg": "DX号非法"}); return
-        dx_list = [d.strip() for d in dx.split(",") if re.match(r"^DX\d+(?:BW|B|W)?$", d.strip())]
+        dx_list = [d.strip() for d in dx.split(",") if _ID_RE.match(d.strip())]
         if not dx_list:
             self._send_json({"ok": False, "msg": "DX号非法"}); return
         # 批量贴图默认跳过黑T专用贴图（避免处理已有的黑版文件），单款贴图保留黑T
@@ -2336,7 +2560,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
     # BW合成（独立入口：仅用已贴好的 B/W 合成 BW）
     def _ps_batch(self, dx):
-        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx):
+        if not _ID_RE.match(dx):
             self._send_json({"ok": False, "msg": "DX号非法"}); return
         ps_script = Path(r"E:\\Claude code\\ps\\ps_batch_one.py")
         if not ps_script.exists():
@@ -2458,7 +2682,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
     # \u653e\u5927\u53bb\u80cc\u56fe\u52302046x2046
     def _upscale_rem(self, dx, file):
-        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or "/" in file or "\\" in file:
+        if not _ID_RE.match(dx) or "/" in file or "\\" in file:
             self._send_json({"ok": False, "msg": "\u53c2\u6570\u975e\u6cd5"}); return
         path = BASE / dx / "02_REM_BG" / file
         if not path.exists():
@@ -2480,7 +2704,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
     # 单独重新生成一张 03_UPLOAD 贴图成品（只覆盖目标文件，不影响同款其他图）
     def _resticker(self, dx, file):
-        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not file or "/" in file or "\\" in file:
+        if not _ID_RE.match(dx) or not file or "/" in file or "\\" in file:
             self._send_json({"ok": False, "msg": "参数非法"}); return
         up_dir = BASE / dx / "03_UPLOAD"
         rem_dir = BASE / dx / "02_REM_BG"
@@ -2646,7 +2870,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
     # 反相去背图并自动跑贴图流水线（异步队列，连续点击自动排队）
     def _invert_rem(self, dx, file):
         from urllib.parse import parse_qs
-        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or "/" in file or "\\" in file:
+        if not _ID_RE.match(dx) or "/" in file or "\\" in file:
             self._send_json({"ok": False, "msg": "参数非法"}); return
         if not file.lower().endswith("_cut.png"):
             self._send_json({"ok": False, "msg": "仅支持 _cut.png 去背图"}); return
@@ -2743,7 +2967,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             self._send_json({"done": True, "ok": True, "msg": "无结果", "results": []})
 
     def _refresh_thumb(self, dx, stem):
-        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not stem or "/" in stem or "\\" in stem:
+        if not _ID_RE.match(dx) or not stem or "/" in stem or "\\" in stem:
             self._send_json({"ok": False, "msg": "参数非法"}); return
         rem_dir = BASE / dx / "02_REM_BG"
         cut_name = f"{stem}_cut.png"
@@ -2778,7 +3002,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
     # 改名：任意后缀转换（如 DX0264_B → DX0264_BW / DX0264_RED1，对应 _cut 也改名）
     def _rename_stem(self, dx, stem, target=""):
-        if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or not stem or "/" in stem or "\\" in stem:
+        if not _ID_RE.match(dx) or not stem or "/" in stem or "\\" in stem:
             self._send_json({"ok": False, "msg": "参数非法"}); return
         target = (target or "").strip()
         # 兼容旧逻辑：未传 target 且 stem 以 _B/_W 结尾时默认改为 _BW
@@ -2791,6 +3015,22 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         if not re.match(r'^[\u4e00-\u9fa5A-Za-z0-9_\-]+$', target) or ".." in target:
             self._send_json({"ok": False, "msg": "新后缀非法"}); return
         prefix = dx  # DX0264
+        # 文件夹跟随：改名后文件夹后缀与文件角色保持一致——B↔W↔BW 任意方向都跟随，
+        # 变体名（黑B5/BW2/白W 等）按基础角色算（剥掉 黑/白 前缀和版本号，WB 归一为 BW）。
+        # 例：DX3428B 改成 _BW → 文件夹变 DX3428BW；DX2276BW 改成 _W → 文件夹变 DX2276W
+        m_fold = re.match(r"^DX(\d+)(BW|B|W)?$", dx)
+        m_trole = re.match(r"^[黑白]?(BW|WB|B|W)\d*$", target)
+        t_role = m_trole.group(1) if m_trole else None
+        if t_role == "WB":
+            t_role = "BW"
+        folder_follow = None
+        if t_role and m_fold and (m_fold.group(2) or "") != t_role:
+            cand = f"DX{m_fold.group(1)}{t_role}"
+            if cand != dx:
+                if (BASE / cand).exists():
+                    self._send_json({"ok": False, "msg": f"目标文件夹 {cand} 已存在，未改名"}); return
+                folder_follow = cand
+                prefix = cand  # 新文件名直接用新文件夹名做前缀
         new_stem = f"{prefix}_{target}"
         ai_new = new_stem + ".png"
         rem_new = new_stem + "_cut.png"
@@ -2821,6 +3061,12 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         if not renamed:
             self._send_json({"ok": False, "msg": f"{dx} 未找到 {stem} 相关文件"})
             return
+        # 文件夹同步改后缀（文件改名成功后执行；内部对齐 source_map/05_META/registry 并清旧名缩略图）
+        if folder_follow:
+            f_msgs, f_errs = rename_dx_folder(dx, folder_follow)
+            renamed.extend(f_msgs)
+            errors.extend(f_errs)
+            dx = folder_follow  # 后续对账/缓存清理用新名
         # 清理缩略图缓存
         for tf in THUMB_DIR.glob(f"{dx}__*__{stem}*"):
             try: tf.unlink()
@@ -2844,7 +3090,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         """
         fixed = []
         for d in sorted(BASE.iterdir()):
-            if not d.is_dir() or not re.match(r"^DX\d+(?:BW|B|W)?$", d.name):
+            if not d.is_dir() or not _ID_RE.match(d.name):
                 continue
             dx = d.name
             ai_dir = d / "01_AI"
