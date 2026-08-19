@@ -1,5 +1,11 @@
 # Y2 一体化控制系统 — 更新日志
 
+## engine 副本 v2.6.5 (2026-08-19) — 单面款批量贴图黑白专用 cut 路由修复
+
+- 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.5 + `engine/w_mockup_extra.py` v2.6.1。
+- 卫衣单面款批量贴图黑T 时用专用图时用通用图（碰 `cuts[:1]` 运气）→ 修复：base cut 固定取通用，`plan_single_side_jobs` 按颜色自动选专用 cut（黑T→_黑*、白T→_白*、英文色→通用）。
+- 详见 04_OS/docs/CHANGELOG.md v2.6.5。
+
 ## engine 副本 v2.6.4 (2026-08-19) — 卫衣反黑/反白专用贴图
 
 - 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.4。

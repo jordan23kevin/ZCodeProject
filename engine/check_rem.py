@@ -4,7 +4,7 @@
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
 
-功能 v2.6.4（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行 · 仅本张重贴品类正确 · B面源cut修复 · 反黑反白专用贴图）：
+功能 v2.6.5（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行 · 仅本张重贴品类正确 · B面源cut修复 · 反黑反白专用贴图 · 单面批量黑白专用cut路由）：
   - 支持 --cat / --port 命令行参数，单进程服务单一品类：T恤 wb@8766、卫衣 hoodie@8767。
     各实例只扫描自己品类根下的款（DX*/HX* 由 id_prefix_for(cat) 决定），互不可见，
     彻底修复「选卫衣标签却显示 T恤 去背预览」的串类问题。
@@ -150,7 +150,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.6.4"
+__version__ = "2.6.5"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -2387,9 +2387,16 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 return False, f"02_REM_BG 无 {single_role} 面去背图"
             covered = {c for c, _ in cuts if c}
             # 卫衣：素材库该面所有带五参的颜色都贴（白/黑 + 8 英文色中文名），
-            # 忽略 cut 的黑/白颜色路由；多个 cut 时只取第一个避免重复规划。
+            # 忽略 cut 的黑/白颜色路由；plan_single_side_jobs 内部按颜色自动选
+            # 专用 cut（黑T→_黑*_cut、白T→_白*_cut、英文色→通用 cut）。
+            # base cut 优先取「通用 cut」（无 黑/白 前缀），没有才退回首个 cut，
+            # 避免 iterdir 顺序不稳定导致碰运气（黑T 时专用时通用）。
             all_colors = _CAT == "hoodie"
-            cuts_for_jobs = cuts[:1] if all_colors else cuts
+            if all_colors:
+                gen_cuts = [p for c, p in cuts if not c]
+                cuts_for_jobs = [(None, gen_cuts[0])] if gen_cuts else cuts[:1]
+            else:
+                cuts_for_jobs = cuts
             if job_sink is not None:
                 # 批量模式：只规划不执行，任务汇总到 job_sink 统一跑（省进程开销）
                 try:

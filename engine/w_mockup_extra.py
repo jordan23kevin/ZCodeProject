@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""单面贴图新流程 v2.6（模特图+平铺图贴图）：02_REM_BG 里只有 W 或只有 B 时，用 white_t_mockup 胚衣出图。
+"""单面贴图新流程 v2.6.1（模特图+平铺图贴图）：02_REM_BG 里只有 W 或只有 B 时，用 white_t_mockup 胚衣出图。
+
+变更 v2.6.1（黑白专用 cut 按颜色路由，用户 2026-08-19）：
+  - 反黑/反白专用 cut（{dx}_黑{role}_cut.png / _白*）按颜色自动切换：黑T→专用黑版、
+    白T→专用白版、英文色→通用 cut（与 T恤 反黑/反白同款路由）。
+  - 修 bug：此前所有颜色共用传入的单个 cut（卫衣 all_colors 时 check_rem 只取 cuts[:1]，
+    碰 iterdir 顺序运气），黑T 时用通用图时用专用图。
 
 变更 v2.6（卫衣全部颜色贴图，用户 2026-08-19）：
   - 新增 all_colors：贴素材库该面**所有带五参的颜色**（卫衣 W 系 10 色=白/黑+8 英文色、
@@ -252,6 +258,17 @@ def plan_single_side_jobs(
         cut = Path(cut_path) if cut_path is not None else rem_dir / f"{dx}_{role}_cut.png"
         if not cut.exists():
             return [], [f"缺少 {cut.name}"]
+        # 黑/白专用 cut 优先（反黑/反白生成）：黑T 用 {dx}_黑{role}_cut.png、白T 用
+        # {dx}_白{role}_cut.png、其余颜色（英文色）用通用 cut；与 T恤 反黑/反白同款路由。
+        # 调用方已显式传入专用 cut（only_color 模式）时保持原样不再覆盖。
+        _cut_is_spec = "黑" in cut.name or "白" in cut.name
+
+        def _resolve_cut(color: str) -> Path:
+            if not _cut_is_spec and color in ("白", "黑"):
+                spec = rem_dir / f"{dx}_{color}{role}_cut.png"
+                if spec.exists():
+                    return spec
+            return cut
 
         if not W_MOCKUP_PY.exists():
             return [], [f"模特图贴图解释器不存在: {W_MOCKUP_PY}"]
@@ -319,7 +336,7 @@ def plan_single_side_jobs(
 
             # ---- 基础参数：五参定位（所有款通用）----
             argv = [
-                str(cut), str(out),
+                str(_resolve_cut(color)), str(out),
                 "--template", str(embryo["path"]),
                 "--final-w", str(meta["final_w"]),
                 "--final-h", str(meta["final_h"]),
