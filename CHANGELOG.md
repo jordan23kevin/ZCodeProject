@@ -1,5 +1,11 @@
 # Y2 一体化控制系统 — 更新日志
 
+## engine 副本 v2.6.9 (2026-08-20) — BW 拆分 cut 模特图 + 贴图进度
+
+- 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.9 + `engine/w_mockup_extra.py` v2.6.4。
+- BW 拆分 cut（W_cut/B_cut 无 BW_cut）款补模特图；`run_mockup_jobs` 加 on_progress 回调 + 平铺子进程心跳，贴图进度实时显示（不再 30 秒误判完成）。
+- 详见 04_OS/docs/CHANGELOG.md v2.6.9。
+
 ## engine 副本 v2.6.8 (2026-08-19) — 「仅本张」BW 款黑白专用 cut 路由
 
 - 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.8。

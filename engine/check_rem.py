@@ -4,7 +4,7 @@
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
 
-功能 v2.6.8（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行 · 仅本张重贴品类正确 · B面源cut修复 · 反黑反白专用贴图 · 单面批量黑白专用cut路由 · BW款补模特图 · 成品行固定2列 · 仅本张BW款黑白专用cut）：
+功能 v2.6.9（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行 · 仅本张重贴品类正确 · B面源cut修复 · 反黑反白专用贴图 · 单面批量黑白专用cut路由 · BW款补模特图 · 成品行固定2列 · 仅本张BW款黑白专用cut · BW拆分cut模特图+贴图进度）：
   - 支持 --cat / --port 命令行参数，单进程服务单一品类：T恤 wb@8766、卫衣 hoodie@8767。
     各实例只扫描自己品类根下的款（DX*/HX* 由 id_prefix_for(cat) 决定），互不可见，
     彻底修复「选卫衣标签却显示 T恤 去背预览」的串类问题。
@@ -150,7 +150,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.6.8"
+__version__ = "2.6.9"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -1398,6 +1398,33 @@ def run_minimized(cmd, cwd=None, wait=True, **extra):
     kwargs.update(extra)
     if wait:
         return subprocess.run(cmd, **kwargs)
+
+
+def _run_proc_heartbeat(dx, args, desc, task_name):
+    """跑子进程并在运行期间持续刷新 _ps_status（每 5s 一次心跳）。
+
+    背景：页面轮询 _ps_status，30 秒无更新即视为结束（_ps_status 的
+    updated_at 超时逻辑）——平铺贴图子进程（ps_sticker_one 等）单款要跑
+    几十秒到几分钟，若期间不更新状态，前端会误报"完成"，用户以为贴完了。
+    """
+    import threading
+    result = {}
+    def _worker():
+        try:
+            proc = run_minimized(args)
+            result["rc"] = proc.returncode
+        except Exception as e:
+            result["err"] = e
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t0 = time.time()
+    while t.is_alive():
+        _set_ps_status(True, task_name, dx, "运行中", f"{desc} {int(time.time()-t0)}s")
+        time.sleep(5)
+    t.join()
+    if "err" in result:
+        raise result["err"]
+    return result.get("rc", 1)
     return subprocess.Popen(cmd, **kwargs)
     """Windows 下以最小化、不抢前台焦点的方式运行外部程序。
     wait=True 阻塞等待并返回 CompletedProcess；wait=False 立即返回 Popen 对象。
@@ -2472,8 +2499,9 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 ok, msg = False, "平铺图黑T贴图脚本(process_black.py)不存在"
             else:
                 try:
-                    proc0 = run_minimized([sys.executable, str(black_script), dx])
-                    if proc0.returncode != 0:
+                    proc0 = _run_proc_heartbeat(dx, [sys.executable, str(black_script), dx],
+                                                "黑T专用平铺图", "平铺图贴图")
+                    if proc0 != 0:
                         ok, msg = False, f"平铺图黑T贴图执行失败: {dx}"
                 except Exception as e:
                     ok, msg = False, f"平铺图黑T贴图启动失败: {e}"
@@ -2484,8 +2512,9 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 ok, msg = False, "平铺图白T贴图脚本(process_white.py)不存在"
             else:
                 try:
-                    proc0 = run_minimized([sys.executable, str(white_script), dx])
-                    if proc0.returncode != 0:
+                    proc0 = _run_proc_heartbeat(dx, [sys.executable, str(white_script), dx],
+                                                "白T专用平铺图", "平铺图贴图")
+                    if proc0 != 0:
                         ok, msg = False, f"平铺图白T贴图执行失败: {dx}"
                 except Exception as e:
                     ok, msg = False, f"平铺图白T贴图启动失败: {e}"
@@ -2493,8 +2522,9 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         # 3) 通用 B/W/BW 平铺图贴图（有黑版/白版对应文件时自动跳过对应输出）
         if ok:
             try:
-                proc1 = run_minimized([sys.executable, str(sticker_script), dx])
-                if proc1.returncode != 0:
+                proc1 = _run_proc_heartbeat(dx, [sys.executable, str(sticker_script), dx],
+                                            "通用平铺图", "平铺图贴图")
+                if proc1 != 0:
                     ok, msg = False, f"平铺图贴图执行失败: {dx}"
             except Exception as e:
                 ok, msg = False, f"平铺图贴图启动失败: {e}"
@@ -2502,8 +2532,9 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         # 4) 用贴好的 B/W 合成 BW
         if ok:
             try:
-                proc2 = run_minimized([sys.executable, str(batch_script), dx])
-                if proc2.returncode != 0:
+                proc2 = _run_proc_heartbeat(dx, [sys.executable, str(batch_script), dx],
+                                            "BW合成", "BW合成")
+                if proc2 != 0:
                     ok, msg = True, f"平铺图贴图完成，但BW合成执行失败: {dx}"
             except Exception as e:
                 ok, msg = True, f"平铺图贴图完成，但BW合成启动失败: {e}"
@@ -2513,25 +2544,32 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         if ok and (dx.endswith("BW") or dx.endswith("WB")):
             try:
                 from w_mockup_extra import plan_single_side_jobs, run_mockup_jobs
-                bw_cut = rem_dir / f"{dx}_BW_cut.png"
-                if bw_cut.exists():
-                    bw_jobs = []
-                    for role in ("W", "B"):
-                        jobs, _notes = plan_single_side_jobs(
-                            dx, BASE, role, cut_path=bw_cut,
-                            all_colors=True, model_only=True,
-                        )
-                        bw_jobs.extend(jobs)
-                    if bw_jobs:
-                        if job_sink is not None:
-                            job_sink.extend(bw_jobs)
-                        else:
-                            res = run_mockup_jobs(bw_jobs)
-                            n_ok = sum(1 for _, jok, _ in res if jok)
-                            print(f"  [BW模特图] {dx} {n_ok}/{len(bw_jobs)} 张完成", flush=True)
-                            if n_ok < len(bw_jobs):
-                                fails = [f"{Path(j['out']).name}: {e}" for j, jok, e in res if not jok]
-                                ok, msg = False, f"BW模特图部分失败: {'; '.join(fails[:3])}"
+                bw_jobs = []
+                for role in ("W", "B"):
+                    # 模特图源 cut：优先单张 BW 合成 cut（HX0003BW_BW_cut.png）；
+                    # 拆分 cut 款（HX0004BW_W_cut.png + _B_cut.png，无 BW_cut）各自用对应面 cut
+                    src_cut = rem_dir / f"{dx}_BW_cut.png"
+                    if not src_cut.exists():
+                        src_cut = rem_dir / f"{dx}_{role}_cut.png"
+                    if not src_cut.exists():
+                        continue
+                    jobs, _notes = plan_single_side_jobs(
+                        dx, BASE, role, cut_path=src_cut,
+                        all_colors=True, model_only=True,
+                    )
+                    bw_jobs.extend(jobs)
+                if bw_jobs:
+                    if job_sink is not None:
+                        job_sink.extend(bw_jobs)
+                    else:
+                        def _bw_progress(done, total):
+                            _set_ps_status(True, "平铺图贴图", dx, f"{done}/{total}", f"BW模特图 {done}/{total} 张")
+                        res = run_mockup_jobs(bw_jobs, on_progress=_bw_progress)
+                        n_ok = sum(1 for _, jok, _ in res if jok)
+                        print(f"  [BW模特图] {dx} {n_ok}/{len(bw_jobs)} 张完成", flush=True)
+                        if n_ok < len(bw_jobs):
+                            fails = [f"{Path(j['out']).name}: {e}" for j, jok, e in res if not jok]
+                            ok, msg = False, f"BW模特图部分失败: {'; '.join(fails[:3])}"
             except Exception as e:
                 ok, msg = False, f"BW模特图规划/执行异常: {e}"
 
@@ -2578,7 +2616,12 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 _set_ps_status(True, task_name, "", "批量贴图执行中", f"共 {len(job_sink)} 张")
                 print(f"[PS任务] 批量执行模特图贴图，共 {len(job_sink)} 张...", flush=True)
                 from w_mockup_extra import run_mockup_jobs
-                exec_res = run_mockup_jobs(job_sink)
+
+                def _mockup_progress(done, total):
+                    _set_ps_status(True, task_name, "", f"{done}/{total}", f"模特图贴图 {done}/{total} 张")
+
+                exec_res = run_mockup_jobs(job_sink, on_progress=_mockup_progress)
+                _set_ps_status(True, task_name, "", "回填结果中", "")
                 per_dx = {}
                 for job, jok, err in exec_res:
                     per_dx.setdefault(job["dx"], []).append((job, jok, err))

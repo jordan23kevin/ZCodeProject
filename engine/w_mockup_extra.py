@@ -422,16 +422,20 @@ def plan_single_side_jobs(
         return [], [f"{role} 模特图贴图计划异常: {e}"]
 
 
-def run_mockup_jobs(jobs: list[dict], max_workers: int = 3) -> list[tuple[dict, bool, str]]:
+def run_mockup_jobs(jobs: list[dict], max_workers: int = 3, on_progress=None) -> list[tuple[dict, bool, str]]:
     """把贴图任务切成 max_workers 份，起等量个 ``white_t_mockup --batch`` 常驻进程并行执行。
 
     每个 worker 单进程顺序跑完自己那份（解释器启动/import/胚衣素材缓存只付一次，
     替代旧版"每张图一个进程"）；返回 [(job, ok, err), ...]，顺序与 jobs 对齐。
+    on_progress(done, total)：每完成一张回调（逐行读 worker stdout 的 ``[batch i/N]`` 行），
+    供页面刷新进度状态（避免前端 30 秒无更新误判完成）。
     """
     import os
+    import re as _re
     import shutil
     import subprocess
     import tempfile
+    import threading
 
     if not jobs:
         return []
@@ -443,32 +447,59 @@ def run_mockup_jobs(jobs: list[dict], max_workers: int = 3) -> list[tuple[dict, 
     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     startupinfo.wShowWindow = 7  # SW_SHOWMINNOACTIVE：最小化不抢焦点
     procs = []
-    try:
-        for i, chunk in enumerate(chunks):
-            jf = tmpdir / f"jobs_{i}.json"
-            jf.write_text(json.dumps({"jobs": chunk}, ensure_ascii=False), encoding="utf-8")
-            p = subprocess.Popen(
-                [str(W_MOCKUP_PY), "-m", "white_t_mockup", "--batch", str(jf)],
-                cwd=str(W_MOCKUP_ROOT),
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="replace",
-                startupinfo=startupinfo)
-            procs.append((i, jf, p))
-        by_tag: dict[str, tuple[bool, str]] = {}
-        for i, jf, p in procs:
-            out, _ = p.communicate()
-            rf = Path(str(jf) + ".result.json")
+    for i, chunk in enumerate(chunks):
+        jf = tmpdir / f"jobs_{i}.json"
+        jf.write_text(json.dumps({"jobs": chunk}, ensure_ascii=False), encoding="utf-8")
+        p = subprocess.Popen(
+            [str(W_MOCKUP_PY), "-m", "white_t_mockup", "--batch", str(jf)],
+            cwd=str(W_MOCKUP_ROOT),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+            startupinfo=startupinfo)
+        procs.append((i, jf, p))
+    by_tag: dict[str, tuple[bool, str]] = {}
+    total = len(jobs)
+    done = 0
+    lock = threading.Lock()
+    _BATCH_LINE = _re.compile(r"\[batch \d+/\d+\] (OK|FAIL)", _re.IGNORECASE)
+
+    def _progress():
+        if on_progress:
+            try:
+                on_progress(done, total)
+            except Exception:
+                pass
+
+    def _read_worker(i, jf, p):
+        """逐行读 worker stdout：数 [batch i/N] 完成数 + 收集结果文件。"""
+        nonlocal done
+        try:
+            for line in p.stdout:
+                if _BATCH_LINE.search(line):
+                    with lock:
+                        done += 1
+                        _progress()
+            p.wait()
+        except Exception:
+            pass
+        rf = Path(str(jf) + ".result.json")
+        try:
             if rf.exists():
                 for r in json.loads(rf.read_text(encoding="utf-8")):
-                    by_tag[r["tag"]] = (bool(r.get("ok")), r.get("error", ""))
-            else:  # worker 整体失败（没产出结果文件）：该份全部记失败
-                tail = (out or "")[-400:]
-                for job in chunks[i]:
-                    by_tag[job["tag"]] = (False, tail)
-            if p.returncode != 0:
-                print(f"[批量贴图] worker{i} 退出码 {p.returncode}", flush=True)
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
+                    with lock:
+                        by_tag[r["tag"]] = (bool(r.get("ok")), r.get("error", ""))
+        except Exception:
+            pass
+
+    threads = []
+    for i, jf, p in procs:
+        t = threading.Thread(target=_read_worker, args=(i, jf, p), daemon=True)
+        t.start()
+        threads.append(t)
+    for t in threads:
+        t.join()
+    shutil.rmtree(tmpdir, ignore_errors=True)
+    _progress()  # 收尾刷新一次
     return [(job, *by_tag.get(job["tag"], (False, "无结果"))) for job in jobs]
 
 
