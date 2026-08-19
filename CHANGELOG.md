@@ -1,5 +1,11 @@
 # Y2 一体化控制系统 — 更新日志
 
+## engine 副本 v2.6.8 (2026-08-19) — 「仅本张」BW 款黑白专用 cut 路由
+
+- 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.8。
+- `_resticker` 候选加 `{dx}_黑BW_cut.png`/`_白BW_cut.png`（BW 款黑白专用 cut 优先于通用 BW_cut），黑白重贴不再退回通用图。
+- 详见 04_OS/docs/CHANGELOG.md v2.6.8。
+
 ## engine 副本 v2.6.7 (2026-08-19) — 成品缩略图行固定 2 列
 
 - 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.7。

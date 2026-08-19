@@ -4,7 +4,7 @@
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
 
-功能 v2.6.7（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行 · 仅本张重贴品类正确 · B面源cut修复 · 反黑反白专用贴图 · 单面批量黑白专用cut路由 · BW款补模特图 · 成品行固定2列）：
+功能 v2.6.8（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行 · 仅本张重贴品类正确 · B面源cut修复 · 反黑反白专用贴图 · 单面批量黑白专用cut路由 · BW款补模特图 · 成品行固定2列 · 仅本张BW款黑白专用cut）：
   - 支持 --cat / --port 命令行参数，单进程服务单一品类：T恤 wb@8766、卫衣 hoodie@8767。
     各实例只扫描自己品类根下的款（DX*/HX* 由 id_prefix_for(cat) 决定），互不可见，
     彻底修复「选卫衣标签却显示 T恤 去背预览」的串类问题。
@@ -150,7 +150,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.6.7"
+__version__ = "2.6.8"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -2816,6 +2816,10 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             candidates.append(f"{dx}_{prefix}{side}_cut.png")
         candidates.append(f"{dx}_{side}_cut.png")
         if dx.endswith("BW") or dx.endswith("WB"):
+            # BW 款黑白专用 cut 文件名是 {dx}_黑BW_cut.png / _白BW_cut.png（反黑/反白生成），
+            # 优先于通用 BW_cut（否则黑白重贴会退回通用图，丢反黑/反白效果）
+            if prefix:
+                candidates.append(f"{dx}_{prefix}BW_cut.png")
             # 双面款只有单张 BW 合成 cut（正背面共用）时，B 面重贴也用它
             # （与 ps 链 process_dx_folder 对 BW_cut 的处理一致：同一张 cut 贴 W 和 B）
             candidates.append(f"{dx}_BW_cut.png")
