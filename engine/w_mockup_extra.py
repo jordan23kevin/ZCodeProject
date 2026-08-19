@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""单面贴图新流程 v2.6.1（模特图+平铺图贴图）：02_REM_BG 里只有 W 或只有 B 时，用 white_t_mockup 胚衣出图。
+"""单面贴图新流程 v2.6.2（模特图+平铺图贴图）：02_REM_BG 里只有 W 或只有 B 时，用 white_t_mockup 胚衣出图。
+
+变更 v2.6.2（BW 款模特图，用户 2026-08-19）：
+  - 新增 model_only：每色只出模特图（BW 款平铺由 ps 链出，此处补 W/B 面模特图）。
+  - 模特胚衣一律顶层五参（use_bw=False）：BW 款 W 面模特若强制 bw 块，英文色 W1 无 bw 块会缺图。
+  - _resolve_cut 支持 BW 款黑白专用 cut（{dx}_黑BW_cut.png / _白BW_cut.png）。
 
 变更 v2.6.1（黑白专用 cut 按颜色路由，用户 2026-08-19）：
   - 反黑/反白专用 cut（{dx}_黑{role}_cut.png / _白*）按颜色自动切换：黑T→专用黑版、
@@ -233,6 +238,7 @@ def plan_single_side_jobs(
     cut_path: str | Path | None = None,
     only_color: str | None = None,
     all_colors: bool = False,
+    model_only: bool = False,
 ) -> tuple[list[dict], list[str]]:
     """为单面款规划模特图贴图任务（只规划不执行，供批量模式统一调度）。
 
@@ -243,8 +249,12 @@ def plan_single_side_jobs(
     - only_color: ``"白"`` 只贴白T 胚衣、``"黑"`` 只贴黑T 胚衣、``None`` 两色都贴
     - all_colors: True 时贴素材库该面**所有带五参的颜色**（卫衣：白/黑 + 英文色中文名；
       未填五参的自动跳过），忽略 only_color。
+    - model_only: True 时每色只出模特图（跳过平铺胚衣）；用于 BW 款——平铺由 ps 链出，
+      此处只补 W/B 面模特图。
 
-    每色出 2 张：固定平铺胚衣（2 号图）+ 随机 1 张模特胚衣。
+    每色出 2 张（model_only 时 1 张）：固定平铺胚衣（2 号图）+ 随机 1 张模特胚衣。
+    模特胚衣一律用**顶层五参**（use_bw=False）——BW 款正面 W 模特若强制 bw 块，
+    英文色 W1 无 bw 块会被跳过，缺图。
     返回 (jobs, notes)：jobs 为 [{dx, tag, out, argv}]，argv 即 white_t_mockup CLI
     单张模式的全部参数（与旧逐张调用完全一致，保证输出不变）；notes 为跳过原因。
     """
@@ -265,7 +275,11 @@ def plan_single_side_jobs(
 
         def _resolve_cut(color: str) -> Path:
             if not _cut_is_spec and color in ("白", "黑"):
-                spec = rem_dir / f"{dx}_{color}{role}_cut.png"
+                # BW 款黑白专用 cut 是 {dx}_黑BW_cut.png / _白BW_cut.png（单面款才是 _黑{role}）
+                if dx.endswith("BW") or dx.endswith("WB"):
+                    spec = rem_dir / f"{dx}_{color}BW_cut.png"
+                else:
+                    spec = rem_dir / f"{dx}_{color}{role}_cut.png"
                 if spec.exists():
                     return spec
             return cut
@@ -293,30 +307,40 @@ def plan_single_side_jobs(
         selected: list[tuple[dict, str]] = []  # (embryo_info, color)
         notes: list[str] = []
         for color in colors_to_do:
-            pool = _list_material_embryos(role, color, use_bw=use_bw)
-            if not pool:
+            # 平铺池：BW 正面强制 bw 五参（无 bw 块的英文色 2 号图会被 _read_meta 跳过）；
+            # 模特池：一律顶层五参（use_bw=False）——BW 款 W 模特若强制 bw，英文色 W1
+            # 无 bw 块会被跳过缺图。
+            if model_only:
+                pool = []
+            else:
+                pool = _list_material_embryos(role, color, use_bw=use_bw)
+            pool_model = _list_material_embryos(role, color, use_bw=False)
+            if not pool and not pool_model:
                 notes.append(f"{color} 跳过：素材库无可用 {role}{color} 胚衣（或 meta.json 缺失/损坏）")
                 continue
-            # 每色出 2 张：固定平铺胚衣 1 张 + 随机模特胚衣 1 张
-            if color in ("白", "黑"):
-                # 白/黑：固定平铺胚衣来自 flat_mandatory（T恤=白W11 系，卫衣=2 号图）
-                mandatory = naming.flat_mandatory(role, color)
-                fixed = [e for e in pool if e["stem"] == mandatory]
-                if fixed:
-                    selected.append((fixed[0], color))
+            # 每色：平铺胚衣 1 张（model_only 时跳过）+ 随机模特胚衣 1 张
+            if not model_only:
+                if color in ("白", "黑"):
+                    # 白/黑：固定平铺胚衣来自 flat_mandatory（T恤=白W11 系，卫衣=2 号图）
+                    mandatory = naming.flat_mandatory(role, color)
+                    fixed = [e for e in pool if e["stem"] == mandatory]
+                    if fixed:
+                        selected.append((fixed[0], color))
+                    else:
+                        notes.append(f"{color}T 平铺胚衣 {mandatory} 不可用（meta 缺失/损坏），仅出模特图")
                 else:
-                    notes.append(f"{color}T 平铺胚衣 {mandatory} 不可用（meta 缺失/损坏），仅出模特图")
-            else:
-                # 英文色：平铺胚衣 = 该颜色分类的 2 号图（is_flat_stem 判定，stem 以 2 结尾）
-                fixed = [e for e in pool if naming.is_flat_stem(e["stem"])]
-                if fixed:
-                    selected.append((fixed[0], color))
-                else:
-                    notes.append(f"{color} 平铺胚衣(2号图) 不可用，仅出模特图")
-            models = [e for e in pool if not naming.is_flat_stem(e["stem"])]
+                    # 英文色：平铺胚衣 = 该颜色分类的 2 号图（is_flat_stem 判定，stem 以 2 结尾）
+                    fixed = [e for e in pool if naming.is_flat_stem(e["stem"])]
+                    if fixed:
+                        selected.append((fixed[0], color))
+                    else:
+                        notes.append(f"{color} 平铺胚衣(2号图) 不可用，仅出模特图")
+            models = [e for e in pool_model if not naming.is_flat_stem(e["stem"])]
             if models:
                 selected.append((random.choice(models), color))
-            if not fixed and not models:
+            elif not model_only:
+                notes.append(f"{color} 模特胚衣不可用，仅出平铺图")
+            if not selected:
                 notes.append(f"{color} 跳过：无可用胚衣")
 
         if not selected:

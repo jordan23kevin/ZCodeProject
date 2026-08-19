@@ -1,5 +1,11 @@
 # Y2 一体化控制系统 — 更新日志
 
+## engine 副本 v2.6.6 (2026-08-19) — BW 款补模特图（每色 4 张）
+
+- 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.6 + `engine/w_mockup_extra.py` v2.6.2。
+- BW/WB 款贴图每色 4 张：W/B 平铺（ps 链）+ W/B 模特（white_t_mockup，`model_only` 只出模特）；模特胚衣顶层五参（英文色 W1/B1 无 bw 块不跳过）。
+- 详见 04_OS/docs/CHANGELOG.md v2.6.6。
+
 ## engine 副本 v2.6.5 (2026-08-19) — 单面款批量贴图黑白专用 cut 路由修复
 
 - 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.5 + `engine/w_mockup_extra.py` v2.6.1。

@@ -4,7 +4,7 @@
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
 
-功能 v2.6.5（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行 · 仅本张重贴品类正确 · B面源cut修复 · 反黑反白专用贴图 · 单面批量黑白专用cut路由）：
+功能 v2.6.6（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行 · 仅本张重贴品类正确 · B面源cut修复 · 反黑反白专用贴图 · 单面批量黑白专用cut路由 · BW款补模特图）：
   - 支持 --cat / --port 命令行参数，单进程服务单一品类：T恤 wb@8766、卫衣 hoodie@8767。
     各实例只扫描自己品类根下的款（DX*/HX* 由 id_prefix_for(cat) 决定），互不可见，
     彻底修复「选卫衣标签却显示 T恤 去背预览」的串类问题。
@@ -150,7 +150,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.6.5"
+__version__ = "2.6.6"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -2507,6 +2507,33 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                     ok, msg = True, f"平铺图贴图完成，但BW合成执行失败: {dx}"
             except Exception as e:
                 ok, msg = True, f"平铺图贴图完成，但BW合成启动失败: {e}"
+
+        # 5) BW 款模特图（white_t_mockup）：W/B 面各 1 张 × 全部颜色
+        #    用户 2026-08-19：BW 一次贴图一个颜色出 4 张 = W/B 平铺（ps 链）+ W/B 模特（素材库 1 号图）。
+        if ok and (dx.endswith("BW") or dx.endswith("WB")):
+            try:
+                from w_mockup_extra import plan_single_side_jobs, run_mockup_jobs
+                bw_cut = rem_dir / f"{dx}_BW_cut.png"
+                if bw_cut.exists():
+                    bw_jobs = []
+                    for role in ("W", "B"):
+                        jobs, _notes = plan_single_side_jobs(
+                            dx, BASE, role, cut_path=bw_cut,
+                            all_colors=True, model_only=True,
+                        )
+                        bw_jobs.extend(jobs)
+                    if bw_jobs:
+                        if job_sink is not None:
+                            job_sink.extend(bw_jobs)
+                        else:
+                            res = run_mockup_jobs(bw_jobs)
+                            n_ok = sum(1 for _, jok, _ in res if jok)
+                            print(f"  [BW模特图] {dx} {n_ok}/{len(bw_jobs)} 张完成", flush=True)
+                            if n_ok < len(bw_jobs):
+                                fails = [f"{Path(j['out']).name}: {e}" for j, jok, e in res if not jok]
+                                ok, msg = False, f"BW模特图部分失败: {'; '.join(fails[:3])}"
+            except Exception as e:
+                ok, msg = False, f"BW模特图规划/执行异常: {e}"
 
         if ok and not msg:
             parts = []
