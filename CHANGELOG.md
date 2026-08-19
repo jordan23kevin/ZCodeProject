@@ -1,5 +1,12 @@
 # Y2 一体化控制系统 — 更新日志
 
+## peiyi_correct v1.8.2 (2026-08-19) — 手动遮罩导入兼容英文色带空格胚衣名
+
+- `peiyi_correct.py` `import_manual_mask`：manual 探测候选扩展为 6 个——素材目录 `{stem}_manual.png` / `{stem去空格}_manual.png` + `_mask_versions/{stem}` / `_mask_versions/{stem去空格}` 下的 `_manual.png` 与 `.png`。
+- 背景：英文色胚衣名带前导空格（` B2.jpg` → stem=` B2`），此前探测 ` B2_manual.png`，而用户手动保存的遮罩是不带空格的 `B2_manual.png` → 报"未找到手动遮罩文件，请保存为 B2_manual.png 到素材目录"（文件明明存在）。
+- 验证：`import_manual_mask("D:\Semems Hoodie\03_MATERIAL\B Melon Orange\ B2.jpg")` → 找到 `B2_manual.png`、合并归档 v002 成功（B Melon Orange 素材目录）。
+- 注：ps 链 `wb_sticker_ps._apply_manual_top` 与 `white_t_mockup/core.py` 同步同款 strip 兼容（ps v2.6.0）。
+
 ## engine 副本 v2.6.1 (2026-08-19) — 03_UPLOAD 成品按衫色分行支持全部颜色
 
 - 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.1。

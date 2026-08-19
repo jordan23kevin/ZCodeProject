@@ -360,20 +360,22 @@ def import_manual_mask(image_path: str | Path) -> dict:
         return {"ok": False, "error": f"图片不存在: {image_path}"}
 
     stem = image_path.stem
+    stem_clean = stem.strip()  # 英文色胚衣名带前导空格（如 " B2"），用户手动保存的 manual 通常不带空格
     out_dir = image_path.parent
 
-    # 1. 找手动遮罩文件
-    manual_path = out_dir / f"{stem}{MANUAL_SUFFIX}"
-    if not manual_path.exists():
-        manual_path2 = out_dir / "_mask_versions" / stem / f"{stem}{MANUAL_SUFFIX}"
-        if manual_path2.exists():
-            manual_path = manual_path2
-        else:
-            manual_path3 = out_dir / "_mask_versions" / stem / f"{stem}.png"
-            if manual_path3.exists():
-                manual_path = manual_path3
-            else:
-                return {"ok": False, "error": f"未找到手动遮罩文件，请保存为 {stem}_manual.png 到素材目录"}
+    # 1. 找手动遮罩文件：候选按「与胚衣一致(带空格) → 用户手动命名(不带空格)」逐一尝试，
+    #    兼容英文色文件夹（胚衣 " B2.jpg"、用户保存 "B2_manual.png"）与中文色文件夹（黑B2.jpg）。
+    manual_candidates = [
+        out_dir / f"{stem}{MANUAL_SUFFIX}",
+        out_dir / f"{stem_clean}{MANUAL_SUFFIX}",
+        out_dir / "_mask_versions" / stem / f"{stem}{MANUAL_SUFFIX}",
+        out_dir / "_mask_versions" / stem_clean / f"{stem_clean}{MANUAL_SUFFIX}",
+        out_dir / "_mask_versions" / stem / f"{stem}.png",
+        out_dir / "_mask_versions" / stem_clean / f"{stem_clean}.png",
+    ]
+    manual_path = next((p for p in manual_candidates if p.exists()), None)
+    if manual_path is None:
+        return {"ok": False, "error": f"未找到手动遮罩文件，请保存为 {stem_clean}{MANUAL_SUFFIX} 到素材目录"}
 
     # 2. 读取用户画的像素（alpha>30 的非透明区域 = 用户要加的修正）
     manual_img = Image.open(manual_path).convert("RGBA")
