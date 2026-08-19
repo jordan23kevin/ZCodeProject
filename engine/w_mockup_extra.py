@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
-"""单面贴图新流程 v2.5（模特图+平铺图贴图）：02_REM_BG 里只有 W 或只有 B 时，用 white_t_mockup 胚衣出图。
+"""单面贴图新流程 v2.6（模特图+平铺图贴图）：02_REM_BG 里只有 W 或只有 B 时，用 white_t_mockup 胚衣出图。
+
+变更 v2.6（卫衣全部颜色贴图，用户 2026-08-19）：
+  - 新增 all_colors：贴素材库该面**所有带五参的颜色**（卫衣 W 系 10 色=白/黑+8 英文色、
+    B 系 2 色；未填五参的自动跳过），每色出 2 张（2 号平铺胚衣 + 随机 1 张模特胚衣）。
+  - 英文色分类（如 W Melon Orange）→ 中文颜色名（蜜瓜橙/淡黄色/蓝绿色/灰蓝色/
+    孔雀蓝/浅黄色/草绿色/肉粉色，用户提供），成品命名 HX0001_W蜜瓜橙T.jpg 等；
+    素材目录映射见 _EN_COLOR_TO_CN / _category_dir。
 
 变更 v2.5（卫衣平铺胚衣识别）：
   - 平铺胚衣名单按品类区分（wb_naming.flat_mandatory）：T恤=白W11/黑W11/白B12/黑B7，
@@ -77,13 +84,51 @@ MATERIAL_DIR = SEMEMS_ROOT / "03_MATERIAL"
 # 扭曲素材根目录（mask/disp/shadow/highlight/occlusion）
 TPL_ROOT = Path(r"D:\Semems\1胚衣\_tpl")
 
-# 素材库分类目录映射：(role, color) → 目录
-_CATEGORY_MAP = {
-    ("W", "白"): MATERIAL_DIR / "W白",
-    ("W", "黑"): MATERIAL_DIR / "W黑",
-    ("B", "白"): MATERIAL_DIR / "B白",
-    ("B", "黑"): MATERIAL_DIR / "B黑",
+# 素材库分类目录映射：(role, color) → 目录（白/黑 单字；英文色经中文名映射到 "{role} {英文分类名}"）
+# 英文色分类目录名 → 中文颜色名（用户 2026-08-19 提供）
+_EN_COLOR_TO_CN = {
+    "Melon Orange": "蜜瓜橙",
+    "Straw Yellow": "淡黄色",
+    "Blue Green": "蓝绿色",
+    "Grey Blue": "灰蓝色",
+    "Peacock Blue": "孔雀蓝",
+    "Light Yellow": "浅黄色",
+    "Grass Green": "草绿色",
+    "flesh pink": "肉粉色",
 }
+_CN_TO_EN_COLOR = {v: k for k, v in _EN_COLOR_TO_CN.items()}
+
+
+def _category_dir(role: str, color: str) -> Path | None:
+    """(role, 颜色名) → 素材库分类目录。白/黑 → {role}白/{role}黑；英文色 → "{role} {英文名}"。"""
+    if color in ("白", "黑"):
+        return MATERIAL_DIR / f"{role}{color}"
+    en = _CN_TO_EN_COLOR.get(color)
+    if not en:
+        return None
+    return MATERIAL_DIR / f"{role} {en}"
+
+
+def _list_embryo_colors(role: str) -> list[str]:
+    """素材库中 role（W/B）下所有『带五参』的颜色名列表（白/黑/蜜瓜橙/…）。
+    分类目录里至少有一个 .meta.json 才算可用颜色；未填五参的（如英文色 B 系）自动跳过。"""
+    colors = []
+    if not MATERIAL_DIR.is_dir():
+        return colors
+    for cat_dir in sorted(MATERIAL_DIR.iterdir()):
+        if not cat_dir.is_dir() or not cat_dir.name.startswith(role):
+            continue
+        has_meta = any(p.is_file() and p.name.endswith(".meta.json") for p in cat_dir.iterdir())
+        if not has_meta:
+            continue
+        name = cat_dir.name[len(role):].strip()  # 白/黑 或 "Melon Orange"
+        if name in ("白", "黑"):
+            colors.append(name)
+        else:
+            cn = _EN_COLOR_TO_CN.get(name)
+            if cn:
+                colors.append(cn)
+    return colors
 
 def _read_meta(embryo_path: Path, use_bw: bool = False) -> dict | None:
     """读取素材库胚衣的 .meta.json 参数。返回 None 表示缺失或损坏。
@@ -145,7 +190,7 @@ def _list_material_embryos(role: str, color: str, use_bw: bool = False) -> list[
     返回 [{path, stem, meta, tpl_dir, occluder}, ...]，仅包含有有效 meta.json 的胚衣。
     use_bw=True 时读取 meta.json 的 "bw" 块（双面款正面专用）。
     """
-    cat_dir = _CATEGORY_MAP.get((role, color))
+    cat_dir = _category_dir(role, color)
     if not cat_dir or not cat_dir.is_dir():
         return []
     results = []
@@ -181,16 +226,19 @@ def plan_single_side_jobs(
     role: str,
     cut_path: str | Path | None = None,
     only_color: str | None = None,
+    all_colors: bool = False,
 ) -> tuple[list[dict], list[str]]:
     """为单面款规划模特图贴图任务（只规划不执行，供批量模式统一调度）。
 
-    - dx: 款号，如 ``DX0001``
+    - dx: 款号，如 ``DX0001`` / ``HX0001``
     - base_dir: 项目根目录（其下有 ``<dx>/02_REM_BG``、``<dx>/03_UPLOAD``）
     - role: ``"W"`` 或 ``"B"``
     - cut_path: 指定用哪张去背图（默认 ``<base_dir>/<dx>/02_REM_BG/<dx>_<role>_cut.png``）
     - only_color: ``"白"`` 只贴白T 胚衣、``"黑"`` 只贴黑T 胚衣、``None`` 两色都贴
+    - all_colors: True 时贴素材库该面**所有带五参的颜色**（卫衣：白/黑 + 英文色中文名；
+      未填五参的自动跳过），忽略 only_color。
 
-    每色出 2 张：固定平铺胚衣（W=白W11/黑W11，B=白B12/黑B7）+ 随机 1 张模特胚衣。
+    每色出 2 张：固定平铺胚衣（2 号图）+ 随机 1 张模特胚衣。
     返回 (jobs, notes)：jobs 为 [{dx, tag, out, argv}]，argv 即 white_t_mockup CLI
     单张模式的全部参数（与旧逐张调用完全一致，保证输出不变）；notes 为跳过原因。
     """
@@ -214,34 +262,48 @@ def plan_single_side_jobs(
 
         # 按颜色列出素材库胚衣
         colors_to_do = []
-        if only_color is None or only_color == "白":
-            colors_to_do.append("白")
-        if only_color is None or only_color == "黑":
-            colors_to_do.append("黑")
+        if all_colors:
+            # 卫衣：素材库该面所有带五参的颜色（白/黑 + 8 英文色中文名）
+            colors_to_do = _list_embryo_colors(role)
+            if not colors_to_do:
+                return [], [f"{role} 面素材库无带五参的颜色"]
+        else:
+            if only_color is None or only_color == "白":
+                colors_to_do.append("白")
+            if only_color is None or only_color == "黑":
+                colors_to_do.append("黑")
 
         selected: list[tuple[dict, str]] = []  # (embryo_info, color)
         notes: list[str] = []
         for color in colors_to_do:
             pool = _list_material_embryos(role, color, use_bw=use_bw)
             if not pool:
-                notes.append(f"{color}T 跳过：素材库无可用 {role}{color} 胚衣（或 meta.json 缺失/损坏）")
+                notes.append(f"{color} 跳过：素材库无可用 {role}{color} 胚衣（或 meta.json 缺失/损坏）")
                 continue
             # 每色出 2 张：固定平铺胚衣 1 张 + 随机模特胚衣 1 张
-            # （flat_mandatory 按品类返回：T恤=白W11/黑W11…，卫衣=白W2/黑W2… 2号平铺图）
-            mandatory = naming.flat_mandatory(role, color)
-            fixed = [e for e in pool if e["stem"] == mandatory]
-            models = [e for e in pool if not naming.is_flat_stem(e["stem"])]
-            if fixed:
-                selected.append((fixed[0], color))
+            if color in ("白", "黑"):
+                # 白/黑：固定平铺胚衣来自 flat_mandatory（T恤=白W11 系，卫衣=2 号图）
+                mandatory = naming.flat_mandatory(role, color)
+                fixed = [e for e in pool if e["stem"] == mandatory]
+                if fixed:
+                    selected.append((fixed[0], color))
+                else:
+                    notes.append(f"{color}T 平铺胚衣 {mandatory} 不可用（meta 缺失/损坏），仅出模特图")
             else:
-                notes.append(f"{color}T 平铺胚衣 {mandatory} 不可用（meta 缺失/损坏），仅出模特图")
+                # 英文色：平铺胚衣 = 该颜色分类的 2 号图（is_flat_stem 判定，stem 以 2 结尾）
+                fixed = [e for e in pool if naming.is_flat_stem(e["stem"])]
+                if fixed:
+                    selected.append((fixed[0], color))
+                else:
+                    notes.append(f"{color} 平铺胚衣(2号图) 不可用，仅出模特图")
+            models = [e for e in pool if not naming.is_flat_stem(e["stem"])]
             if models:
                 selected.append((random.choice(models), color))
             if not fixed and not models:
-                notes.append(f"{color}T 跳过：无可用胚衣")
+                notes.append(f"{color} 跳过：无可用胚衣")
 
         if not selected:
-            return [], [f"无可用 {role} 模特图胚衣（素材库白/黑候选均为空或 meta.json 缺失）"]
+            return [], [f"无可用 {role} 模特图胚衣（素材库候选均为空或 meta.json 缺失）"]
 
         up_dir.mkdir(parents=True, exist_ok=True)
 
@@ -370,11 +432,14 @@ def generate_single_side_mockup(
     runner,
     cut_path: str | Path | None = None,
     only_color: str | None = None,
+    all_colors: bool = False,
 ) -> tuple[bool, str]:
     """用素材库胚衣为单面款出模特图贴图（签名/返回与旧版一致，内部改为批量执行：
     该款全部图由一个 white_t_mockup --batch 进程一次跑完，不再逐张起进程）。
-    runner 参数保留仅为兼容旧调用，批量执行统一走 run_mockup_jobs。"""
-    jobs, notes = plan_single_side_jobs(dx, base_dir, role, cut_path=cut_path, only_color=only_color)
+    runner 参数保留仅为兼容旧调用，批量执行统一走 run_mockup_jobs。
+    all_colors=True 时贴素材库该面所有带五参的颜色（卫衣全部颜色）。"""
+    jobs, notes = plan_single_side_jobs(dx, base_dir, role, cut_path=cut_path,
+                                        only_color=only_color, all_colors=all_colors)
     if not jobs:
         return False, "; ".join(notes) or f"无可用 {role} 模特图胚衣"
     texts = []

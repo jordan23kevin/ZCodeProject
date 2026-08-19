@@ -8,12 +8,13 @@
 占位符说明：
   {dx}    款号，如 DX0650 / HX0001
   {side}  面：W=正面 / B=背面
-  {color} 颜色：白 / 黑
+  {color} 颜色：白 / 黑 / 蜜瓜橙 / 淡黄色 / 蓝绿色 / 灰蓝色 / 孔雀蓝 / 浅黄色 / 草绿色 / 肉粉色
 
 当前规则（用户定稿 2026-07-12，示例 DX0650）：
   平铺图（T恤平铺在场景里）：DX0650_W白T.jpg / DX0650_B黑T.jpg
   模特图（人穿着）        ：DX0650_白W.jpg  / DX0650_黑B.jpg
   BW 合成图（正背拼图）    ：DX0650_白BW.jpg / DX0650_黑BW.jpg
+  卫衣英文色（2026-08-19 起，中文色名）：HX0001_W蜜瓜橙T.jpg / HX0001_蜜瓜橙W.jpg
 
 平铺胚衣名单按品类区分（2026-08-19，品类由 SEMEMS_ROOT 推断）：
   T恤（wb，默认）  ：白W11 / 黑W11 / 白B12 / 黑B7
@@ -58,7 +59,14 @@ _FLAT_MANDATORY_HOODIE = {
 }
 
 _SIDES = "WB"
-_COLORS = "白黑"
+# 颜色名体系：白/黑 单字 + 卫衣 8 英文色的中文名（用户 2026-08-19 提供）：
+#   Melon Orange=蜜瓜橙、Straw Yellow=淡黄色、Blue Green=蓝绿色、Grey Blue=灰蓝色、
+#   Peacock Blue=孔雀蓝、Light Yellow=浅黄色、Grass Green=草绿色、flesh pink=肉粉色。
+# 成品文件名 {color} 用这些中文名（如 HX0001_W蜜瓜橙T.jpg / HX0001_蜜瓜橙W.jpg）。
+COLOR_NAMES = ("白", "黑", "蜜瓜橙", "淡黄色", "蓝绿色", "灰蓝色",
+               "孔雀蓝", "浅黄色", "草绿色", "肉粉色")
+# color 正则（按长度降序，先长后短）
+_COLORS_PAT = "(?:" + "|".join(re.escape(c) for c in sorted(COLOR_NAMES, key=len, reverse=True)) + ")"
 
 
 def _current_cat() -> str:
@@ -114,7 +122,7 @@ def _fmt_to_regex(fmt: str, dx: str) -> re.Pattern:
     r = re.escape(fmt)
     r = r.replace(r"\{dx\}", re.escape(dx))
     r = r.replace(r"\{side\}", rf"(?P<side>[{_SIDES}])")
-    r = r.replace(r"\{color\}", rf"(?P<color>[{_COLORS}])")
+    r = r.replace(r"\{color\}", rf"(?P<color>{_COLORS_PAT})")
     r = r.replace(r"\.jpg", "")
     return re.compile("^" + r + "$")
 

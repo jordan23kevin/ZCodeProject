@@ -1,5 +1,13 @@
 # Y2 一体化控制系统 — 更新日志
 
+## engine 副本 v2.6.0 (2026-08-19) — 卫衣贴图出全部带五参颜色
+
+- 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.0、`engine/w_mockup_extra.py` v2.6、`engine/wb_naming.py` 颜色体系扩展。
+- **卫衣 all_colors**：贴素材库该面所有带五参的颜色（W 系 10 色、B 系随五参动态），每色平铺+模特各 1 张；英文色经 `_EN_COLOR_TO_CN` 映射中文色名，成品 `HX0001_W蜜瓜橙T.jpg` / `HX0001_蜜瓜橙W.jpg`。
+- `wb_naming.COLOR_NAMES`：白/黑 + 蜜瓜橙/淡黄色/蓝绿色/灰蓝色/孔雀蓝/浅黄色/草绿色/肉粉色；`classify` 支持中文色名解析。
+- T恤 行为不变（only_color 白/黑 路由）。
+- bridge 本体未改动（仍 v2.6.1）。
+
 ## engine 副本 v1.14 (2026-08-19) — wb_naming 卫衣平铺判定通用化
 
 - 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/wb_naming.py` 卫衣平铺判定改为通用规则 **`stem.endswith("2")`**。
