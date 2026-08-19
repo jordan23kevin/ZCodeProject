@@ -1,5 +1,13 @@
 # Y2 一体化控制系统 — 更新日志
 
+## engine 副本 v1.14 (2026-08-19) — wb_naming 卫衣平铺判定通用化
+
+- 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/wb_naming.py` 卫衣平铺判定改为通用规则 **`stem.endswith("2")`**。
+- 卫衣素材库**全部 20 个颜色文件夹**的「2 号图」均为平铺胚衣（W=正面、B=背面；1 号=模特），覆盖白/黑 + 8 英文色（`W2/B2`），新增颜色无需改名单。
+- 全库扫描验证：20 张 2 号图全部识别为平铺、20 张 1 号图为模特，0 不一致；T恤 名单不受影响。
+- `engine/check_rem.py`/`engine/w_mockup_extra.py` 未改动（仍 v2.5.1 / v2.5，resticker 与贴图规划调 `is_flat_stem` 自动跟随新规则）。
+- bridge 本体未改动（仍 v2.6.1）。
+
 ## engine 副本 v2.5.1 (2026-08-19) — 卫衣「2 号图」识别为平铺胚衣
 
 - 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.5.1、`engine/w_mockup_extra.py` v2.5、`engine/wb_naming.py` 平铺名单品类化。

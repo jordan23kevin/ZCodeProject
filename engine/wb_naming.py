@@ -17,7 +17,9 @@
 
 平铺胚衣名单按品类区分（2026-08-19，品类由 SEMEMS_ROOT 推断）：
   T恤（wb，默认）  ：白W11 / 黑W11 / 白B12 / 黑B7
-  卫衣（hoodie）    ：每个颜色文件夹的「2 号图」即平铺胚衣（白W2 / 黑W2 / 白B2 / 黑B2）
+  卫衣（hoodie）    ：素材库每个颜色文件夹的「2 号图」即平铺胚衣
+                     （白W2 / 黑W2 / 白B2 / 黑B2、英文色 W2 / B2；W=正面、B=背面；
+                       1 号图=模特胚衣）。判定规则：stem 以 "2" 结尾。
 """
 
 import os
@@ -35,7 +37,10 @@ LEGACY_FLAT_FMT = "{dx}_{side}_{color}T.jpg"  # DX0001_B_白T.jpg
 # 按品类区分（品类由 SEMEMS_ROOT 推断，check_rem 启动时注入；缺省 T恤 wb）。
 # T恤（wb，用户指定 2026-07-12）：其余胚衣一律视为模特图
 FLAT_STEMS = {"白W11", "黑W11", "白B12", "黑B7"}
-# 卫衣（hoodie，用户确认 2026-08-19）：每个颜色文件夹的「2 号图」即平铺胚衣
+# 卫衣（hoodie，用户确认 2026-08-19）：素材库每个颜色文件夹的「2 号图」即平铺胚衣
+# （白W2/黑W2/白B2/黑B2、英文色 W2/B2；W=正面、B=背面；1 号图=模特胚衣）。
+# 判定用通用规则（stem 以 "2" 结尾），覆盖全部 20 个分类、新增颜色无需改名单；
+# 下表仅用于 flat_mandatory 的 (面,颜色) 固定平铺映射（当前贴图候选池只有黑白四色）。
 _FLAT_STEMS_HOODIE = {"白W2", "黑W2", "白B2", "黑B2"}
 
 # 各 (面, 颜色) 固定使用的平铺胚衣（素材库 stem 名）
@@ -90,8 +95,12 @@ def bw_name(dx: str, color: str) -> str:
 
 
 def is_flat_stem(stem: str, cat: str | None = None) -> bool:
-    """该胚衣是否平铺图模板（决定出平铺命名还是模特命名）。按品类名单判断。"""
-    return stem in flat_stems(cat)
+    """该胚衣是否平铺图模板（决定出平铺命名还是模特命名）。按品类判断：
+    T恤=白名单(FLAT_STEMS)；卫衣=素材库各颜色文件夹的「2 号图」（stem 以 "2" 结尾，
+    W 开头=正面、B 开头=背面，如 白W2/黑W2/白B2/黑B2/W2/B2）。"""
+    if (cat or _current_cat()) == "hoodie":
+        return stem.endswith("2")
+    return stem in FLAT_STEMS
 
 
 def stem_of(name: str) -> str:
