@@ -1,10 +1,10 @@
-"""01_CHECK_REM v2.3.9 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.4.0 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个款（DX/T恤、HX/卫衣…）的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
 
-功能 v2.3.9（多品类实例独立 · 去背预览分端口）：
+功能 v2.4.0（多品类实例独立 · 去背预览分端口 · 批量去背按品类注入前缀）：
   - 支持 --cat / --port 命令行参数，单进程服务单一品类：T恤 wb@8766、卫衣 hoodie@8767。
     各实例只扫描自己品类根下的款（DX*/HX* 由 id_prefix_for(cat) 决定），互不可见，
     彻底修复「选卫衣标签却显示 T恤 去背预览」的串类问题。
@@ -150,7 +150,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.3.9"
+__version__ = "2.4.0"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -912,11 +912,22 @@ def batch_rembg(dx_files):
         except Exception:
             _lf = None
         try:
-            proc = run_minimized(
-                [sys.executable, str(MEITU_SCRIPT), "--skip-precheck"],
-                cwd=str(MEITU_SCRIPT.parent),
-                stdout=_lf, stderr=subprocess.STDOUT, timeout=10800,
-            )
+            # 注入 REM_PREFIX（与单张重去背 rembg_one_file 一致）：告诉美图脚本
+            # 按当前品类前缀（DX/HX）扫描暂存目录；否则卫衣(HX)批量去背时美图
+            # 拿默认 DX 前缀扫不到 HX* 暂存、直接退出不弹窗（用户报"批量去背不弹美图"）。
+            _old_rem_prefix = os.environ.get("REM_PREFIX")
+            os.environ["REM_PREFIX"] = PREFIX
+            try:
+                proc = run_minimized(
+                    [sys.executable, str(MEITU_SCRIPT), "--skip-precheck"],
+                    cwd=str(MEITU_SCRIPT.parent),
+                    stdout=_lf, stderr=subprocess.STDOUT, timeout=10800,
+                )
+            finally:
+                if _old_rem_prefix is None:
+                    os.environ.pop("REM_PREFIX", None)
+                else:
+                    os.environ["REM_PREFIX"] = _old_rem_prefix
         finally:
             if _lf is not None:
                 try: _lf.close()
