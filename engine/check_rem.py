@@ -1,10 +1,10 @@
-"""01_CHECK_REM v2.4.0 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.5.0 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个款（DX/T恤、HX/卫衣…）的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
 
-功能 v2.4.0（多品类实例独立 · 去背预览分端口 · 批量去背按品类注入前缀）：
+功能 v2.5.0（多品类实例独立 · 去背预览分端口 · 批量去背按品类注入前缀 · 页面标品类+贴图素材按品类）：
   - 支持 --cat / --port 命令行参数，单进程服务单一品类：T恤 wb@8766、卫衣 hoodie@8767。
     各实例只扫描自己品类根下的款（DX*/HX* 由 id_prefix_for(cat) 决定），互不可见，
     彻底修复「选卫衣标签却显示 T恤 去背预览」的串类问题。
@@ -150,7 +150,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.4.0"
+__version__ = "2.5.0"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -231,6 +231,13 @@ BASE      = WB_ROOT / "02_PROJECTS"
 CHECK     = BASE / "01_CHECK_REM"
 THUMB_DIR = CHECK / "_thumbs"
 PORT      = _PORT
+
+# 品类根注入环境变量：w_mockup_extra / ps 链(config.py) / white_t_mockup 子进程
+# 通过 SEMEMS_ROOT 解析各自品类的素材库与项目根（默认 T恤）。8766(wb)→D:\Semems WB、
+# 8767(hoodie)→D:\Semems Hoodie，两个独立进程互不干扰，子进程自动继承。
+os.environ["SEMEMS_ROOT"] = str(WB_ROOT)
+# 页面品类标签（标题/h1 显示用）
+_CAT_LABEL = {"wb": "T恤", "hoodie": "卫衣"}.get(_CAT, _CAT)
 
 # 美图去背脚本 / 配置 / 跟踪文件
 MEITU_SCRIPT = Path(r"E:\Claude code\WB去背\去背变清晰\wb_meitu_batch.py")
@@ -1829,7 +1836,7 @@ class Handler(BaseHTTPRequestHandler):
 
         return f"""<!DOCTYPE html>
 <html lang="zh"><head><meta charset="utf-8">
-<title>AI 去背 贴图 OS v{__version__}</title>
+<title>AI 去背 贴图 OS（{_CAT_LABEL}）v{__version__}</title>
 <style>
 body {{ margin:0; padding:22px; background:#1a1a1a; color:#eee;
        font-family:'Microsoft YaHei',sans-serif; }}
@@ -1950,12 +1957,12 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 #psStatus .psbar {{ display:block; height:100%; width:0%; background:#00e676; transition:width .3s ease; }}
 
 </style></head><body>
-<h1>AI 去背 贴图 OS <span class="v">v{__version__}</span></h1>
+<h1>AI 去背 贴图 OS（{_CAT_LABEL}） <span class="v">v{__version__}</span></h1>
 <div class="toolbar">
   <select id="dateSel" onchange="switchDate(this.value)">
 {date_opts_html}
   </select>
-	  <input id="search" placeholder="搜索 DX号…" oninput="filterCards()">
+	  <input id="search" placeholder="搜索 {PREFIX}号…" oninput="filterCards()">
 	  <button onclick="filterCards()" style="cursor:pointer;background:#4CAF50;color:#fff;border:none;border-radius:4px;margin-left:4px;">🔍 搜索</button>
   <button onclick="fetch('/refresh').then(function(r){{return r.json();}}).then(function(d){{showToast(d.msg);setTimeout(function(){{location.reload();}},500);}}).catch(function(){{location.reload();}});" title="重新扫描全部（自动跳过未变更的缩略图）">🔄 刷新全部</button>
 	  <label style="color:#eee;cursor:pointer;user-select:none;margin-left:8px;">

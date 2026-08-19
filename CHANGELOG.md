@@ -1,5 +1,13 @@
 # Y2 一体化控制系统 — 更新日志
 
+## engine 副本 v2.5.0 (2026-08-19) — 页面标品类 + 贴图素材按品类（SEMEMS_ROOT）
+
+- 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.5.0、`engine/w_mockup_extra.py` v2.4。
+- **页面标品类**：卫衣实例(8767)标题/`<h1>` 显示「（卫衣）」，T恤实例(8766)显示「（T恤）」，搜索框 placeholder 用 HX/DX。
+- **贴图素材按品类**：`check_rem.py` 启动注入 `SEMEMS_ROOT=当前品类根`；`w_mockup_extra.py` 的 `MATERIAL_DIR = SEMEMS_ROOT/03_MATERIAL`（卫衣自动用 `D:\Semems Hoodie\03_MATERIAL`），修复卫衣贴图错用 T恤 胚衣。
+- 配套：ps 仓库 `config.py` 的 `SOURCE_BASE`/`MATERIAL_BASE` 同读 SEMEMS_ROOT（ps-compositing 提交）。
+- bridge 本体未改动（仍 v2.6.1）。
+
 ## engine/check_rem.py 副本 v2.4.0 (2026-08-19) — 批量去背按品类注入 REM_PREFIX
 
 - 与 04_OS 生产副本字节一致（协议硬规则②）。修复卫衣「批量去背」不弹美图：`batch_rembg` 调美图前注入 `REM_PREFIX=PREFIX`（DX/HX），否则美图脚本拿默认 DX 前缀扫不到 HX* 暂存直接退出；单张重去背此前已有注入，本次对齐。
