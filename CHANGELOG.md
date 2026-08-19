@@ -1,5 +1,11 @@
 # Y2 一体化控制系统 — 更新日志
 
+## engine 副本 v2.6.7 (2026-08-19) — 成品缩略图行固定 2 列
+
+- 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.7。
+- `.up-row-imgs` 改 CSS grid 2 列 + item 等宽：黑白/英文色每行固定 2 张（此前 flex-wrap 导致黑白 3+1）。
+- 详见 04_OS/docs/CHANGELOG.md v2.6.7。
+
 ## engine 副本 w_mockup_extra v2.6.3 (2026-08-19) — BW 款 W 面模特用 bw 五参
 
 - 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/w_mockup_extra.py` v2.6.3。

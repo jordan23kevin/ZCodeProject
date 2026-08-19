@@ -4,7 +4,7 @@
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
 
-功能 v2.6.6（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行 · 仅本张重贴品类正确 · B面源cut修复 · 反黑反白专用贴图 · 单面批量黑白专用cut路由 · BW款补模特图）：
+功能 v2.6.7（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行 · 仅本张重贴品类正确 · B面源cut修复 · 反黑反白专用贴图 · 单面批量黑白专用cut路由 · BW款补模特图 · 成品行固定2列）：
   - 支持 --cat / --port 命令行参数，单进程服务单一品类：T恤 wb@8766、卫衣 hoodie@8767。
     各实例只扫描自己品类根下的款（DX*/HX* 由 id_prefix_for(cat) 决定），互不可见，
     彻底修复「选卫衣标签却显示 T恤 去背预览」的串类问题。
@@ -150,7 +150,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.6.6"
+__version__ = "2.6.7"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -1931,9 +1931,9 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .up-rows {{ display:flex; flex-direction:column; gap:12px; align-items:flex-start; }}
 .up-row {{ display:flex; flex-direction:row; gap:12px; align-items:flex-start; }}
 .up-row-badge {{ flex:0 0 auto; display:flex; align-items:flex-start; padding-top:4px; }}
-.up-row-imgs {{ display:flex; flex-direction:row; flex-wrap:wrap; gap:12px; align-items:flex-start; }}
+.up-row-imgs {{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:12px; align-items:start; }}
 .bv-imgs {{ gap:14px; }}
-.up-item {{ display:flex; flex-direction:column; align-items:center; width:auto; }}
+.up-item {{ display:flex; flex-direction:column; align-items:center; width:100%; }}
 .up-thumb {{ width:100%; height:220px; border-radius:6px; overflow:hidden; background:#fff; cursor:pointer; position:relative; border:1px solid #333; }}
 .up-thumb img {{ width:100%; height:100%; object-fit:contain; transition:transform .15s; }}
 .up-thumb:hover img {{ transform:scale(1.06); }}
