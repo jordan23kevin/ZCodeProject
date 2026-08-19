@@ -1,5 +1,11 @@
 # Y2 一体化控制系统 — 更新日志
 
+## engine 副本 v2.6.2 (2026-08-19) — 「重新贴图（仅本张）」品类正确化
+
+- 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.2。
+- `_resticker` flat 分支修复两条 T恤 泄漏路径：① 黑白专用 cut 写死 T恤 老胚衣（`D:\Semems\1胚衣\黑正2.jpg`）→ 统一走素材库五参（卫衣=白W2/黑W2…）；② 英文色平铺图 `flat_torso` KeyError → 用 ps 链 `_flat_torso_paths`（全部颜色）。仅 T恤 黑白专用 cut 保留旧行为。
+- 详见 04_OS/docs/CHANGELOG.md v2.6.2。
+
 ## peiyi_correct v1.8.2 (2026-08-19) — 手动遮罩导入兼容英文色带空格胚衣名
 
 - `peiyi_correct.py` `import_manual_mask`：manual 探测候选扩展为 6 个——素材目录 `{stem}_manual.png` / `{stem去空格}_manual.png` + `_mask_versions/{stem}` / `_mask_versions/{stem去空格}` 下的 `_manual.png` 与 `.png`。

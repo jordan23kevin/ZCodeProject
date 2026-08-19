@@ -1,10 +1,10 @@
-"""01_CHECK_REM v2.6.1 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.6.2 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个款（DX/T恤、HX/卫衣…）的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
 
-功能 v2.6.1（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行）：
+功能 v2.6.2（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行 · 仅本张重贴品类正确）：
   - 支持 --cat / --port 命令行参数，单进程服务单一品类：T恤 wb@8766、卫衣 hoodie@8767。
     各实例只扫描自己品类根下的款（DX*/HX* 由 id_prefix_for(cat) 决定），互不可见，
     彻底修复「选卫衣标签却显示 T恤 去背预览」的串类问题。
@@ -150,7 +150,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.6.1"
+__version__ = "2.6.2"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -2796,18 +2796,16 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 session = wb_sticker_ps.StickerSession()
                 cut_meta = _meta_for(cut_path)
                 cut_name = cut_path.name
-                if "_黑" in cut_name:
+                if ("_黑" in cut_name or "_白" in cut_name) and _CAT != "hoodie":
+                    # 历史 T恤 黑白专用 cut：固定参数 + 老胚衣（D:\Semems\1胚衣）——仅 T恤 保留旧行为
                     cfg = ps_config.BACK_NEW if side == "B" else ps_config.FRONT_NEW
-                    torso_path = str(Path(ps_config.BASE_TORSO) / cfg["torso_black"])
-                    session.place_design(str(cut_path), torso_path, str(target_path), placement_cfg=cfg, cut_meta=cut_meta)
-                elif "_白" in cut_name:
-                    # 注意：config.py 只有 BACK_NEW/FRONT_NEW（二者均含 torso_white 键），
-                    # 没有单独的 WHITE_BACK/WHITE_FRONT，白图复用同一组配置取 torso_white。
-                    cfg = ps_config.BACK_NEW if side == "B" else ps_config.FRONT_NEW
-                    torso_path = str(Path(ps_config.BASE_TORSO) / cfg["torso_white"])
+                    torso_key = "torso_black" if "_黑" in cut_name else "torso_white"
+                    torso_path = str(Path(ps_config.BASE_TORSO) / cfg[torso_key])
                     session.place_design(str(cut_path), torso_path, str(target_path), placement_cfg=cfg, cut_meta=cut_meta)
                 else:
-                    torso_path, meta_path = ps_config.flat_torso(side, color)
+                    # 卫衣（含黑白专用 cut）/ T恤通用 cut / 全部颜色：素材库平铺胚衣 + 五参
+                    # （品类正确：卫衣=各色 2 号平铺胚衣白W2/黑W2…，T恤=白W11/黑W11…）
+                    torso_path, meta_path = wb_sticker_ps._flat_torso_paths(side, color)
                     full_meta = ps_config.load_meta(meta_path) or {}
                     meta_set = "bw" if (side == "W" and (dx.endswith("BW") or dx.endswith("WB"))) else "w"
                     if side == "W" and (rem_dir / f"{dx}_B_cut.png").exists():
