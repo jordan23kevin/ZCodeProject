@@ -1,10 +1,10 @@
-"""01_CHECK_REM v2.6.0 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.6.1 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个款（DX/T恤、HX/卫衣…）的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
 
-功能 v2.6.0（多品类独立 · 卫衣全部颜色贴图）：
+功能 v2.6.1（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行）：
   - 支持 --cat / --port 命令行参数，单进程服务单一品类：T恤 wb@8766、卫衣 hoodie@8767。
     各实例只扫描自己品类根下的款（DX*/HX* 由 id_prefix_for(cat) 决定），互不可见，
     彻底修复「选卫衣标签却显示 T恤 去背预览」的串类问题。
@@ -150,7 +150,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.6.0"
+__version__ = "2.6.1"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -2633,13 +2633,15 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         if not files:
             return '<div class="upload-bar empty"><span class="tag-no">\u23f3 \u672a\u8d34\u56fe</span></div>'
 
-        # 按 衫色（黑/白）分行：同一行都是同色（白BW 归白行、黑BW 归黑行），
+        # 按 衫色 分行：同一行都是同色（白BW 归白行、黑BW 归黑行、蜜瓜橙BW 归蜜瓜橙行），
         #    正(B)/背(W)/BW 横排并排；BW 设计不再单独成组，只按衫色分 —
         groups = {}
         for f in files:
             g = self._up_color_of(f.name, dx)
             groups.setdefault(g, []).append(f)
-        group_order = ['黑', '白', '其他']
+        # 行顺序：黑/白 优先，其余颜色（卫衣中文色等）按出现顺序，最后兜底「其他」
+        seen = [g for g in groups if g not in ("黑", "白", "其他")]
+        group_order = ["黑", "白"] + seen + ["其他"]
 
         rows = []
         for g in group_order:
@@ -2681,11 +2683,11 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         return wb_naming.group_of(dx, name)
 
     def _up_color_of(self, name, dx):
-        """03_UPLOAD 画廊按衫色分行：只看衫色（黑/白），BW 设计按衫色归行
-        （白BW→白行、黑BW→黑行），不再单独分 BW 组。"""
+        """03_UPLOAD 画廊按衫色分行：同色成品同一行（白/黑 + 卫衣中文色如 蜜瓜橙），
+        BW 设计按衫色归行（白BW→白行、黑BW→黑行、蜜瓜橙BW→蜜瓜橙行），不再单独分 BW 组。"""
         stem = wb_naming.stem_of(name)
         info = wb_naming.classify(dx, stem)
-        if info and info.get("color") in ("黑", "白"):
+        if info and info.get("color"):
             return info["color"]
         # 旧命名兼容
         if "黑" in stem:
