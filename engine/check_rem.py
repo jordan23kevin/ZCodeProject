@@ -4,7 +4,7 @@
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
 
-功能 v2.6.3（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行 · 仅本张重贴品类正确 · B面源cut修复）：
+功能 v2.6.4（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行 · 仅本张重贴品类正确 · B面源cut修复 · 反黑反白专用贴图）：
   - 支持 --cat / --port 命令行参数，单进程服务单一品类：T恤 wb@8766、卫衣 hoodie@8767。
     各实例只扫描自己品类根下的款（DX*/HX* 由 id_prefix_for(cat) 决定），互不可见，
     彻底修复「选卫衣标签却显示 T恤 去背预览」的串类问题。
@@ -150,7 +150,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.6.3"
+__version__ = "2.6.4"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -2458,7 +2458,9 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         ok = True
         msg = ""
         # 1) 黑T专用平铺图贴图（如果存在黑B/黑W/黑BW且未禁用）
-        if has_black:
+        #    ⚠️ 卫衣跳过：process_black.py 用 T恤 老胚衣（D:\Semems\1胚衣），
+        #    卫衣反黑专用 cut 由 ps_sticker_one（process_dx_folder）统一按素材库五参处理。
+        if has_black and _CAT != "hoodie":
             if not black_script.exists():
                 ok, msg = False, "平铺图黑T贴图脚本(process_black.py)不存在"
             else:
@@ -2469,8 +2471,8 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 except Exception as e:
                     ok, msg = False, f"平铺图黑T贴图启动失败: {e}"
 
-        # 2) 白T专用平铺图贴图（如果存在白B/白W/白BW）
-        if ok and has_white:
+        # 2) 白T专用平铺图贴图（如果存在白B/白W/白BW）——卫衣同样跳过（原因同上）
+        if ok and has_white and _CAT != "hoodie":
             if not white_script.exists():
                 ok, msg = False, "平铺图白T贴图脚本(process_white.py)不存在"
             else:

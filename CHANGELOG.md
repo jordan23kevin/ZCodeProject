@@ -1,5 +1,11 @@
 # Y2 一体化控制系统 — 更新日志
 
+## engine 副本 v2.6.4 (2026-08-19) — 卫衣反黑/反白专用贴图
+
+- 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.4。
+- `_run_one_sticker` 平铺流程：卫衣（hoodie）跳过 process_black.py / process_white.py（T恤 老胚衣脚本），反黑/反白专用 cut 由 ps_sticker_one（ps 链 v2.6.2）统一处理——黑胚衣用黑贴图、白胚衣用白贴图、英文色用默认。
+- 详见 04_OS/docs/CHANGELOG.md v2.6.4。
+
 ## engine 副本 v2.6.3 (2026-08-19) — 「仅本张」B 面源 cut 修复
 
 - 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.3。
