@@ -1,5 +1,11 @@
 # Y2 一体化控制系统 — 更新日志
 
+## engine 副本 w_mockup_extra v2.6.3 (2026-08-19) — BW 款 W 面模特用 bw 五参
+
+- 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/w_mockup_extra.py` v2.6.3。
+- BW 款 W 面模特池改 `use_bw=True`（②双面款正面五参，印花胸口小图）；无 bw 块的自动跳过；B 面/单面款模特仍顶层。
+- 详见 04_OS/docs/CHANGELOG.md v2.6.3。
+
 ## engine 副本 v2.6.6 (2026-08-19) — BW 款补模特图（每色 4 张）
 
 - 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.6 + `engine/w_mockup_extra.py` v2.6.2。

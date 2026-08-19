@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""单面贴图新流程 v2.6.2（模特图+平铺图贴图）：02_REM_BG 里只有 W 或只有 B 时，用 white_t_mockup 胚衣出图。
+"""单面贴图新流程 v2.6.3（模特图+平铺图贴图）：02_REM_BG 里只有 W 或只有 B 时，用 white_t_mockup 胚衣出图。
+
+变更 v2.6.3（BW 款 W 面模特用 bw 五参，用户 2026-08-19）：
+  - BW 款 W 面**模特图**改用 bw 块五参（②双面款正面，印花贴胸口小图），与平铺一致；
+    无 bw 块的英文色 W1 自动跳过（补 bw 后自动进入）。B 面/单面款模特仍顶层五参。
 
 变更 v2.6.2（BW 款模特图，用户 2026-08-19）：
   - 新增 model_only：每色只出模特图（BW 款平铺由 ps 链出，此处补 W/B 面模特图）。
@@ -314,7 +318,9 @@ def plan_single_side_jobs(
                 pool = []
             else:
                 pool = _list_material_embryos(role, color, use_bw=use_bw)
-            pool_model = _list_material_embryos(role, color, use_bw=False)
+            # 模特池：BW 款 W 面也用 bw 块五参（②双面款正面，印花贴胸口小图，用户 2026-08-19）；
+            # 其余（B 面 / 单面款）用顶层五参。无 bw 块的英文色 W1 自动跳过（补 bw 后自动进入）。
+            pool_model = _list_material_embryos(role, color, use_bw=use_bw)
             if not pool and not pool_model:
                 notes.append(f"{color} 跳过：素材库无可用 {role}{color} 胚衣（或 meta.json 缺失/损坏）")
                 continue
