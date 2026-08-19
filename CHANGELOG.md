@@ -1,5 +1,13 @@
 # Y2 一体化控制系统 — 更新日志
 
+## engine 副本 v2.5.1 (2026-08-19) — 卫衣「2 号图」识别为平铺胚衣
+
+- 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.5.1、`engine/w_mockup_extra.py` v2.5、`engine/wb_naming.py` 平铺名单品类化。
+- **wb_naming 平铺胚衣名单按品类**：T恤=白W11/黑W11/白B12/黑B7；卫衣=各颜色文件夹 2 号图（白W2/黑W2/白B2/黑B2，用户确认）。新增 `flat_stems(cat)`/`flat_mandatory(role,color,cat)`，`is_flat_stem` 按品类判断；原常量保留兼容。
+- 卫衣单面款贴图固定出平铺图（`HXxxxx_W黑T.jpg` 等，2 号胚衣）+ 随机 1 张模特图，与 T恤 行为一致。
+- 配套：ps 仓库 `config.py` `FLAT_TORSO` 品类化（卫衣=白W2 等，ps-compositing 提交）。
+- bridge 本体未改动（仍 v2.6.1）。
+
 ## engine 副本 v2.5.0 (2026-08-19) — 页面标品类 + 贴图素材按品类（SEMEMS_ROOT）
 
 - 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.5.0、`engine/w_mockup_extra.py` v2.4。

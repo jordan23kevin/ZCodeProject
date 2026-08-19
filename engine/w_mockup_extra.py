@@ -1,13 +1,18 @@
 # -*- coding: utf-8 -*-
-"""单面贴图新流程 v2.4（模特图+平铺图贴图）：02_REM_BG 里只有 W 或只有 B 时，用 white_t_mockup 胚衣出图。
+"""单面贴图新流程 v2.5（模特图+平铺图贴图）：02_REM_BG 里只有 W 或只有 B 时，用 white_t_mockup 胚衣出图。
+
+变更 v2.5（卫衣平铺胚衣识别）：
+  - 平铺胚衣名单按品类区分（wb_naming.flat_mandatory）：T恤=白W11/黑W11/白B12/黑B7，
+    卫衣=每个颜色文件夹的「2 号图」（白W2/黑W2/白B2/黑B2，用户 2026-08-19 确认）。
+    卫衣单面款固定用 2 号平铺胚衣出平铺图（HXxxxx_W白T.jpg 等）+ 随机 1 张模特图，
+    与 T恤 行为一致；此前卫衣 2 号图被当模特图处理（命名错误）。
 
 变更 v2.4（素材库按品类根解析）：
   - 素材库根 MATERIAL_DIR 由写死 T恤（D:\\Semems WB\\03_MATERIAL）改为读 SEMEMS_ROOT
     环境变量（check_rem 启动时注入：T恤 D:\\Semems WB、卫衣 D:\\Semems Hoodie；缺省 T恤）。
     卫衣单面款贴图从此使用卫衣素材库（D:\\Semems Hoodie\\03_MATERIAL\\W黑 等），
     不再错贴 T恤 胚衣。
-  - 卫衣素材库无平铺胚衣（无 白W11/黑W11/白B12/黑B7），只会出模特图命名
-    （HXxxxx_黑W.jpg 等），属预期行为。
+  - （v2.5 起卫衣平铺胚衣=各颜色文件夹 2 号图，见上方变更说明；v2.4 时卫衣仍只出模特图。）
 
 变更 v2.3（gradient 褶皱贴合，用户选定 s=90）：
   - 位移模式由 isotropic（鼓包/平移）改为 gradient：把 disp 当高度场，沿褶皱切线
@@ -222,7 +227,8 @@ def plan_single_side_jobs(
                 notes.append(f"{color}T 跳过：素材库无可用 {role}{color} 胚衣（或 meta.json 缺失/损坏）")
                 continue
             # 每色出 2 张：固定平铺胚衣 1 张 + 随机模特胚衣 1 张
-            mandatory = naming.FLAT_MANDATORY.get((role, color))
+            # （flat_mandatory 按品类返回：T恤=白W11/黑W11…，卫衣=白W2/黑W2… 2号平铺图）
+            mandatory = naming.flat_mandatory(role, color)
             fixed = [e for e in pool if e["stem"] == mandatory]
             models = [e for e in pool if not naming.is_flat_stem(e["stem"])]
             if fixed:

@@ -1,10 +1,10 @@
-"""01_CHECK_REM v2.5.0 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
+"""01_CHECK_REM v2.5.1 — AI图 vs 去背图 vs 贴图成品 对比预览（本地服务）
 
 仿 01_CHECK (check_sync.py) 的网页预览，但对比的是每个款（DX/T恤、HX/卫衣…）的
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
 
-功能 v2.5.0（多品类实例独立 · 去背预览分端口 · 批量去背按品类注入前缀 · 页面标品类+贴图素材按品类）：
+功能 v2.5.1（多品类实例独立 · 去背预览分端口 · 批量去背按品类注入前缀 · 页面标品类+贴图素材按品类 · 卫衣平铺胚衣2号图）：
   - 支持 --cat / --port 命令行参数，单进程服务单一品类：T恤 wb@8766、卫衣 hoodie@8767。
     各实例只扫描自己品类根下的款（DX*/HX* 由 id_prefix_for(cat) 决定），互不可见，
     彻底修复「选卫衣标签却显示 T恤 去背预览」的串类问题。
@@ -150,7 +150,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.5.0"
+__version__ = "2.5.1"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -2837,7 +2837,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         info = naming.classify(dx, out_name)
         is_flat_target = info and info["kind"] == "flat"
         if is_flat_target:
-            mandatory = naming.FLAT_MANDATORY.get((side, color))
+            mandatory = naming.flat_mandatory(side, color)
             candidates = [e for e in pool if e["stem"] == mandatory]
         else:
             candidates = [e for e in pool if not naming.is_flat_stem(e["stem"])]
