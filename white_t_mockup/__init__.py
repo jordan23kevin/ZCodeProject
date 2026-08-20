@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """白 T 恤样机贴图自动化工具包。"""
 
-__version__ = "1.8.3"
+__version__ = "1.8.4"
 
 from .core import (
     add_white_underbase,

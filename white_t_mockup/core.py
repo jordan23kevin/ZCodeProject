@@ -75,14 +75,15 @@ _IMG_CACHE_MAX = 24
 
 
 # ---- 成品 JPEG 自适应体积压缩 ----
-# 目标：每张成品图落在 200~300KB，且尽量保清晰度。
+# 目标：每张成品图落在 120~160KB（用户 2026-08-21 实测选定 q60~65 甜点位），且尽量保清晰度。
 # 手法：从传入的 max_quality（默认 95）起二分降质，直到体积 ≤ 上限； Pillow 在 quality<95 时
 # 自动从 4:4:4 切到 4:2:0 色度抽样，95→94 一步通常省一半体积且几乎无感，二分会自然利用这一点。
 # 低于下限不强行升质（质量上限就是 max_quality）；降到 min_quality 仍超上限则接受最小体积。
+# （附实测：200~300KB≈q77~81 最安全；<100KB≈q45 印花高对比边缘有可见毛边，不建议）
 
 
-def _save_jpeg_range(img: Image.Image, output_path, lo_kb: int = 200, hi_kb: int = 300,
-                     max_quality: int = 95, min_quality: int = 60) -> int:
+def _save_jpeg_range(img: Image.Image, output_path, lo_kb: int = 120, hi_kb: int = 160,
+                     max_quality: int = 95, min_quality: int = 45) -> int:
     """把 RGB 图存成 JPEG 并将体积控制在 [lo_kb, hi_kb]（KB），返回最终质量值。"""
     import io
     lo_b, hi_b = lo_kb * 1024, hi_kb * 1024
