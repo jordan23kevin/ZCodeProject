@@ -3942,6 +3942,28 @@ def api_batch_upload():
     if not dx_list:
         return jsonify({"ok": False, "error": "请指定DX号"}), 400
 
+    # 防并发：本品类已有上款任务进行中（progress running 且 30 分钟内）时拒绝重复启动。
+    # 背景：用户连续点两次「批量上传」会开两个 wb_listing 进程抢同一个 Edge，
+    # 导致后一个进程 playwright 连接断开崩溃（2026-08-21 实测）。
+    _pf = _upload_progress_file(cat)
+    if _pf.exists():
+        try:
+            _pd = json.loads(_pf.read_text(encoding="utf-8"))
+            if _pd.get("running") and _pd.get("started_at"):
+                from datetime import datetime as _dt
+                try:
+                    _start = _dt.fromisoformat(str(_pd["started_at"]))
+                    _age = (_dt.now() - _start).total_seconds()
+                    if 0 <= _age < 30 * 60:
+                        return jsonify({
+                            "ok": False,
+                            "error": f"已有上款任务正在运行（{int(_age)}s 前启动）。请等它跑完再点，不要重复点击（重复点击会开两个进程抢浏览器导致崩溃）。"
+                        }), 409
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     default_script = str(WB_LISTING_DIR / "wb_listing.py")
     upload_script = os.environ.get("LOVART_UPLOAD_SCRIPT", default_script)
     script_path = Path(upload_script)
