@@ -1,5 +1,12 @@
 # Y2 一体化控制系统 — 更新日志
 
+## engine 副本 v2.7.0 (2026-08-20) — T恤 BW 贴图去掉模特图（修串类污染）
+
+- 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.7.0。
+- v2.6.9「BW款补模特图」块漏加品类门，T恤（wb）BW 款贴图时也被补 W/B 模特图。
+  用户规则：T恤 BW 只用平铺图，BW 补模特图是卫衣（hoodie）专属。该块加 `_CAT == "hoodie"` 门禁。
+- 详见 04_OS/docs/CHANGELOG.md v2.7.0。
+
 ## engine 副本 v2.6.9 (2026-08-20) — BW 拆分 cut 模特图 + 贴图进度
 
 - 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.6.9 + `engine/w_mockup_extra.py` v2.6.4。

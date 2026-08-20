@@ -4,6 +4,11 @@
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
 
+功能 v2.7.0（T恤 BW 贴图去掉模特图 · 修串类污染）：
+  - v2.6.9「BW款补模特图」块漏加品类门，T恤（wb）BW 款贴图时也被补 W/B 模特图。
+    用户规则：T恤 BW 只用平铺图，BW 补模特图是卫衣（hoodie）专属。
+    该块加 `_CAT == "hoodie"` 门禁，T恤 恢复原行为（BW=平铺+BW合成）。
+
 功能 v2.6.9（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行 · 仅本张重贴品类正确 · B面源cut修复 · 反黑反白专用贴图 · 单面批量黑白专用cut路由 · BW款补模特图 · 成品行固定2列 · 仅本张BW款黑白专用cut · BW拆分cut模特图+贴图进度）：
   - 支持 --cat / --port 命令行参数，单进程服务单一品类：T恤 wb@8766、卫衣 hoodie@8767。
     各实例只扫描自己品类根下的款（DX*/HX* 由 id_prefix_for(cat) 决定），互不可见，
@@ -245,6 +250,16 @@ MEITU_CONFIG = Path(r"E:\Claude code\WB去背\去背变清晰\config.json")
 MEITU_TRACK  = WB_ROOT / ".meitu_track.json"
 TEMP_REMBG   = WB_ROOT / "_temp_rembg"          # 暂存根
 CONFIG_BACKUP = MEITU_CONFIG.with_suffix(".json.bak_checkrem")  # 备份
+
+# 去背任务强制重跑：跟踪当前运行中的任务，供 _force_stop_rembg 精准终止。
+# token 用于区分新旧任务的锁，防止旧任务收尾清理时误删新任务刚写入的锁。
+import uuid as _uuid
+_REMBG_STATE_LOCK = threading.Lock()
+_REMBG_STATE = {
+    "token": None,        # 当前锁令牌
+    "thread": None,       # 批量去背线程（若在跑）
+    "worker_proc": None,  # 单张去背 worker 子进程句柄（若在跑）
+}
 
 IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
 
@@ -666,6 +681,127 @@ def get_thumb(dx, kind, file):
             print(f"  [缩略图失败] {dx}/{file}: {e}", flush=True)
             return None
     return thumb
+
+
+# ── 去背任务强制终止（供「强制运行最新」使用）──────────────
+def _kill_rembg_processes():
+    """杀掉美图去背相关进程：wb_meitu_batch.py 驱动、upscale_worker.py、XiuXiu.exe 美图 GUI。
+
+    用 psutil 按命令行精准匹配，避免误杀其他 Python；psutil 不可用时回退 taskkill 按映像名杀 XiuXiu。
+    """
+    try:
+        import psutil
+        _PSUTIL_OK = True
+    except Exception:
+        _PSUTIL_OK = False
+    if _PSUTIL_OK:
+        keywords = ("wb_meitu_batch.py", "upscale_worker.py", "_rembg_worker.py")
+        self_pid = os.getpid()
+        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+            try:
+                info = proc.info
+                pid = info["pid"]
+                if pid == self_pid:
+                    continue
+                name = (info.get("name") or "")
+                cmdline = " ".join(info.get("cmdline") or [])
+                if name == "XiuXiu.exe":
+                    proc.kill()
+                    continue
+                if any(k in cmdline for k in keywords):
+                    proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+            except Exception:
+                continue
+    else:
+        try:
+            subprocess.run(["taskkill", "/IM", "XiuXiu.exe", "/F"],
+                           capture_output=True, timeout=10)
+        except Exception:
+            pass
+
+
+def _restore_interrupted_backups():
+    """把被强制中断的去背任务的旧 _cut.png 备份还原回 02_REM_BG，避免图片丢失。
+
+    扫描 _backup（单张）与 _batch_backup（批量）下的 {dx}/{cut_name}；
+    目标已存在（新任务已产出）则不覆盖，还原后清空备份目录。
+    """
+    for root_name in ("_backup", "_batch_backup"):
+        root = TEMP_REMBG / root_name
+        if not root.is_dir():
+            continue
+        for dx_dir in root.iterdir():
+            if not dx_dir.is_dir():
+                continue
+            rem_dir = BASE / dx_dir.name / "02_REM_BG"
+            for bf in dx_dir.glob("*_cut.png"):
+                try:
+                    dest = rem_dir / bf.name
+                    if not dest.exists():
+                        rem_dir.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(str(bf), str(dest))
+                        print(f"  [强制去背] 还原中断备份 {dx_dir.name}/{bf.name}", flush=True)
+                except Exception as e:
+                    print(f"  [强制去背] 还原备份失败 {bf}: {e}", flush=True)
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def _force_stop_rembg(timeout=20):
+    """强制终止当前去背任务并清理现场，供「去背/批量去背」强制运行最新。
+
+    流程：杀单张 worker 进程树 → 杀美图驱动/GUI → 等旧批量线程收尾退出 →
+    恢复 config.json（幂等）→ 删除锁 → 清理暂存目录。
+    """
+    with _REMBG_STATE_LOCK:
+        worker_proc = _REMBG_STATE.get("worker_proc")
+        old_thread = _REMBG_STATE.get("thread")
+        _REMBG_STATE["worker_proc"] = None
+        _REMBG_STATE["thread"] = None
+        _REMBG_STATE["token"] = None
+
+    # 1. 杀单张 worker 进程树（taskkill /T 连子进程美图驱动一起杀）
+    if worker_proc is not None:
+        try:
+            if worker_proc.poll() is None:
+                subprocess.run(["taskkill", "/PID", str(worker_proc.pid), "/T", "/F"],
+                               capture_output=True, timeout=10)
+        except Exception:
+            pass
+
+    # 2. 杀美图驱动 + GUI（覆盖批量线程里正在跑的美图）
+    _kill_rembg_processes()
+
+    # 3. 等旧批量线程走完收尾（它被美图进程被杀后会立即从 subprocess.run 返回）
+    if old_thread is not None and old_thread.is_alive():
+        old_thread.join(timeout=timeout)
+
+    # 4. 恢复 config（幂等）→ 还原被中断的旧去背图备份 → 删锁
+    try:
+        _maybe_restore_config()
+    except Exception:
+        pass
+    try:
+        _restore_interrupted_backups()
+    except Exception:
+        pass
+    lock = TEMP_REMBG / ".rembg_lock"
+    try:
+        if lock.exists():
+            lock.unlink()
+    except Exception:
+        pass
+
+    # 5. 清理暂存目录（美图按 SRC 全量扫描，残留会被重复处理）
+    try:
+        for stale in TEMP_REMBG.glob(f"{PREFIX}*"):
+            if stale.is_dir():
+                shutil.rmtree(str(stale), ignore_errors=True)
+    except Exception:
+        pass
+
+    print(f"  [强制去背] 已终止旧任务并清理现场 ({timeout}s)", flush=True)
 
 
 # ── 重新去背：单张 AI 图安全重跑美图秀秀 ─────────────
@@ -2149,16 +2285,25 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             self._send_json({"ok": False, "msg": "DX号非法"}); return
         if not file or "/" in file or "\\" in file:
             self._send_json({"ok": False, "msg": "图片文件参数非法"}); return
-        # 检查是否已有任务在跑
+        # 强制运行最新：已有任务在跑时，先终止旧任务并清理现场，再启动新任务
         TEMP_REMBG.mkdir(parents=True, exist_ok=True)
         lock = TEMP_REMBG / ".rembg_lock"
-        if lock.exists():
-            self._send_json({"ok": False, "msg": "已有去背任务在运行，请等其完成"}); return
-        lock.write_text(f"{dx}\t{file}", encoding="utf-8")
+        forced = lock.exists()
+        if forced:
+            _force_stop_rembg()
+        token = _uuid.uuid4().hex
+        lock.write_text(f"{dx}\t{file}\t{token}", encoding="utf-8")
+        with _REMBG_STATE_LOCK:
+            _REMBG_STATE["token"] = token
         # 启动后台 worker（最小化控制台窗口），HTTP 立即返回
         worker = Path(__file__).parent / "_rembg_worker.py"
-        run_minimized([sys.executable, str(worker), dx, file], wait=False)
-        self._send_json({"ok": True, "msg": f"{dx}/{file} 已启动美图去背，请勿动键鼠，完成后点刷新"})
+        proc = run_minimized([sys.executable, str(worker), dx, file, token], wait=False)
+        with _REMBG_STATE_LOCK:
+            _REMBG_STATE["worker_proc"] = proc
+        if forced:
+            self._send_json({"ok": True, "msg": f"已终止旧任务，{dx}/{file} 重新启动美图去背，请勿动键鼠"})
+        else:
+            self._send_json({"ok": True, "msg": f"{dx}/{file} 已启动美图去背，请勿动键鼠，完成后点刷新"})
 
     # 检查去背锁（供批量去背轮询）
     def _check_rembg_lock(self):
@@ -2196,10 +2341,22 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         # 异步执行（batch_rembg 会开美图 GUI）
         import threading
         TEMP_REMBG.mkdir(parents=True, exist_ok=True)
-        def _run():
-            lock = TEMP_REMBG / ".rembg_lock"
+        lock = TEMP_REMBG / ".rembg_lock"
+        forced = lock.exists()
+        if forced:
+            _force_stop_rembg()
+            # 清掉旧结果文件，避免旧任务的残留结果被 /batch-result 误当成新结果
             try:
-                lock.write_text("batch", encoding="utf-8")
+                _old_result = TEMP_REMBG / "_batch_result.json"
+                if _old_result.exists():
+                    _old_result.unlink()
+            except Exception:
+                pass
+        token = _uuid.uuid4().hex
+        # 同步写锁：确保前端轮询 /batch-result 时立即能看到"进行中"，无竞态窗口
+        lock.write_text(f"batch\t{token}", encoding="utf-8")
+        def _run():
+            try:
                 results = batch_rembg(dx_files)
                 ok_count = sum(1 for r in results if r[2])
                 fail_count = len(results) - ok_count
@@ -2212,10 +2369,25 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                         {"dx": r[0], "ai_file": r[1], "ok": r[2], "msg": r[3]} for r in results
                     ]}, f, ensure_ascii=False)
             finally:
-                if lock.exists():
-                    lock.unlink()
-        threading.Thread(target=_run, daemon=True).start()
-        self._send_json({"ok": True, "msg": f"批量去背已启动，共 {len(dx_files)} 张"})
+                # 仅当锁还是本任务的（token 匹配）才删除，避免误删后续新任务的锁
+                try:
+                    if lock.exists() and token in lock.read_text(encoding="utf-8"):
+                        lock.unlink()
+                except Exception:
+                    pass
+                with _REMBG_STATE_LOCK:
+                    if _REMBG_STATE.get("token") == token:
+                        _REMBG_STATE["token"] = None
+                        _REMBG_STATE["thread"] = None
+        t = threading.Thread(target=_run, daemon=True)
+        with _REMBG_STATE_LOCK:
+            _REMBG_STATE["token"] = token
+            _REMBG_STATE["thread"] = t
+        t.start()
+        if forced:
+            self._send_json({"ok": True, "msg": f"已终止旧任务，批量去背重新启动，共 {len(dx_files)} 张"})
+        else:
+            self._send_json({"ok": True, "msg": f"批量去背已启动，共 {len(dx_files)} 张"})
 
     # 批量去背结果查询
     def _batch_result(self):
@@ -2540,8 +2712,10 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 ok, msg = True, f"平铺图贴图完成，但BW合成启动失败: {e}"
 
         # 5) BW 款模特图（white_t_mockup）：W/B 面各 1 张 × 全部颜色
-        #    用户 2026-08-19：BW 一次贴图一个颜色出 4 张 = W/B 平铺（ps 链）+ W/B 模特（素材库 1 号图）。
-        if ok and (dx.endswith("BW") or dx.endswith("WB")):
+        #    仅卫衣：BW 一次贴图一个颜色出 4 张 = W/B 平铺（ps 链）+ W/B 模特（素材库 1 号图）。
+        #    用户 2026-08-20：T恤 BW 只用平铺图，模特图是卫衣专属——v2.6.9 该块漏加品类门，
+        #    导致 T恤 BW 也被补模特图（串类污染），此处补上门禁。
+        if ok and _CAT == "hoodie" and (dx.endswith("BW") or dx.endswith("WB")):
             try:
                 from w_mockup_extra import plan_single_side_jobs, run_mockup_jobs
                 bw_jobs = []
