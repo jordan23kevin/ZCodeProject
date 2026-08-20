@@ -1554,7 +1554,6 @@ def rename_to_bw(filename: str, inbox_dir: Path = None) -> tuple:
 UPLOAD_THUMB_DIR = BASE_DIR / "_upload_thumbs"
 UPLOAD_PROGRESS_FILE = BASE_DIR / ".wb_upload_progress.json"
 UPLOAD_RECORD_MD = BASE_DIR / "已上款货号_wb.md"
-ONLINE_LISTED_FILE = BASE_DIR / ".wb_online_listed.json"
 
 
 def _upload_progress_file(cat=None):
@@ -1574,6 +1573,11 @@ def _cat_suffix(cat=None):
 def _completed_md_for(cat=None):
     """已上款记录文件：按品类落各自根（wb 缺省=D:\\Semems WB\\已上款货号_wb.md，与改造前一致）。"""
     return _cat_root(cat or _DEFAULT_CAT) / f"已上款货号_{_cat_suffix(cat)}.md"
+
+
+def _online_listed_file(cat=None):
+    """店小秘在线已上款数据文件：按品类落各自根（wb 缺省=D:\\Semems WB\\.wb_online_listed.json，与改造前一致）。"""
+    return _cat_root(cat or _DEFAULT_CAT) / ".wb_online_listed.json"
 
 
 def _title_cache_for(cat=None):
@@ -3474,10 +3478,10 @@ def api_upload_projects():
         return err
     projects = _scan_upload_projects(projects_dir=ctx["projects"], prefix=ctx["prefix"],
                                      thumb_dir=ctx["upload_thumb"])
-    online_set = _read_online_listed()
+    online_set = _read_online_listed(cat)
     for p in projects:
         p["online_listed"] = p.get("dx", "") in online_set
-    payload = {"ok": True, "projects": projects, "online_updated_at": _online_listed_updated_at(), "online_mode": _online_listed_mode()}
+    payload = {"ok": True, "projects": projects, "online_updated_at": _online_listed_updated_at(cat), "online_mode": _online_listed_mode(cat)}
     if cat != _DEFAULT_CAT:
         payload["cat"] = cat
     return jsonify(payload)
@@ -3564,35 +3568,38 @@ def _read_completed_md():
         return set()
 
 
-def _read_online_listed():
-    """读取店小秘在线产品页抓取的已上款 DX 集合（唯一权威来源）"""
-    if not ONLINE_LISTED_FILE.exists():
+def _read_online_listed(cat=None):
+    """读取店小秘在线产品页抓取的已上款款号集合（唯一权威来源，按品类落各自根）"""
+    f = _online_listed_file(cat)
+    if not f.exists():
         return set()
     try:
-        data = json.loads(ONLINE_LISTED_FILE.read_text(encoding="utf-8"))
+        data = json.loads(f.read_text(encoding="utf-8"))
         dx_set = data.get("dx_set", []) or []
-        return set(str(dx).upper() for dx in dx_set if str(dx).upper().startswith("DX"))
+        return set(str(dx).upper() for dx in dx_set)
     except Exception:
         return set()
 
 
-def _online_listed_updated_at():
+def _online_listed_updated_at(cat=None):
     """返回在线已上款数据最后更新时间"""
-    if not ONLINE_LISTED_FILE.exists():
+    f = _online_listed_file(cat)
+    if not f.exists():
         return None
     try:
-        data = json.loads(ONLINE_LISTED_FILE.read_text(encoding="utf-8"))
+        data = json.loads(f.read_text(encoding="utf-8"))
         return data.get("updated_at")
     except Exception:
         return None
 
 
-def _online_listed_mode():
+def _online_listed_mode(cat=None):
     """返回在线已上款数据上次刷新的模式（quick/deep），供前端显示"""
-    if not ONLINE_LISTED_FILE.exists():
+    f = _online_listed_file(cat)
+    if not f.exists():
         return None
     try:
-        data = json.loads(ONLINE_LISTED_FILE.read_text(encoding="utf-8"))
+        data = json.loads(f.read_text(encoding="utf-8"))
         return data.get("mode")
     except Exception:
         return None
@@ -3685,7 +3692,7 @@ def api_upload_progress():
     # 只统计当前选中款范围内的完成/失败，避免历史记录把 done_count 撑爆 total_count
     selected_set = set(data.get("selected", []))
     failed_set = set(data.get("failed", [])) & selected_set
-    online_set = _read_online_listed()
+    online_set = _read_online_listed(cat)
     # 店小秘在线产品页为唯一权威来源；同时保留当前运行中的 completed（wb_listing.py 实时写入）
     completed_set = (set(data.get("completed", [])) | online_set) & selected_set
 
@@ -3699,7 +3706,7 @@ def api_upload_progress():
     # 在线已上款信息（权威来源）
     data["online_set"] = sorted(online_set & selected_set)
     data["online_count"] = len(online_set & selected_set)
-    data["online_updated_at"] = _online_listed_updated_at()
+    data["online_updated_at"] = _online_listed_updated_at(cat)
 
     return jsonify(data)
 
@@ -3718,7 +3725,7 @@ def api_upload_refresh_online_listed():
     if mode not in ("incremental", "deep"):
         mode = "incremental"
 
-    lock_file = BASE_DIR / ".check_online_listed.lock"
+    lock_file = _cat_root(cat or _DEFAULT_CAT) / ".check_online_listed.lock"
     if lock_file.exists():
         # 用户要求：点击即强制重新刷新。读锁内 PID：
         # - 进程已死（崩溃残留锁）→ 直接删锁
@@ -3761,7 +3768,9 @@ def api_upload_refresh_online_listed():
         }), 404
 
     try:
-        proc = run_minimized([sys.executable, str(script_path), "--mode", mode], wait=False, no_console=True)
+        # 非 wb 品类注入 WB_LISTING_CAT，使 check_online_listed.py 按品类抓取/落文件（卫衣→D:\Semems Hoodie）
+        extra_env = {"WB_LISTING_CAT": cat} if cat and cat != _DEFAULT_CAT else None
+        proc = run_minimized([sys.executable, str(script_path), "--mode", mode], wait=False, no_console=True, env=extra_env)
         mode_label = "深度清理" if mode == "deep" else "增量刷新"
         return jsonify({
             "ok": True,
