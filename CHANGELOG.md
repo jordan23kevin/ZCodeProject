@@ -1,5 +1,15 @@
 # Y2 一体化控制系统 — 更新日志
 
+## upload.html v2.5.0 (2026-08-21) — WB 上款页面重设计：紧凑卡片 + 全屏审图
+
+- 痛点：旧版把每款全部图片平铺展示，一个款几十张图刷屏，审图费劲。
+- 卡片紧凑化：grid 从 minmax(520px) 改为 300px；卡片 = 卡头（勾选+款号+在线徽章+张数）+ 封面大图（第一张未删除图）+ 颜色圆点行（DOT_COLORS 映射，卫衣 10 色 + T恤 BW/B/W）+ 操作行（🔍审图 / ▸展开 / 📂文件夹）。
+- 新增全屏审图模式（`#reviewer` lightbox）：大图居中、左右箭头 + 键盘 ←/→/Esc、底部胶片条（点击跳转、当前项高亮并 scrollIntoView）、顶部款号/色徽/文件名/序号、🗑删除按钮（复用 /api/upload/delete，成功后本地 `_deleted` 标记）。
+- 旧平铺视图保留为「▸ 展开」折叠区（`#gal-{dx}`，默认 display:none）；展开态缩略图点击改为 `openReviewer(dx, fIdx)` 直接定位到对应图。
+- 新增 `DX_FILES` 全局缓存（buildCard 填充）作为审图数据源；`openReviewer/closeReviewer/revStep/revGo/renderReviewer/revDelete/toggleGallery` 一组函数；`revFiles()` 过滤已删除项。
+- T恤（/upload）与卫衣（/upload?cat=hoodie）共用此页，改动对两者生效。
+- 已实开浏览器验证：卡片渲染、审图开/关/键盘翻页/胶片条定位、展开缩略图→审图文件名精确匹配、勾选计数（批量上传按钮）均正常；wb 模式 2813 款加载约 9s 属正常（数据量大）。
+
 ## lovart_bridge v2.6.3 (2026-08-21) — 启动上款前自动清理僵尸进程
 
 - 用户规则：点「批量上传」或「强制重新上款」后只执行最新任务，旧 wb_listing 进程自动清理。
