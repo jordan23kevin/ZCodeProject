@@ -30,7 +30,7 @@ function updateBatchBtn(){
 function batchRembg(){
   var checked=document.querySelectorAll('.dx-check:checked');
   if(!checked.length){showToast('请先勾选需要去背的款');return;}
-  if(!confirm('批量去背 '+checked.length+' 个款？一次美图处理全部。'))return;
+  if(!confirm('批量去背 '+checked.length+' 个款？一次美图处理全部。\n若已有去背任务正在运行，将被强制中断。'))return;
   var dxList=[];
   checked.forEach(function(cb){dxList.push(cb.getAttribute('data-dx'));});
   var btn=document.getElementById('batchBtn');
@@ -142,7 +142,7 @@ function resticker(dx,file,cellId){
   });
 }
 function rembg(dx,file){
-  var msg='重新去背 '+dx+'/'+file+' ？\n将启动美图秀秀自动操作（接管屏幕），期间请勿动键鼠。\n旧去背图会先备份，失败可自动还原。';
+  var msg='重新去背 '+dx+'/'+file+' ？\n将启动美图秀秀自动操作（接管屏幕），期间请勿动键鼠。\n若已有去背任务正在运行，将被强制中断。\n旧去背图会先备份，失败可自动还原。';
   if(!confirm(msg))return;
   showToast('⏳ 正在启动美图秀秀…请勿动键鼠');
   fetch('/rembg?dx='+dx+'&file='+encodeURIComponent(file)).then(r=>r.json()).then(d=>{showToast(d.msg);if(d.ok)setTimeout(()=>location.reload(),4000);});
@@ -401,17 +401,43 @@ function resolveGroupIdByStem(dx, stem){
 function pollPsStatus(){
   var el=document.getElementById('psStatus');
   var txt=document.getElementById('psStatusText');
+  var barWrap=document.getElementById('psBarWrap');
+  var bar=document.getElementById('psBar');
   if(!el||!txt) return;
   fetch('/ps-status').then(function(r){return r.json();}).then(function(d){
     if(d.running){
+      // 解析进度 X/Y（如 "12/90"）→ 显示「进度 12/90 款（还剩 78 款）」
+      var done=0, total=0, hasFrac=false;
+      if(d.progress && /^(\d+)\/(\d+)$/.test(d.progress.trim())){
+        var m=d.progress.trim().match(/^(\d+)\/(\d+)$/);
+        done=parseInt(m[1],10); total=parseInt(m[2],10); hasFrac=true;
+      }
       var msg=d.task||'PS 运行中';
-      if(d.current_dx) msg += ' · ' + d.current_dx;
-      if(d.progress) msg += ' (' + d.progress + ')';
-      if(d.detail && d.detail!==msg) msg += ' · ' + d.detail;
+      if(d.current_dx) msg += ' · 正在处理 ' + d.current_dx;
+      if(hasFrac){
+        var remain=Math.max(total-done,0);
+        msg += ' · 进度 ' + done + '/' + total + ' 款（还剩 ' + remain + ' 款）';
+      } else if(d.progress){
+        msg += ' · ' + d.progress;
+      }
+      if(d.detail && d.detail!==msg && d.detail.indexOf('正在处理')<0 && d.detail.indexOf('进度')<0){
+        msg += ' · ' + d.detail;
+      }
       txt.textContent=msg;
+      if(barWrap && bar){
+        if(hasFrac && total>0){
+          bar.style.width=(done/total*100).toFixed(1)+'%';
+          barWrap.style.display='inline-block';
+        } else {
+          bar.style.width='100%';
+          barWrap.style.display='none';
+        }
+      }
       el.classList.add('show');
     }else{
       txt.textContent='PS 空闲';
+      if(barWrap) barWrap.style.display='none';
+      if(bar) bar.style.width='0%';
       el.classList.remove('show');
     }
   }).catch(function(){
@@ -423,9 +449,9 @@ function pollPsStatus(){
 document.addEventListener('DOMContentLoaded', function(){
   groupBlackVariants();
 
-  // 启动 PS 状态轮询（每 2 秒一次）
+  // 启动 PS 状态轮询（每 0.8 秒一次，快照更密、数字跳动更小）
   pollPsStatus();
-  setInterval(pollPsStatus, 2000);
+  setInterval(pollPsStatus, 800);
 
   // 回到顶部按钮
   var topBtn=document.getElementById('backToTop');

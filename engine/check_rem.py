@@ -1536,6 +1536,7 @@ def run_minimized(cmd, cwd=None, wait=True, **extra):
     kwargs.update(extra)
     if wait:
         return subprocess.run(cmd, **kwargs)
+    return subprocess.Popen(cmd, **kwargs)
 
 
 def _run_proc_heartbeat(dx, args, desc, task_name):
@@ -1563,23 +1564,6 @@ def _run_proc_heartbeat(dx, args, desc, task_name):
     if "err" in result:
         raise result["err"]
     return result.get("rc", 1)
-    return subprocess.Popen(cmd, **kwargs)
-    """Windows 下以最小化、不抢前台焦点的方式运行外部程序。
-    wait=True 阻塞等待并返回 CompletedProcess；wait=False 立即返回 Popen 对象。
-    extra 可传 capture_output、timeout 等 subprocess 参数。"""
-    startupinfo = subprocess.STARTUPINFO()
-    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    startupinfo.wShowWindow = 7  # SW_SHOWMINNOACTIVE：最小化，不激活前台
-    kwargs = {
-        "startupinfo": startupinfo,
-        "creationflags": subprocess.CREATE_NEW_CONSOLE,
-    }
-    if cwd:
-        kwargs["cwd"] = cwd
-    kwargs.update(extra)
-    if wait:
-        return subprocess.run(cmd, **kwargs)
-    return subprocess.Popen(cmd, **kwargs)
 
 
 # ── 文件夹跟随改名（文件角色后缀变化时联动）─────────────────────
