@@ -300,6 +300,10 @@ def plan_single_side_jobs(
         if all_colors:
             # 卫衣：素材库该面所有带五参的颜色（白/黑 + 8 英文色中文名）
             colors_to_do = _list_embryo_colors(role)
+            if only_color:
+                # 反黑/反白（2026-08-20）：all_colors 下 only_color 也生效——只留该色，
+                # 其余颜色不重贴（单面模特图 / BW 模特图通用）
+                colors_to_do = [c for c in colors_to_do if c == only_color]
             if not colors_to_do:
                 return [], [f"{role} 面素材库无带五参的颜色"]
         else:

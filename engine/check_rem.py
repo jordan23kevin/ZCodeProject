@@ -1315,8 +1315,9 @@ def _process_invert_task(dx, file, mode):
         except Exception:
             pass
 
-    # 反相后重跑该款完整贴图+BW合成流水线
-    results = Handler._run_sticker_task([dx])
+    # 反相后重跑该款完整贴图+BW合成流水线（反黑只贴黑、反白只贴白）
+    only_color = "黑" if mode == "black" else "白"
+    results = Handler._run_sticker_task([dx], only_color=only_color)
     ok, msg = results[0][1], results[0][2]
     return ok, f"已生成 {dest_name}，{msg}"
 
@@ -1444,7 +1445,8 @@ def batch_invert_rem(dx_list, mode="black"):
         sticker_queue.append(dx)
 
     if sticker_queue:
-        sticker_results = Handler._run_sticker_task(sticker_queue)
+        only_color = "黑" if mode == "black" else "白"  # 反黑只贴黑、反白只贴白（其余颜色不重贴）
+        sticker_results = Handler._run_sticker_task(sticker_queue, only_color=only_color)
         sticker_map = {dx: (ok, msg) for dx, ok, msg in sticker_results}
         for dx in sticker_queue:
             idx = sticker_index.get(dx)
@@ -2487,12 +2489,13 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 print(f"  [贴图流水线] 兜底元数据失败 {f}: {e}", flush=True)
 
     @staticmethod
-    def _run_one_sticker(dx, skip_black=False, job_sink=None):
+    def _run_one_sticker(dx, skip_black=False, job_sink=None, only_color=None):
         """运行单个 DX 的贴图流水线。
         - 单面款（02_REM_BG 里只有 W 或只有 B）：走模特图贴图（white_t_mockup 胚衣）。
         - 其它（BW / 同时有 B+W / 含黑版）：走平铺图贴图（纯软件 PIL，不再使用 Photoshop）。
         返回 (ok, msg)。贴图流水线本身不开也不关 Photoshop。
         skip_black=True 时平铺图流程会跳过黑T贴图（用于批量贴图）。
+        only_color 非 None（"黑"/"白"）时只贴该颜色（反黑/反白专用，其余颜色不重贴）。
         job_sink 不为 None 时，单面款只规划任务追加进 job_sink（由调用方批量执行），
         不再逐张起 white_t_mockup 进程。"""
         rem_dir = BASE / dx / "02_REM_BG"
@@ -2535,6 +2538,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             single_role = "B"
 
         # 清理旧的自动生成平铺图/模特图贴图/BW文件，确保再次贴图时一定重新生成并覆盖
+        # only_color（反黑/反白）时只清该色文件——其余颜色旧图保留不重贴，不能被误删
         if up_dir.is_dir():
             for fp in up_dir.iterdir():
                 if not fp.is_file():
@@ -2542,6 +2546,8 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 name = fp.name
                 low = name.lower()
                 if low.endswith((".png", ".jpg", ".jpeg")):
+                    if only_color and only_color not in name:
+                        continue
                     if wb_naming.is_generated(dx, name):  # 新/旧平铺 + 模特 + BW（规则见 wb_naming）
                         try:
                             fp.unlink()
@@ -2589,7 +2595,9 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                     planned = 0
                     notes_all = []
                     for color, path in cuts_for_jobs:
-                        if all_colors:
+                        if only_color:
+                            oc = only_color  # 反黑/反白：只贴该颜色
+                        elif all_colors:
                             oc = None  # all_colors=True 时忽略 only_color
                         elif color:
                             oc = color
@@ -2613,7 +2621,9 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 from w_mockup_extra import generate_single_side_mockup
                 results = []
                 for color, path in cuts_for_jobs:
-                    if all_colors:
+                    if only_color:
+                        oc = only_color  # 反黑/反白：只贴该颜色
+                    elif all_colors:
                         oc = None
                     elif color:
                         oc = color
@@ -2680,17 +2690,23 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         # 3) 通用 B/W/BW 平铺图贴图（有黑版/白版对应文件时自动跳过对应输出）
         if ok:
             try:
-                proc1 = _run_proc_heartbeat(dx, [sys.executable, str(sticker_script), dx],
+                sticker_args = [sys.executable, str(sticker_script), dx]
+                if only_color:
+                    sticker_args += ["--only-color", only_color]
+                proc1 = _run_proc_heartbeat(dx, sticker_args,
                                             "通用平铺图", "平铺图贴图")
                 if proc1 != 0:
                     ok, msg = False, f"平铺图贴图执行失败: {dx}"
             except Exception as e:
                 ok, msg = False, f"平铺图贴图启动失败: {e}"
 
-        # 4) 用贴好的 B/W 合成 BW
+        # 4) 用贴好的 B/W 合成 BW（反黑/反白时按色：only_color 非空只合成该色）
         if ok:
             try:
-                proc2 = _run_proc_heartbeat(dx, [sys.executable, str(batch_script), dx],
+                batch_args = [sys.executable, str(batch_script), dx]
+                if only_color:
+                    batch_args += ["--only-color", only_color]
+                proc2 = _run_proc_heartbeat(dx, batch_args,
                                             "BW合成", "BW合成")
                 if proc2 != 0:
                     ok, msg = True, f"平铺图贴图完成，但BW合成执行失败: {dx}"
@@ -2716,6 +2732,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                     jobs, _notes = plan_single_side_jobs(
                         dx, BASE, role, cut_path=src_cut,
                         all_colors=True, model_only=True,
+                        only_color=only_color,
                     )
                     bw_jobs.extend(jobs)
                 if bw_jobs:
@@ -2746,9 +2763,10 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
         return ok, msg
 
-    def _run_sticker_task(dx_list, skip_black=False):
+    def _run_sticker_task(dx_list, skip_black=False, only_color=None):
         """按顺序跑完一组 DX 的贴图流水线（纯软件 PIL，不使用 Photoshop）。
-        返回 [(dx, ok, msg), ...]。"""
+        返回 [(dx, ok, msg), ...]。only_color 非 None（"黑"/"白"）时整条流水线只贴该颜色
+        （反黑/反白专用：其余颜色不重贴；BW 合成也按色，反黑只做黑T合成、反白只做白T合成）。"""
         results = []
         acquired = False
         task_name = "批量平铺图贴图" if len(dx_list) > 1 else "平铺图贴图"
@@ -2763,7 +2781,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             for idx, dx in enumerate(dx_list, 1):
                 _set_ps_status(True, task_name, dx, f"{idx}/{len(dx_list)}", f"正在处理 {dx}")
                 try:
-                    ok, msg = Handler._run_one_sticker(dx, skip_black=skip_black, job_sink=job_sink)
+                    ok, msg = Handler._run_one_sticker(dx, skip_black=skip_black, job_sink=job_sink, only_color=only_color)
                 except Exception as e:
                     # 单款异常只记失败、继续后续款——不能再让一款炸掉整批（剩余款全被跳过）
                     ok, msg = False, f"贴图异常: {e}"
