@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.0</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.1</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -38,12 +38,15 @@
   .dxname{font-weight:800;font-size:20px;color:#4CAF50;letter-spacing:.3px;cursor:pointer}
   .dxname:hover{text-decoration:underline}
   .pcount{color:#888;font-size:14px;margin-left:auto}
-  .up-gallery{padding:12px 14px 8px;display:flex;flex-direction:column;gap:14px}
-  .up-group{display:flex;flex-direction:column;gap:6px}
-  .up-group-header{display:flex;align-items:center;gap:8px}
-  .up-group-imgs{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .up-gallery{padding:12px 14px 8px}
+  /* v2.5.1 展开=全宽 + 两行横向大图流 */
+  .card.expanded{grid-column:1/-1}
+  .card.expanded .card-cover{max-width:320px;margin:0 auto;border-radius:8px}
+  .card.expanded .color-dots{justify-content:center}
+  .up-gallery-flow{display:grid;grid-template-rows:repeat(2,auto);grid-auto-flow:column;grid-auto-columns:230px;gap:14px;overflow-x:auto;padding:6px 2px 10px}
   .up-item{display:flex;flex-direction:column;align-items:center}
-  .up-thumb{width:100%;aspect-ratio:1/1;height:auto;border-radius:8px;overflow:hidden;background:#fff;cursor:pointer;position:relative;border:1px solid #333}
+  .up-thumb{width:100%;aspect-ratio:4/5;height:auto;border-radius:8px;overflow:hidden;background:#fff;cursor:pointer;position:relative;border:1px solid #333}
+  .up-thumb .thumb-badge{position:absolute;top:4px;left:4px;font-size:12px;padding:1px 7px;border-radius:4px;z-index:5;opacity:.92}
   .up-thumb img{width:100%;height:100%;object-fit:contain;transition:transform .15s;display:block}
   .up-thumb:hover img{transform:scale(1.05)}
   .up-thumb .del-overlay{position:absolute;top:4px;right:4px;width:26px;height:26px;background:#e53935;color:#fff;border:none;border-radius:4px;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:5}
@@ -98,7 +101,7 @@
 </style>
 </head>
 <body>
-<h1>WB 上款 <span class="v">v2.5.0</span></h1>
+<h1>WB 上款 <span class="v">v2.5.1</span></h1>
 <div class="toolbar">
   <select id="dateSel" onchange="switchDate(this.value)">
     <option value="">全部日期</option>
@@ -308,6 +311,8 @@ var DOT_COLORS={'白':'#f5f5f5','黑':'#222','蜜瓜橙':'#f4a259','浅黄色':'
   'BW':'#9c27b0','B':'#222','W':'#f5f5f5','其他':'#757575'};
 // 每款文件列表全局缓存（审图模式数据源；renderCards 每次重建）
 var DX_FILES={};
+// v2.5.1 封面颜色轮换：renderCards 重建时归零，buildCard 每卡递增
+var _renderSeq=0;
 
 function buildCard(p){
   var files=(p.files||[]);
@@ -319,24 +324,25 @@ function buildCard(p){
     groups[g].push(f);
   });
   var order=IS_HOODIE?HOODIE_COLORS.concat(['其他']):['BW','B','W','其他'];
-  var rows=[];
+  // v2.5.1 展开区：按颜色顺序平铺成"两行横向大图流"，每图左上角带色徽
+  var items=[];
   order.forEach(function(g){
     if(!groups[g])return;
-    var thumbs=groups[g].map(function(f){
+    var cls={'BW':'badge-bw','B':'badge-b','W':'badge-w'}[g]||'badge-other';
+    groups[g].forEach(function(f){
       var ts=f.thumb_mtime || f.mtime;
       var origTs=f.mtime;
       var safeFile=f.name.replace(/'/g,"\\'");
       var fIdx=files.indexOf(f);
-      return '<div class="up-item'+(f._deleted?' deleted':'')+'">'
+      items.push('<div class="up-item'+(f._deleted?' deleted':'')+'">'
         +'<div class="up-thumb cell" data-src="'+withCat('/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+origTs)+'" onclick="openReviewer(\''+p.dx+'\','+fIdx+')" title="点击进入审图模式">'
+        +'<span class="thumb-badge badge '+cls+'">'+g+'</span>'
         +'<button class="del-overlay" onclick="event.stopPropagation();delUploadImg(this,\''+p.dx+'\',\''+safeFile+'\')" title="删除成品图">×</button>'
         +'<img src="'+withCat('/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts)+'" loading="lazy" decoding="async" onerror="this.onerror=null;this.src=\'/api/upload/original?dx='+p.dx+'&file=\'+encodeURIComponent(\''+safeFile+'\')+\'&t='+origTs+(IS_HOODIE?'&cat=hoodie':'')+'\'">'
         +'</div>'
         +'<div class="up-label" title="'+f.name+'">'+upLabel(f.name,p.dx)+'</div>'
-        +'</div>';
-    }).join('');
-    var cls={'BW':'badge-bw','B':'badge-b','W':'badge-w'}[g]||'badge-other';
-    rows.push('<div class="up-group"><div class="up-group-header"><span class="badge '+cls+'">'+g+'</span></div><div class="up-group-imgs">'+thumbs+'</div></div>');
+        +'</div>');
+    });
   });
   var doneInfo='';
   if(progressData && progressData.per_dx && progressData.per_dx[p.dx] && progressData.per_dx[p.dx].duration){
@@ -345,13 +351,20 @@ function buildCard(p){
   var onlineBadge = p.online_listed
     ? ' <span style="background:#4caf50;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:8px;">✓ 在线</span>'
     : '';
-  // 封面：第一张未删除图
+  // v2.5.1 封面：按卡片序号轮换颜色组，不再全是第一张（避免整屏同色）
   var cover=null;
-  for(var ci=0;ci<files.length;ci++){if(!files[ci]._deleted){cover=files[ci];break;}}
+  var gKeys=order.filter(function(g){return groups[g]&&groups[g].some(function(f){return !f._deleted;});});
+  if(gKeys.length){
+    var cg=groups[gKeys[_renderSeq%gKeys.length]];
+    for(var ci=0;ci<cg.length;ci++){if(!cg[ci]._deleted){cover=cg[ci];break;}}
+  }
+  if(!cover){for(var ci2=0;ci2<files.length;ci2++){if(!files[ci2]._deleted){cover=files[ci2];break;}}}
+  _renderSeq++;
   var coverHtml;
   if(cover){
     var cts=cover.thumb_mtime||cover.mtime;
-    coverHtml='<div class="card-cover" onclick="openReviewer(\''+p.dx+'\',0)" title="点击进入审图模式">'
+    var coverIdx=files.indexOf(cover);
+    coverHtml='<div class="card-cover" onclick="openReviewer(\''+p.dx+'\','+coverIdx+')" title="点击进入审图模式">'
       +'<img src="'+withCat('/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(cover.name)+'&t='+cts)+'" loading="lazy" decoding="async">'
       +'<span class="cover-count">'+files.length+' 张</span>'
       +'</div>';
@@ -376,7 +389,7 @@ function buildCard(p){
     +'<button onclick="toggleGallery(\''+p.dx+'\',this)">▸ 展开</button>'
     +'<button onclick="openDxFolder(\''+p.dx+'\')" title="打开 '+p.dx+'/03_UPLOAD 文件夹">📂</button>'
     +'</div>'
-    +'<div class="up-gallery" id="gal-'+p.dx+'" style="display:none">'+(rows.length?rows.join(''):'<p class="empty">03_UPLOAD 为空</p>')+'</div>'
+    +'<div class="up-gallery" id="gal-'+p.dx+'" style="display:none"><div class="up-gallery-flow">'+(items.length?items.join(''):'<p class="empty">03_UPLOAD 为空</p>')+'</div></div>'
     +'</div>';
 }
 
@@ -384,7 +397,9 @@ function toggleGallery(dx,btn){
   var g=document.getElementById('gal-'+dx);
   if(!g)return;
   var open=g.style.display!=='none';
-  g.style.display=open?'none':'flex';
+  g.style.display=open?'none':'block';
+  var card=document.getElementById('card-'+dx);
+  if(card)card.classList.toggle('expanded',!open);
   if(btn)btn.textContent=open?'▸ 展开':'▾ 收起';
 }
 
@@ -468,6 +483,7 @@ document.addEventListener('keydown',function(e){
 });
 
 function renderCards(){
+  _renderSeq=0;
   var q=document.getElementById('search').value.toUpperCase().trim();
   var date=document.getElementById('dateSel').value;
   var terms=q?q.split(',').map(function(t){return t.trim();}).filter(function(t){return t;}):[];
