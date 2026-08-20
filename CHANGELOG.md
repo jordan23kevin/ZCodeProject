@@ -1,5 +1,11 @@
 # Y2 一体化控制系统 — 更新日志
 
+## lovart_bridge v2.6.2 (2026-08-21) — 强制重新上款"开了 Edge 却不传图"修复
+
+- 用户实测：点强制重新上款后 Edge 打开但不给豆包传图。bridge.log 实锤：`删除已上款记录失败: Permission denied`（两个 md 文件被瞬时占用），旧逻辑打印后继续启动 wb_listing → 记录没删 → 脚本判"已上款"跳过 → 静默空跑。
+- 修复：`_remove_from_completed_md`/`_remove_from_title_cache` 对 PermissionError 重试 3 次（0.5s 间隔）；仍失败返回 `None`，`/api/batch-upload` 收到 `None` 直接 500 报错给前端 toast，绝不启动上款。
+- 配套 wb_listing v3.0.4：`--only` 模式"已上款，跳过"同时写入 `_log`（原只 print 到被丢弃的 stdout，日志里完全看不到跳过原因）。
+
 ## engine 副本 v2.7.0 (2026-08-20) — T恤 BW 贴图去掉模特图（修串类污染）+ 成品行按款型 3/2 列
 
 - 与 04_OS 生产副本字节一致（协议硬规则②）：`engine/check_rem.py` v2.7.0。

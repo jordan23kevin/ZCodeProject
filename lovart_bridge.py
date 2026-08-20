@@ -1,12 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.6.1
+Y2 Bridge Server v2.6.2
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.6.2：
+  - 修复「强制重新上款点了没反应（开 Edge 但不传图）」：已上款记录/标题缓存文件被占用
+    （Permission denied，如 2026-08-21 00:29 实发）时，旧逻辑只打印日志仍照常启动 wb_listing，
+    记录没删成 → 脚本判"已上款"跳过 → 用户看到静默空跑。
+    改为：①两个删除函数对 PermissionError 重试 3 次（间隔 0.5s，覆盖瞬时锁）；
+    ②删除失败返回 None，/api/batch-upload 收到 None 直接 500 报错给前端、绝不启动上款。
 
 变更 v2.5.1：
   - 多品类架构第 1 步（零回归重构）：BASE_DIR 与 WB_REGISTRY_FILE / CHECK_REM_SCRIPT
@@ -3607,57 +3614,75 @@ def _online_listed_mode(cat=None):
 
 def _remove_from_completed_md(dx_list, cat=None):
     """强制重新上款时，从已上款记录（已上款货号_<cat>.md）中删除指定款号行。
-    返回实际删除了哪些款号。cat 缺省 wb（路径与改造前一致）。"""
+    返回实际删除了哪些款号（list）；文件不存在返回 []；写入失败返回 None（调用方必须拦截，不得继续上款）。
+    cat 缺省 wb（路径与改造前一致）。"""
     md = _completed_md_for(cat)
     if not md.exists():
         return []
     targets = set(dx_list)
-    removed = []
-    try:
-        with open(md, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        new_lines = []
-        for line in lines:
-            stripped = line.strip()
-            # 匹配 '- SKU' 或 '* SKU'（前缀无关，DX/HX 通用）
-            if stripped.startswith("- ") or stripped.startswith("* "):
-                dx = stripped.lstrip("- *").strip()
-                if dx in targets:
-                    removed.append(dx)
-                    continue
-            new_lines.append(line)
-        if removed:
-            with open(md, "w", encoding="utf-8") as f:
-                f.writelines(new_lines)
-    except Exception as e:
-        print(f"[batch-upload] 删除已上款记录失败: {e}", flush=True)
-    return removed
+    # Permission denied 多为瞬时锁（杀毒/同步盘/前次进程未退），重试 3 次再放弃
+    for attempt in range(3):
+        removed = []
+        try:
+            with open(md, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            new_lines = []
+            for line in lines:
+                stripped = line.strip()
+                # 匹配 '- SKU' 或 '* SKU'（前缀无关，DX/HX 通用）
+                if stripped.startswith("- ") or stripped.startswith("* "):
+                    dx = stripped.lstrip("- *").strip()
+                    if dx in targets:
+                        removed.append(dx)
+                        continue
+                new_lines.append(line)
+            if removed:
+                with open(md, "w", encoding="utf-8") as f:
+                    f.writelines(new_lines)
+            return removed
+        except PermissionError as e:
+            print(f"[batch-upload] 删除已上款记录被占用(第{attempt+1}次): {e}", flush=True)
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"[batch-upload] 删除已上款记录失败: {e}", flush=True)
+            return None
+    print(f"[batch-upload] 删除已上款记录连续3次被占用，放弃: {md}", flush=True)
+    return None
 
 
 def _remove_from_title_cache(dx_list, cat=None):
     """强制重新上款时，从标题缓存（标题缓存_<cat>.md）中删除指定款号的标题块，
     让 wb_listing.py 重新走豆包生成新标题（否则命中缓存会跳过豆包）。
-    返回实际删除了哪些款号。cat 缺省 wb（路径与改造前一致）。"""
+    返回实际删除了哪些款号（list）；文件不存在返回 []；写入失败返回 None（调用方必须拦截）。
+    cat 缺省 wb（路径与改造前一致）。"""
     md = _title_cache_for(cat)
     if not md.exists():
         return []
-    removed = []
-    try:
-        with open(md, "r", encoding="utf-8") as f:
-            content = f.read()
-        for dx in dx_list:
-            # 缓存块格式：## DXxxxx\n- 中文：...\n- 英文：...\n- 时间：...
-            pattern = rf"## {re.escape(dx)}\s*\n.*?(?=\n## |\Z)"
-            if re.search(pattern, content, re.DOTALL):
-                content = re.sub(pattern, "", content, count=1, flags=re.DOTALL)
-                removed.append(dx)
-        if removed:
-            content = re.sub(r"\n{3,}", "\n\n", content).rstrip() + "\n"
-            with open(md, "w", encoding="utf-8") as f:
-                f.write(content)
-    except Exception as e:
-        print(f"[batch-upload] 删除标题缓存失败: {e}", flush=True)
-    return removed
+    # Permission denied 多为瞬时锁（杀毒/同步盘/前次进程未退），重试 3 次再放弃
+    for attempt in range(3):
+        removed = []
+        try:
+            with open(md, "r", encoding="utf-8") as f:
+                content = f.read()
+            for dx in dx_list:
+                # 缓存块格式：## DXxxxx\n- 中文：...\n- 英文：...\n- 时间：...
+                pattern = rf"## {re.escape(dx)}\s*\n.*?(?=\n## |\Z)"
+                if re.search(pattern, content, re.DOTALL):
+                    content = re.sub(pattern, "", content, count=1, flags=re.DOTALL)
+                    removed.append(dx)
+            if removed:
+                content = re.sub(r"\n{3,}", "\n\n", content).rstrip() + "\n"
+                with open(md, "w", encoding="utf-8") as f:
+                    f.write(content)
+            return removed
+        except PermissionError as e:
+            print(f"[batch-upload] 删除标题缓存被占用(第{attempt+1}次): {e}", flush=True)
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"[batch-upload] 删除标题缓存失败: {e}", flush=True)
+            return None
+    print(f"[batch-upload] 删除标题缓存连续3次被占用，放弃: {md}", flush=True)
+    return None
 
 
 @app.route('/api/upload/progress')
@@ -3933,6 +3958,14 @@ def api_batch_upload():
     if force:
         removed = _remove_from_completed_md(dx_list, cat=cat)
         cache_removed = _remove_from_title_cache(dx_list, cat=cat)
+        # 删除失败（文件被占用等）必须拦截：否则记录还在 → wb_listing 判"已上款"跳过，
+        # 表现为"开了 Edge 却不传图"的静默空跑，用户完全看不到原因
+        if removed is None or cache_removed is None:
+            which = "、".join([n for n, r in (("已上款记录", removed), ("标题缓存", cache_removed)) if r is None])
+            return jsonify({
+                "ok": False,
+                "error": f"强制重新上款失败：{which}文件被占用（Permission denied，重试3次仍失败）。请等当前上款进程结束或关闭占用程序后重试。"
+            }), 500
 
     # wb_listing.py --only 模式：只处理勾选的确切款号，不会继续后续款
     valid_dx = []
