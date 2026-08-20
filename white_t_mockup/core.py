@@ -62,6 +62,85 @@ except ImportError:  # pragma: no cover - 离线环境无 psd_tools
 from .config import DEFAULT_BLEND_MODE, SUPPORTED_BLEND_MODES
 from . import black_fabric
 
+# ── 批量模式图像加载缓存 ─────────────────────────────────────────
+# 仅供 --batch 常驻进程使用（cli 在批量模式下置 IMG_CACHE_ENABLED=True）：
+# 同一批任务反复复用同一批胚衣/遮罩素材，按 (路径, mtime, 大小) 签名命中，
+# 返回副本防止调用方原地修改污染缓存；单张模式保持原行为（每次重新读盘）。
+import os as _os
+from collections import OrderedDict as _OrderedDict
+
+IMG_CACHE_ENABLED = False
+_IMG_CACHE: "_OrderedDict[tuple, tuple]" = _OrderedDict()
+_IMG_CACHE_MAX = 24
+
+
+# ---- 成品 JPEG 自适应体积压缩 ----
+# 目标：每张成品图落在 200~300KB，且尽量保清晰度。
+# 手法：从传入的 max_quality（默认 95）起二分降质，直到体积 ≤ 上限； Pillow 在 quality<95 时
+# 自动从 4:4:4 切到 4:2:0 色度抽样，95→94 一步通常省一半体积且几乎无感，二分会自然利用这一点。
+# 低于下限不强行升质（质量上限就是 max_quality）；降到 min_quality 仍超上限则接受最小体积。
+
+
+def _save_jpeg_range(img: Image.Image, output_path, lo_kb: int = 200, hi_kb: int = 300,
+                     max_quality: int = 95, min_quality: int = 60) -> int:
+    """把 RGB 图存成 JPEG 并将体积控制在 [lo_kb, hi_kb]（KB），返回最终质量值。"""
+    import io
+    lo_b, hi_b = lo_kb * 1024, hi_kb * 1024
+
+    def _encode(q: int) -> bytes:
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=q, optimize=True)
+        return buf.getvalue()
+
+    data = _encode(max_quality)
+    if len(data) <= hi_b:
+        with open(str(output_path), "wb") as f:
+            f.write(data)
+        return max_quality
+    lo_q, hi_q = min_quality, max_quality
+    best = None
+    best_q = min_quality
+    for _ in range(6):
+        mid = (lo_q + hi_q) // 2
+        d = _encode(mid)
+        if len(d) > hi_b:
+            hi_q = mid - 1
+        else:
+            best, best_q = d, mid
+            if len(d) >= lo_b:
+                break
+            lo_q = mid + 1
+    if best is None:
+        best = _encode(min_quality)
+    with open(str(output_path), "wb") as f:
+        f.write(best)
+    return best_q
+
+
+def _cached_open(path, mode: str | None = None) -> Image.Image:
+    p = str(path)
+    if not IMG_CACHE_ENABLED:
+        im = Image.open(p)
+        return im.convert(mode) if mode else im
+    try:
+        st = _os.stat(p)
+        sig = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        sig = None
+    key = (p, mode)
+    hit = _IMG_CACHE.get(key)
+    if hit is not None and hit[0] == sig:
+        _IMG_CACHE.move_to_end(key)
+        return hit[1].copy()
+    im = Image.open(p)
+    if mode:
+        im = im.convert(mode)
+    im.load()
+    _IMG_CACHE[key] = (sig, im)
+    while len(_IMG_CACHE) > _IMG_CACHE_MAX:
+        _IMG_CACHE.popitem(last=False)
+    return im.copy()
+
 # ---- PS 缩放复现（final 像素模型）----
 # 每款在 CSV 直接填贴图最终像素「缩放后宽px/缩放后高px」（PS 里贴图层缩放后的 final_w/final_h），
 # 代码把贴图直接 resize 到 (final_w, final_h)；原图固定 2048×2048，final 即目标像素，100% 复现 PS。
@@ -199,7 +278,7 @@ def load_png_template(png_path: str | Path) -> Tuple[Image.Image, None, None, Tu
 
     PNG 模板是单图层图片，没有手部遮罩。
     """
-    background = Image.open(str(png_path)).convert("RGBA")
+    background = _cached_open(png_path, "RGBA")
     return background, None, None, background.size
 
 
@@ -244,11 +323,100 @@ def _paste_occluder_top(canvas: Image.Image, occluder_path) -> Image.Image:
     遮挡物来自胚衣遮罩（peiyi_mask.generate_masks 产出的 *_occluder.png），
     其像素坐标系与原始胚衣图一致；当画布尺寸不一致时自动缩放对齐。
     """
-    occ = Image.open(str(occluder_path)).convert("RGBA")
+    occ = _cached_open(occluder_path, "RGBA")
     if occ.size != canvas.size:
         occ = occ.resize(canvas.size, Image.Resampling.LANCZOS)
     canvas.paste(_harden_occluder_alpha(occ), (0, 0), _harden_occluder_alpha(occ))
     return canvas
+
+
+def _paste_drawstring_top(canvas: Image.Image, background: Image.Image,
+                          drawstring_mask_path, canvas_size: Tuple[int, int]) -> Image.Image:
+    """抽绳分层（卫衣抽绳）：把原胚衣图里的真实绳子像素盖到最顶层。
+
+    分层顺序：绳子（最上）→ 印花（中）→ 卫衣（底）。实现方式：
+    按 ``_drawstring_mask.png``（白=绳子）取掩码，把原胚衣图（``background``，
+    即贴图前的整张模特/平铺坯衣）在绳子区域的像素直接覆盖到画布上，
+    从而让绳子压在印花之上（印花被绳子「截断/遮住」更真实）。
+
+    仅在 ``drawstring_mask_path`` 存在时生效；否则原样返回画布。
+    采用超采样抗锯齿(SSAA)：在 3 倍分辨率上合成绳子并做极细边界羽化，
+    再缩回原尺寸。绳子主体保持 100% 不透明、锐利，曲线因高分辨率采样
+    而自然平滑、无锯齿，也不会整体被模糊成"对不上焦"。
+
+    ``canvas_size`` 为 (宽, 高)（PIL ``Image.size`` 约定）；实际尺寸一律以
+    ``canvas`` / ``background`` 的真实 ``.size`` 对齐，避免 (宽,高)/(高,宽) 错位。
+    """
+    from scipy.ndimage import distance_transform_edt
+
+    if drawstring_mask_path is None:
+        return canvas
+    mp = Path(drawstring_mask_path)
+    if not mp.exists():
+        return canvas
+
+    cw, ch = canvas.size  # PIL (宽, 高)
+    # 掩码对齐画布尺寸
+    mask = _cached_open(mp, "L")
+    if mask.size != (cw, ch):
+        mask = mask.resize((cw, ch), Image.Resampling.LANCZOS)
+
+    core = (np.array(mask).astype(np.float32) / 255.0 >= 0.5)
+    if core.sum() <= 0:
+        return canvas
+
+    # ---- 超采样抗锯齿(SSAA) ----
+    # 细绳子(最细仅 2px)若直接在原分辨率做边缘模糊，会把整条绳子变成半透明
+    # (既虚又锯齿)。改为：在 SS 倍分辨率上合成，主体保持实心不透明，仅边界
+    # 做极细羽化；再 LANCZOS 缩回原尺寸 -> 曲线天然平滑、无台阶锯齿、主体不虚。
+    # 只对绳子 bbox+margin 局部计算，控制开销。
+    ys, xs = np.where(core)
+    m = 24
+    y0, y1 = max(0, ys.min() - m), min(ch - 1, ys.max() + m)
+    x0, x1 = max(0, xs.min() - m), min(cw - 1, xs.max() + m)
+    core_l = core[y0:y1 + 1, x0:x1 + 1]
+    hl, wl = core_l.shape
+
+    # 遮罩里绳子只有 ~2px 宽(最细处)，在 1340 分辨率下是极细硬边线，曲线处必然显
+    # 台阶；缩放到店铺展示尺寸(~0.45x)后羽化带<0.25px，显示时几乎无过渡 -> 锯齿。
+    # 向外膨胀 1px 把绳子恢复成真实粗细(最细 2->4px、平均~6px)，保留实心核心，
+    # 再在外缘做 1px 羽化：曲线由更宽线段构成自然平滑，缩放后也有足够过渡带。
+    from scipy.ndimage import binary_dilation
+    core_l = binary_dilation(core_l, iterations=1)
+
+    SS = 3
+    # 最近邻上采样 core(保持硬边二值)，在 SS 空间用 SDF 做精细抗锯齿
+    core_ss = np.kron(core_l, np.ones((SS, SS), dtype=bool))
+    dt_bg = distance_transform_edt(core_ss)
+    dt_fg = distance_transform_edt(~core_ss)
+    sdf = dt_bg - dt_fg
+    edge_ss = 3.0                       # SS 空间 3px ≈ 原图 1px 羽化半宽
+    alpha_ss = np.clip(0.5 + sdf / (2.0 * edge_ss), 0.0, 1.0)
+
+    # 原胚衣图(背景)与画布局部上采样到 SS，取绳子像素覆盖
+    bg = background
+    if bg.size != (cw, ch):
+        bg = bg.resize((cw, ch), Image.Resampling.LANCZOS)
+    bg_l = np.array(bg.crop((x0, y0, x1 + 1, y1 + 1)).convert("RGBA")).astype(np.float32)
+    cv_l = np.array(canvas.crop((x0, y0, x1 + 1, y1 + 1)).convert("RGBA")).astype(np.float32)
+    bg_ss = np.array(
+        Image.fromarray(bg_l.astype(np.uint8)).resize((wl * SS, hl * SS), Image.Resampling.LANCZOS)
+    ).astype(np.float32)
+    cv_ss = np.array(
+        Image.fromarray(cv_l.astype(np.uint8)).resize((wl * SS, hl * SS), Image.Resampling.LANCZOS)
+    ).astype(np.float32)
+
+    a = alpha_ss[..., None]
+    out_ss = cv_ss * (1.0 - a) + bg_ss * a
+    # 缩回 bbox 原尺寸(LANCZOS 进一步平滑曲线)
+    out_l = np.array(
+        Image.fromarray(np.clip(out_ss, 0, 255).astype(np.uint8)).resize((wl, hl), Image.Resampling.LANCZOS)
+    ).astype(np.float32)
+
+    # 贴回整图
+    cv_rgba = np.array(canvas.convert("RGBA")).astype(np.float32)
+    cv_rgba[y0:y1 + 1, x0:x1 + 1] = out_l
+    return Image.fromarray(np.clip(cv_rgba, 0, 255).astype(np.uint8))
 
 
 def apply_transform(
@@ -759,7 +927,7 @@ def _load_tpl_optional(tpl_dir: Path, name: str, canvas_size: Tuple[int, int]):
     p = tpl_dir / name
     if not p.exists():
         return None
-    im = Image.open(str(p)).convert("L")
+    im = _cached_open(p, "L")
     if im.size != canvas_size:
         im = im.resize(canvas_size, Image.Resampling.LANCZOS)
     return im
@@ -797,6 +965,8 @@ def apply_mockup_transform(
     occlusion_min_visibility: float = 0.0,
     fabric_shading: bool = True,
     shading_blur: float = 4.0,
+    drawstring_mask: str | Path | None = None,
+    manual_mask: str | Path | None = None,
 ) -> dict:
     """
     新版贴图方法：resize 到最终像素 → 旋转 → 按有效像素定位 → 混合。
@@ -815,7 +985,7 @@ def apply_mockup_transform(
     # 提前加载遮挡物，后续会同时用于：① 位移阶段屏蔽手/前景的伪梯度；② 最后盖在印花上。
     occluder_im = None
     if occluder is not None:
-        occluder_im = Image.open(str(occluder)).convert("RGBA")
+        occluder_im = _cached_open(occluder, "RGBA")
         if occluder_im.size != canvas_size:
             occluder_im = occluder_im.resize(canvas_size, Image.Resampling.LANCZOS)
 
@@ -890,8 +1060,45 @@ def apply_mockup_transform(
     if occluder_im is not None:
         canvas.paste(_harden_occluder_alpha(occluder_im), (0, 0), _harden_occluder_alpha(occluder_im))
 
+    # 顶层遮罩分层（卫衣）：自动探测同目录 <胚衣名>_drawstring_mask.png（抽绳，白=绳子）
+    # 与 <胚衣名>_manual.png（手动 PS 遮罩，如帽子；不透明区域=前景/帽子，透明=背景，
+    # 同时兼容「黑=帽子」或「白=帽子」两种画法，按 alpha 通道传给 _paste_drawstring_top），
+    # 把原胚衣真实像素盖到最顶层，实现「帽子/绳子→印花→卫衣」分层。
+    # 顺序：先 drawstring（绳子）再 manual（帽子），后者在最顶。
+    ds_mask = drawstring_mask
+    if ds_mask is None and template_path is not None:
+        _cand = Path(template_path).with_name(Path(template_path).stem + "_drawstring_mask.png")
+        if _cand.exists():
+            ds_mask = _cand
+    if ds_mask is not None:
+        canvas = _paste_drawstring_top(canvas, background, ds_mask, canvas_size)
+    mn_mask = manual_mask
+    if mn_mask is None and template_path is not None:
+        _cand = Path(template_path).with_name(Path(template_path).stem + "_manual.png")
+        if not _cand.exists():
+            # 兼容英文色文件夹：胚衣 " B2.jpg"（带前导空格）但用户手动保存 "B2_manual.png"（不带空格）
+            _cand = Path(template_path).with_name(Path(template_path).stem.strip() + "_manual.png")
+        if _cand.exists():
+            mn_mask = _cand
+    if mn_mask is not None:
+        # manual（手动 PS 遮罩，如帽子）：约定「不透明区域 = 前景/帽子」。
+        # 把 alpha 通道作为 mask 传给 _paste_drawstring_top（白=前景），
+        # 让帽子区用胚衣原图（background）盖住印花，背景区保持印花。
+        # 同时兼容「黑=帽子」或「白=帽子」两种画法，只要用 alpha 透明背景区分即可。
+        mn_p = Path(mn_mask)
+        if mn_p.exists():
+            import tempfile as _tempfile
+            _tmp = Path(_tempfile.mkstemp(suffix='.png')[1])
+            try:
+                alpha = Image.open(mn_p).convert("RGBA").split()[3]
+                alpha.save(_tmp)
+                canvas = _paste_drawstring_top(canvas, background, _tmp, canvas_size)
+            finally:
+                try: _tmp.unlink()
+                except Exception: pass
+
     canvas_rgb = canvas.convert("RGB")
-    canvas_rgb.save(str(output_path), "JPEG", quality=quality, optimize=True)
+    final_q = _save_jpeg_range(canvas_rgb, str(output_path), max_quality=quality)
 
     return {
         "output_size": canvas_rgb.size,
@@ -955,7 +1162,7 @@ def apply_black_t_v2_transform(
 
     occluder_im = None
     if occluder is not None:
-        occluder_im = Image.open(str(occluder)).convert("RGBA")
+        occluder_im = _cached_open(occluder, "RGBA")
         if occluder_im.size != canvas_size:
             occluder_im = occluder_im.resize(canvas_size, Image.Resampling.LANCZOS)
 
@@ -1025,7 +1232,7 @@ def apply_black_t_v2_transform(
         canvas.paste(_harden_occluder_alpha(occluder_im), (0, 0), _harden_occluder_alpha(occluder_im))
 
     canvas_rgb = canvas.convert("RGB")
-    canvas_rgb.save(str(output_path), "JPEG", quality=quality, optimize=True)
+    final_q = _save_jpeg_range(canvas_rgb, str(output_path), max_quality=quality)
 
     return {
         "output_size": canvas_rgb.size,
@@ -1141,7 +1348,7 @@ def apply_black_t_ps_transform(
 
     occluder_im = None
     if occluder is not None:
-        occluder_im = Image.open(str(occluder)).convert("RGBA")
+        occluder_im = _cached_open(occluder, "RGBA")
         if occluder_im.size != canvas_size:
             occluder_im = occluder_im.resize(canvas_size, Image.Resampling.LANCZOS)
 
@@ -1177,7 +1384,7 @@ def apply_black_t_ps_transform(
         import os
         # ---- 衣服主体 Mask：限定皱褶只提取衣服内部，排除背景/轮廓误判 ----
         if body_mask is not None:
-            _bm = Image.open(str(body_mask)).convert("L")
+            _bm = _cached_open(body_mask, "L")
             if _bm.size != canvas_size:
                 _bm = _bm.resize(canvas_size, Image.Resampling.LANCZOS)
             # 二值化后做轻微腐蚀，让 body_mask 比真实衣服主体小一圈，避免边缘被 wrinkle/mask_blur 扩散
@@ -1240,7 +1447,7 @@ def apply_black_t_ps_transform(
         canvas.paste(_harden_occluder_alpha(occluder_im), (0, 0), _harden_occluder_alpha(occluder_im))
 
     canvas_rgb = canvas.convert("RGB")
-    canvas_rgb.save(str(output_path), "JPEG", quality=quality, optimize=True)
+    final_q = _save_jpeg_range(canvas_rgb, str(output_path), max_quality=quality)
 
     return {
         "output_size": canvas_rgb.size,
@@ -1297,7 +1504,7 @@ def apply_mockup(
 
     occluder_im = None
     if occluder is not None:
-        occluder_im = Image.open(str(occluder)).convert("RGBA")
+        occluder_im = _cached_open(occluder, "RGBA")
         if occluder_im.size != canvas_size:
             occluder_im = occluder_im.resize(canvas_size, Image.Resampling.LANCZOS)
 
@@ -1359,7 +1566,7 @@ def apply_mockup(
         canvas.paste(_harden_occluder_alpha(occluder_im), (0, 0), _harden_occluder_alpha(occluder_im))
 
     canvas_rgb = canvas.convert("RGB")
-    canvas_rgb.save(str(output_path), "JPEG", quality=quality, optimize=True)
+    final_q = _save_jpeg_range(canvas_rgb, str(output_path), max_quality=quality)
 
     return {
         "output_size": canvas_rgb.size,
