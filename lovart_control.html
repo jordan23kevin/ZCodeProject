@@ -552,10 +552,19 @@ const STATE = {
     badge.textContent = '🧥 卫衣';
     document.title = 'Temu 工作台（卫衣）';
     document.getElementById('inboxEmptyHint').textContent = '将图片放入 D:\\Semems Hoodie\\01_INBOX\\ 后刷新';
-    // 卫衣 listing profile / 提示词尚未标定：上款入口加“待标定”角标
-    document.getElementById('uploadSoonBadge').style.display = '';
-    document.getElementById('uploadBtn').title =
-      '卫衣 listing profile / 提示词尚未标定，上款暂不可用（打开后后端会明确报错）';
+    // 卫衣上款就绪状态动态判定（引用 HX0000 模板机制）：默认隐藏"待标定"，未就绪才显示
+    const soonBadge = document.getElementById('uploadSoonBadge');
+    const uploadBtn = document.getElementById('uploadBtn');
+    soonBadge.style.display = 'none';
+    fetch(`/api/category-ready?cat=hoodie`)
+      .then(r => r.json())
+      .then(j => {
+        if (!j.ready) {
+          soonBadge.style.display = '';
+          uploadBtn.title = '卫衣上款尚未就绪（标题提示词缺失），上款暂不可用';
+        }
+      })
+      .catch(() => { soonBadge.style.display = ''; });
   }
   // 品类功能入口：卫衣模式下全部带 cat=hoodie；T恤模式 URL 不含 cat
   document.getElementById('aiReviewBtn').onclick = () => window.open(withCat('/ai-review'), '_blank');

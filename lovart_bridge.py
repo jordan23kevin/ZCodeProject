@@ -727,12 +727,14 @@ def _remove_from_lovart_track(img_path: Path) -> int:
 # ============================================================================
 # 工具函数：Windows 下最小化启动子进程（不抢焦点）
 # ============================================================================
-def run_minimized(cmd, cwd=None, wait=False, no_console=False):
+def run_minimized(cmd, cwd=None, wait=False, no_console=False, env=None):
     """以最小化/不激活窗口启动子进程，用于 check_rem / PS 贴图等任务。
 
     参数:
       no_console: True 时使用 CREATE_NO_WINDOW，不弹控制台黑窗，同时把 stdout/stderr 重定向到 DEVNULL。
                   适用于 wb_listing.py / check_online_listed.py 这种自己有日志文件的后台任务。
+      env: 额外的环境变量 dict，会合并到当前进程环境（不覆盖未指定的变量）。
+            用于按品类向 wb_listing.py 注入 WB_LISTING_CAT 等标识。
     """
     import subprocess
     import ctypes
@@ -757,6 +759,10 @@ def run_minimized(cmd, cwd=None, wait=False, no_console=False):
         kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
     if cwd:
         kwargs["cwd"] = str(cwd)
+    if env:
+        _merged = dict(os.environ)
+        _merged.update(env)
+        kwargs["env"] = _merged
 
     proc = subprocess.Popen(cmd, **kwargs)
     if wait:
@@ -1549,6 +1555,14 @@ UPLOAD_THUMB_DIR = BASE_DIR / "_upload_thumbs"
 UPLOAD_PROGRESS_FILE = BASE_DIR / ".wb_upload_progress.json"
 UPLOAD_RECORD_MD = BASE_DIR / "已上款货号_wb.md"
 ONLINE_LISTED_FILE = BASE_DIR / ".wb_online_listed.json"
+
+
+def _upload_progress_file(cat=None):
+    """上款进度文件：按品类落在各自数据根（wb 缺省=D:\\Semems WB，与改造前一致）。
+
+    卫衣等品类上款时进度写入各自根下的 .wb_upload_progress.json，互不串扰。
+    """
+    return _cat_root(cat or _DEFAULT_CAT) / ".wb_upload_progress.json"
 
 def _dx_dir_date(d: Path) -> str:
     """返回 DX 文件夹建立日期（YYMMDD），所有日期分类统一用建立时间。"""
@@ -3382,13 +3396,22 @@ def upload_page():
 
 
 def _upload_listing_profile_ready(cat: str) -> bool:
-    """非 wb 品类的上款前置条件：listing profile 已标定。
+    """非 wb 品类的上款前置条件（「标定」就绪）。
 
-    判定：categories.json 中该品类配置了 "listing_profile" 字段，
-    或其数据根下存在 listing_profile.json。wb 永远视为已就绪。
+    wb（T恤）永远视为已就绪。
+
+    非 wb 品类（如 hoodie）采用「店小秘引用模板款号」机制：上款时引用对应模板款号
+    （如卫衣 HX0000），类目/卖点/属性/尺码表从模板继承，无需静态 listing_profile.json。
+    就绪判定：标题提示词 prompts/title_<cat>.md 已就位（即「标定」完成）。
+    仍兼容旧式 listing_profile.json / categories.json 配置。
     """
     if cat == _DEFAULT_CAT:
         return True
+    # 新机制：标题提示词就位即视为就绪（卫衣引用 HX0000 模板继承 4 字段，无需静态 profile）
+    prompt = (WB_LISTING_DIR / "prompts" / f"title_{cat}.md")
+    if prompt.exists():
+        return True
+    # 兼容旧式 listing_profile.json / categories.json 配置
     try:
         cfg = _cat_all().get(cat, {})
         if cfg.get("listing_profile"):
@@ -3410,9 +3433,20 @@ def _upload_cat_guard():
         return None, None, err
     if cat != _DEFAULT_CAT and not _upload_listing_profile_ready(cat):
         return None, None, _cat_not_ready(cat, "上款",
-            "卫衣 listing profile / 提示词尚未标定（缺 listing_profile.json 或 categories.json 配置），"
-            "为避免上错款已拦截。")
+            "卫衣标题提示词尚未标定（缺 prompts/title_hoodie.md），为避免上错款已拦截。")
     return cat, _cat_ctx(cat), None
+
+
+@app.route('/api/category-ready')
+def api_category_ready():
+    """返回当前品类上款是否就绪（用于前端「待标定」角标动态显示）。
+
+    就绪判定与 _upload_listing_profile_ready 一致：wb 恒就绪；
+    非 wb 品类（如 hoodie）标题提示词 prompts/title_<cat>.md 存在即就绪。
+    """
+    cat = request.args.get("cat") or _DEFAULT_CAT
+    ready = _upload_listing_profile_ready(cat)
+    return jsonify({"ok": True, "ready": ready, "cat": cat})
 
 
 @app.route('/api/upload/projects')
@@ -3547,10 +3581,10 @@ def _online_listed_mode():
         return None
 
 
-def _remove_from_completed_md(dx_list):
-    """强制重新上款时，从 已上款货号_wb.md 中删除指定 DX 货号行。
-    返回实际删除了哪些款号。"""
-    md = BASE_DIR / "已上款货号_wb.md"
+def _remove_from_completed_md(dx_list, cat=None):
+    """强制重新上款时，从 已上款货号_wb.md 中删除指定款号行。
+    返回实际删除了哪些款号。cat 缺省 wb（路径与改造前一致）。"""
+    md = _cat_root(cat or _DEFAULT_CAT) / "已上款货号_wb.md"
     if not md.exists():
         return []
     targets = set(dx_list)
@@ -3576,11 +3610,11 @@ def _remove_from_completed_md(dx_list):
     return removed
 
 
-def _remove_from_title_cache(dx_list):
-    """强制重新上款时，从 标题缓存_wb.md 中删除指定 DX 的标题块，
+def _remove_from_title_cache(dx_list, cat=None):
+    """强制重新上款时，从 标题缓存_wb.md 中删除指定款号的标题块，
     让 wb_listing.py 重新走豆包生成新标题（否则命中缓存会跳过豆包）。
-    返回实际删除了哪些款号。"""
-    md = BASE_DIR / "标题缓存_wb.md"
+    返回实际删除了哪些款号。cat 缺省 wb（路径与改造前一致）。"""
+    md = _cat_root(cat or _DEFAULT_CAT) / "标题缓存_wb.md"
     if not md.exists():
         return []
     removed = []
@@ -3624,9 +3658,9 @@ def api_upload_progress():
         "fail_count": 0,
         "per_dx": {},
     }
-    if UPLOAD_PROGRESS_FILE.exists():
+    if _upload_progress_file(cat).exists():
         try:
-            with open(UPLOAD_PROGRESS_FILE, "r", encoding="utf-8") as f:
+            with open(_upload_progress_file(cat), "r", encoding="utf-8") as f:
                 data.update(json.load(f))
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
@@ -3871,13 +3905,13 @@ def api_batch_upload():
     removed = []
     cache_removed = []
     if force:
-        removed = _remove_from_completed_md(dx_list)
-        cache_removed = _remove_from_title_cache(dx_list)
+        removed = _remove_from_completed_md(dx_list, cat=cat)
+        cache_removed = _remove_from_title_cache(dx_list, cat=cat)
 
     # wb_listing.py --only 模式：只处理勾选的确切款号，不会继续后续款
     valid_dx = []
     for dx in dx_list:
-        dx_folder = PROJECTS_DIR / dx
+        dx_folder = ctx["projects"] / dx
         if dx_folder.exists() and (dx_folder / "03_UPLOAD").exists():
             valid_dx.append(dx)
 
@@ -3891,7 +3925,7 @@ def api_batch_upload():
     # 重置进度文件：避免前端读到上次任务的完成状态而立即显示"上款完成"
     try:
         now_iso = datetime.now().isoformat(timespec="seconds")
-        UPLOAD_PROGRESS_FILE.write_text(
+        _upload_progress_file(cat).write_text(
             json.dumps({
                 "running": True,
                 "started_at": now_iso,
@@ -3915,8 +3949,10 @@ def api_batch_upload():
 
     try:
         # wait=False: wb_listing.py 运行时间较长，API 立即返回，后台执行
-        # no_console=True: 不弹控制台黑窗（wb_listing.py 自己写日志到 D:\Semems WB\_debug）
-        run_minimized(args, wait=False, no_console=True)
+        # no_console=True: 不弹控制台黑窗（wb_listing.py 自己写日志到品类根 _debug）
+        # 非 wb 品类注入 WB_LISTING_CAT，使 wb_listing.py 解析到对应数据根与引用模板（HX0000）
+        extra_env = {"WB_LISTING_CAT": cat} if cat and cat != _DEFAULT_CAT else None
+        run_minimized(args, wait=False, no_console=True, env=extra_env)
     except Exception as e:
         print(f"[batch-upload] 启动 {valid_dx} 失败: {e}", flush=True)
         return jsonify({"ok": False, "error": f"启动脚本失败: {e}"}), 500
