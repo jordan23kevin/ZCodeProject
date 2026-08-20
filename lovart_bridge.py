@@ -1564,6 +1564,23 @@ def _upload_progress_file(cat=None):
     """
     return _cat_root(cat or _DEFAULT_CAT) / ".wb_upload_progress.json"
 
+
+def _cat_suffix(cat=None):
+    """记录文件名后缀：wb→'wb'（与历史 已上款货号_wb.md 一致），其余品类用品类名（hoodie→hoodie）。"""
+    cat = cat or _DEFAULT_CAT
+    return "wb" if cat == _DEFAULT_CAT else cat
+
+
+def _completed_md_for(cat=None):
+    """已上款记录文件：按品类落各自根（wb 缺省=D:\\Semems WB\\已上款货号_wb.md，与改造前一致）。"""
+    return _cat_root(cat or _DEFAULT_CAT) / f"已上款货号_{_cat_suffix(cat)}.md"
+
+
+def _title_cache_for(cat=None):
+    """标题缓存文件：按品类落各自根（wb 缺省=D:\\Semems WB\\标题缓存_wb.md，与改造前一致）。"""
+    return _cat_root(cat or _DEFAULT_CAT) / f"标题缓存_{_cat_suffix(cat)}.md"
+
+
 def _dx_dir_date(d: Path) -> str:
     """返回 DX 文件夹建立日期（YYMMDD），所有日期分类统一用建立时间。"""
     try:
@@ -3582,9 +3599,9 @@ def _online_listed_mode():
 
 
 def _remove_from_completed_md(dx_list, cat=None):
-    """强制重新上款时，从 已上款货号_wb.md 中删除指定款号行。
+    """强制重新上款时，从已上款记录（已上款货号_<cat>.md）中删除指定款号行。
     返回实际删除了哪些款号。cat 缺省 wb（路径与改造前一致）。"""
-    md = _cat_root(cat or _DEFAULT_CAT) / "已上款货号_wb.md"
+    md = _completed_md_for(cat)
     if not md.exists():
         return []
     targets = set(dx_list)
@@ -3595,8 +3612,8 @@ def _remove_from_completed_md(dx_list, cat=None):
         new_lines = []
         for line in lines:
             stripped = line.strip()
-            # 匹配 '- DXxxxx' 或 '* DXxxxx'
-            if stripped.startswith("- DX") or stripped.startswith("* DX"):
+            # 匹配 '- SKU' 或 '* SKU'（前缀无关，DX/HX 通用）
+            if stripped.startswith("- ") or stripped.startswith("* "):
                 dx = stripped.lstrip("- *").strip()
                 if dx in targets:
                     removed.append(dx)
@@ -3611,10 +3628,10 @@ def _remove_from_completed_md(dx_list, cat=None):
 
 
 def _remove_from_title_cache(dx_list, cat=None):
-    """强制重新上款时，从 标题缓存_wb.md 中删除指定款号的标题块，
+    """强制重新上款时，从标题缓存（标题缓存_<cat>.md）中删除指定款号的标题块，
     让 wb_listing.py 重新走豆包生成新标题（否则命中缓存会跳过豆包）。
     返回实际删除了哪些款号。cat 缺省 wb（路径与改造前一致）。"""
-    md = _cat_root(cat or _DEFAULT_CAT) / "标题缓存_wb.md"
+    md = _title_cache_for(cat)
     if not md.exists():
         return []
     removed = []
