@@ -19,8 +19,8 @@
 变更 v2.6（卫衣全部颜色贴图，用户 2026-08-19）：
   - 新增 all_colors：贴素材库该面**所有带五参的颜色**（卫衣 W 系 10 色=白/黑+8 英文色、
     B 系 2 色；未填五参的自动跳过），每色出 2 张（2 号平铺胚衣 + 随机 1 张模特胚衣）。
-  - 英文色分类（如 W Melon Orange）→ 中文颜色名（蜜瓜橙/浅黄色/蓝绿色/灰蓝色/
-    孔雀蓝/明黄色/草绿色/肉粉色，用户提供），成品命名 HX0001_W蜜瓜橙T.jpg 等；
+  - 英文色分类（如 W Melon Orange）→ 中文颜色名（蜜瓜橙/浅黄色/蓝绿色/宝蓝色/
+    孔雀蓝/明黄色/草绿色/粉红色，用户提供），成品命名 HX0001_W蜜瓜橙T.jpg 等；
     素材目录映射见 _EN_COLOR_TO_CN / _category_dir。
 
 变更 v2.5（卫衣平铺胚衣识别）：
@@ -105,11 +105,11 @@ _EN_COLOR_TO_CN = {
     "Melon Orange": "蜜瓜橙",
     "Straw Yellow": "浅黄色",
     "Blue Green": "蓝绿色",
-    "Grey Blue": "灰蓝色",
+    "Grey Blue": "宝蓝色",
     "Peacock Blue": "孔雀蓝",
     "Light Yellow": "明黄色",
     "Grass Green": "草绿色",
-    "flesh pink": "肉粉色",
+    "flesh pink": "粉红色",
 }
 _CN_TO_EN_COLOR = {v: k for k, v in _EN_COLOR_TO_CN.items()}
 

@@ -22,6 +22,14 @@
   .dot{width:16px;height:16px;border-radius:50%;display:inline-block}
   .dot.white{background:#fff;border:1px solid #888}
   .dot.black{background:#111;border:1px solid #666}
+  .dot.orange{background:#ff9f43;border:1px solid #b86b1f}
+  .dot.straw{background:#f1e3a0;border:1px solid #c9b86b}
+  .dot.lightyellow{background:#fff3b0;border:1px solid #d9c24f}
+  .dot.bluegreen{background:#16a085;border:1px solid #0c6b56}
+  .dot.greyblue{background:#7d9bb5;border:1px solid #4d6b85}
+  .dot.peacock{background:#0e7c9b;border:1px solid #084e63}
+  .dot.grass{background:#5fa53f;border:1px solid #3c7226}
+  .dot.fleshpink{background:#f4c2c2;border:1px solid #d68e8e}
   .count{font-size:15px;color:#9aa0a6}
   .mini{font-size:13px;padding:6px 12px;border-radius:5px;border:1px solid #555;background:#2a2a2a;color:#ccc;cursor:pointer}
   .mini:hover{background:#333}
@@ -149,16 +157,45 @@
   .del-ver{position:absolute;top:2px;right:2px;font-size:11px;cursor:pointer;opacity:0.3;padding:2px 4px;border-radius:3px}
   .del-ver:hover{opacity:1;background:#500;color:#f88}
   .ver-chip{position:relative}
+  .cat-switch{display:flex;align-items:center;gap:8px;margin:10px 0 6px}
+  .cat-label{font-size:14px;color:#9aa0a6}
+  .cat-btn{padding:6px 16px;background:#1e2126;border:1px solid #383838;border-radius:6px;color:#c9d1d9;font-size:14px;cursor:pointer;transition:all .15s}
+  .cat-btn:hover{border-color:#58a6ff;color:#e6edf3}
+  .cat-btn.active{background:#1f4fa8;border-color:#58a6ff;color:#fff;font-weight:bold}
 </style>
 </head>
 <body>
-<h1>🧵 胚衣制作 · 素材库</h1>
+<h1 id="pageTitle">🧵 胚衣制作 · 素材库</h1>
 <div class="sub">分类上传素材 → 自动处理为 1340×1785 @ 72 DPI（白胚衣白底 / 黑胚衣黑底 JPG）· 点击图片可在文件夹中打开</div>
+
+<!-- 品类切换：T恤(wb，缺省) / 卫衣(hoodie)，整页跳转，PEIYI_CAT 随页面加载生效 -->
+<div class="cat-switch" id="catSwitch">
+  <span class="cat-label">品类：</span>
+  <button class="cat-btn" data-cat="wb" onclick="location.href='/peiyi'">👕 T恤</button>
+  <button class="cat-btn" data-cat="hoodie" onclick="location.href='/peiyi?cat=hoodie'">🧥 卫衣</button>
+</div>
 
 <div class="toolbar">
   <button class="btn-blue" onclick="refreshAll()">🔄 刷新全部</button>
   <button onclick="location.href='/'" title="返回主面板">🏠 主面板</button>
 </div>
+
+<script>
+// 品类切换控件初始化：按 URL ?cat= 高亮当前品类并更新标题（独立于下方主脚本，避免依赖加载顺序）
+(function(){
+  var cat = new URLSearchParams(location.search).get('cat') || '';
+  var isHoodie = (cat === 'hoodie');
+  var btns = document.querySelectorAll('#catSwitch .cat-btn');
+  btns.forEach(function(b){
+    b.classList.toggle('active', (b.getAttribute('data-cat') === 'hoodie') === isHoodie);
+  });
+  if(isHoodie){
+    var h1 = document.getElementById('pageTitle');
+    if(h1) h1.textContent = '🧵 胚衣制作 · 素材库（卫衣）';
+    document.title = document.title + '（卫衣）';
+  }
+})();
+</script>
 
 <!-- 评分概览条：评分已叠到每张胚衣图上，这里只留汇总 + 低分排前开关 -->
 <div class="overview">
@@ -229,17 +266,62 @@
       </div>
     </div>
 
+    <!-- 🧵 抽绳遮罩（卫衣抽绳 · 手动点选生成，与自动遮罩结合） -->
+    <div style="border-top:1px solid #333;padding-top:12px;margin-top:12px">
+      <div style="font-size:14px;color:#ccc;margin-bottom:8px">🧵 抽绳遮罩（卫衣抽绳）</div>
+      <div id="dsStatus" style="font-size:12px;color:#9aa0a6;margin-bottom:8px">—</div>
+      <button class="correct-btn" onclick="openDrawstringTool()" style="border-color:#ff9800;color:#ffb74d;width:100%;font-size:14px;padding:10px">🧵 打开抽绳遮罩工具</button>
+      <div style="font-size:11px;color:#666;margin-top:4px">在弹出的工具里点选绳子 → 自动保存到本素材目录（{stem}_drawstring_mask.png）</div>
+      <div id="dsPreviewBox" style="display:none;margin-top:10px">
+        <div style="font-size:12px;color:#bbb;margin-bottom:4px">🧵 结合预览（红=绳子，盖在原图上）：</div>
+        <canvas id="dsCanvas" style="width:100%;border:1px solid #333;border-radius:5px;background:#0a0a0a;display:block"></canvas>
+      </div>
+    </div>
+
     <button class="use-btn" id="useBtn" onclick="useCurrentVersion()" disabled>设为当前版本</button>
   </div>
 </div>
 
 <script>
-var CATS = [
+var BASE_CATS = [
   {key:'W白', label:'W白（白·正面）', dot:'white'},
   {key:'B白', label:'B白（白·背面）', dot:'white'},
   {key:'W黑', label:'W黑（黑·正面）', dot:'black'},
   {key:'B黑', label:'B黑（黑·背面）', dot:'black'},
 ];
+
+// 品类（T恤 wb / 卫衣 hoodie）：从页面 URL ?cat= 读取；缺省/为空 = wb，后端同样缺省 wb，行为不变
+var PEIYI_CAT = new URLSearchParams(location.search).get('cat') || '';
+function _withCat(u){ return PEIYI_CAT ? u + (u.indexOf('?')>=0?'&':'?') + 'cat=' + encodeURIComponent(PEIYI_CAT) : u; }
+function _catBody(o){ if(PEIYI_CAT) o.cat = PEIYI_CAT; return o; }
+
+// 卫衣(hoodie)独享的额外颜色分类：按「W/B + 颜色英文名（中文颜色·正面/背面）」规则
+var HOODIE_EXTRA_CATS = [
+  {key:'W Melon Orange', label:'W Melon Orange（蜜瓜橙·正面）', dot:'orange'},
+  {key:'B Melon Orange', label:'B Melon Orange（蜜瓜橙·背面）', dot:'orange'},
+  {key:'W Straw Yellow', label:'W Straw Yellow（浅黄色·正面）', dot:'straw'},
+  {key:'B Straw Yellow', label:'B Straw Yellow（浅黄色·背面）', dot:'straw'},
+  {key:'W Blue Green', label:'W Blue Green（蓝绿色·正面）', dot:'bluegreen'},
+  {key:'B Blue Green', label:'B Blue Green（蓝绿色·背面）', dot:'bluegreen'},
+  {key:'W Grey Blue', label:'W Grey Blue（宝蓝色·正面）', dot:'greyblue'},
+  {key:'B Grey Blue', label:'B Grey Blue（宝蓝色·背面）', dot:'greyblue'},
+  {key:'W Peacock Blue', label:'W Peacock Blue（孔雀蓝·正面）', dot:'peacock'},
+  {key:'B Peacock Blue', label:'B Peacock Blue（孔雀蓝·背面）', dot:'peacock'},
+  {key:'W Light Yellow', label:'W Light Yellow（明黄色·正面）', dot:'lightyellow'},
+  {key:'B Light Yellow', label:'B Light Yellow（明黄色·背面）', dot:'lightyellow'},
+  {key:'W Grass Green', label:'W Grass Green（草绿色·正面）', dot:'grass'},
+  {key:'B Grass Green', label:'B Grass Green（草绿色·背面）', dot:'grass'},
+  {key:'W flesh pink', label:'W flesh pink（粉红色·正面）', dot:'fleshpink'},
+  {key:'B flesh pink', label:'B flesh pink（粉红色·背面）', dot:'fleshpink'},
+];
+// 分类列表：T恤(wb) 仅四分类；卫衣(hoodie) 在四分类基础上追加上述颜色分类
+var CATS = BASE_CATS.concat(PEIYI_CAT === 'hoodie' ? HOODIE_EXTRA_CATS : []);
+
+// 遮罩/抽绳侧车文件：不显示在素材库主画廊（与后端 PEIYI_MASK_SUFFIXES 互补，前端兜底）
+function isMaskSidecar(name){
+  return /_(drawstring_mask|drawstring_preview|drawstring_layered_demo|occluder|occluder_mask|body_mask|parse|alpha|manual)\.png$/i.test(name);
+}
+function _bustUrl(u){ return u + (u.indexOf('?')>=0?'&':'?') + 't=' + Date.now(); }
 
 // 每张素材下方的贴图参数输入区，字段顺序与 胚衣参数表_模板.csv 第5-9列一致
 // width=缩放后宽px / height=缩放后高px / rotation=旋转角度(负=逆时针,正=顺时针)
@@ -272,7 +354,7 @@ function debounce(fn, ms){
 }
 
 function collectMetaPayload(inputs, key, name){
-  var payload={category:key, name:name};
+  var payload=_catBody({category:key, name:name});
   inputs.forEach(function(mi){
     var dk=mi.getAttribute('data-k');
     if(dk.indexOf('bw.')===0){
@@ -367,6 +449,7 @@ function upload(key, fileList){
 
   var fd=new FormData();
   fd.append('category', key);
+  if(PEIYI_CAT) fd.append('cat', PEIYI_CAT);
   for(var i=0;i<fileList.length;i++){ fd.append('files', fileList[i]); }
 
   var xhr=new XMLHttpRequest();
@@ -396,7 +479,7 @@ function upload(key, fileList){
 }
 
 function refreshGallery(key){
-  fetch('/api/peiyi/list?category='+encodeURIComponent(key))
+  fetch(_withCat('/api/peiyi/list?category='+encodeURIComponent(key)))
     .then(function(r){return r.json();})
     .then(function(d){
       if(!d.ok){ galMsg(key,'加载失败：'+(d.error||'未知错误')); return; }
@@ -409,10 +492,10 @@ function refreshGallery(key){
 // 渲染图片墙：按当前排序（默认 / 低分排前）画每张胚衣卡片
 function renderGallery(key){
   var items=GALLERY_DATA[key]||[];
-  document.getElementById('cnt-'+key).textContent=items.length+' 张';
+  var arr=items.slice().filter(function(it){ return !isMaskSidecar(it.name); });
+  document.getElementById('cnt-'+key).textContent=arr.length+' 张';
   var gal=document.getElementById('gal-'+key);
-  if(!items.length){ gal.innerHTML='<div class="empty">暂无素材</div>'; return; }
-  var arr=items.slice();
+  if(!arr.length){ gal.innerHTML='<div class="empty">暂无素材</div>'; return; }
   if(LOW_FIRST){
     arr.sort(function(a,b){
       var ua=a.unfilled?0:1, ub=b.unfilled?0:1;   // 待填仍排最前
@@ -453,7 +536,7 @@ function metaGroupInputs(m, isBw){
 }
 
 function buildMetaGroups(key, meta, it){
-  var twoGroup = (key==='W白' || key==='W黑');
+  var twoGroup = (key.charAt(0) === 'W');   // 所有正面(W*)分类均支持 单面款/双面款(W+B) 两组参数
   var html='';
   if(twoGroup){
     html += '<div class="mgrp"><div class="mgrp-title">① 单面款（只有W贴图）</div>'+
@@ -509,7 +592,7 @@ function buildThumb(key, it){
   t.querySelector('.del').onclick=function(){
     if(!confirm('确定删除 '+it.name+' ？')) return;
     fetch('/api/peiyi/delete',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({category:key,name:it.name})})
+      body:JSON.stringify(_catBody({category:key,name:it.name}))})
       .then(function(r){return r.json();})
       .then(function(d2){
         if(d2.ok){ log('['+key+'] 已删除 '+it.name); refreshGallery(key); }
@@ -561,7 +644,7 @@ function galMsg(key, s){
 // 点击素材图片 → 后端在资源管理器打开该文件所在文件夹并选中
 function openFolder(key, name){
   fetch('/api/peiyi/open',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({category:key, name:name})})
+    body:JSON.stringify(_catBody({category:key, name:name}))})
     .then(function(r){return r.json();})
     .then(function(d){
       if(d.ok){ log('['+key+'] 已打开文件夹：'+d.path); }
@@ -593,7 +676,7 @@ function refreshAll(){
 function reindex(key){
   if(!confirm('将把「'+key+'」文件夹内所有图片按进入顺序重新编号为 '+key.replace(/[（(].*$/,'')+'1、'+key.replace(/[（(].*$/,'')+'2 …（原有文件名会被覆盖）？')) return;
   fetch('/api/peiyi/reindex',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({category:key})})
+    body:JSON.stringify(_catBody({category:key}))})
     .then(function(r){return r.json();})
     .then(function(d){
       if(d.ok){ log('['+key+'] '+d.msg); refreshGallery(key); }
@@ -610,7 +693,7 @@ function genMask(key, name, btn){
   btn.textContent = '生成中…约1分钟';
   log('['+key+'] 开始生成遮罩：'+name+'（首次约1分钟，请稍候，勿关闭页面）');
   fetch('/api/peiyi/mask',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({category:key, name:name})})
+    body:JSON.stringify(_catBody({category:key, name:name}))})
     .then(function(r){return r.json();})
     .then(function(d){
       if(d.ok){
@@ -633,13 +716,13 @@ function previewMask(it){
   var mu = it.mask_urls || {};
   // 防缓存：每次预览都追加时间戳，强制浏览器拉取【最新生成】的遮罩文件，
   // 避免“文件已在文件夹更新、但预览仍显示旧图”的问题。
-  var bust = '?t=' + Date.now();
+  // 防缓存串统一走 _bustUrl（非 wb 品类时服务端 URL 已带 ?cat=，需用 & 续接）
   var figs = '';
-  if(it.url)        figs += '<figure><img src="'+it.url+bust+'"><figcaption>① 原图</figcaption></figure>';
-  if(mu.parse)      figs += '<figure><img src="'+mu.parse+bust+'"><figcaption>② 分层预览（绿=主体 / 红=遮挡物）</figcaption></figure>';
-  if(mu.occluder)   figs += '<figure><img src="'+mu.occluder+bust+'"><figcaption>③ 遮挡物抠图（透明背景，作为最上层）</figcaption></figure>';
-  if(mu.body_mask)  figs += '<figure><img src="'+mu.body_mask+bust+'"><figcaption>④ 主体蒙版（贴图案的区域）</figcaption></figure>';
-  if(mu.occluder_mask) figs += '<figure><img src="'+mu.occluder_mask+bust+'"><figcaption>⑤ 遮挡物蒙版（清理后的最终遮罩）</figcaption></figure>';
+  if(it.url)        figs += '<figure><img src="'+_bustUrl(it.url)+'"><figcaption>① 原图</figcaption></figure>';
+  if(mu.parse)      figs += '<figure><img src="'+_bustUrl(mu.parse)+'"><figcaption>② 分层预览（绿=主体 / 红=遮挡物）</figcaption></figure>';
+  if(mu.occluder)   figs += '<figure><img src="'+_bustUrl(mu.occluder)+'"><figcaption>③ 遮挡物抠图（透明背景，作为最上层）</figcaption></figure>';
+  if(mu.body_mask)  figs += '<figure><img src="'+_bustUrl(mu.body_mask)+'"><figcaption>④ 主体蒙版（贴图案的区域）</figcaption></figure>';
+  if(mu.occluder_mask) figs += '<figure><img src="'+_bustUrl(mu.occluder_mask)+'"><figcaption>⑤ 遮挡物蒙版（清理后的最终遮罩）</figcaption></figure>';
   if(!figs) figs = '<div class="empty">暂无遮罩图片</div>';
   document.getElementById('modalImgs').innerHTML = figs;
   document.getElementById('modalTitle').textContent = '遮罩预览 · ' + it.name;
@@ -656,7 +739,7 @@ window.addEventListener('click', function(e){
 
 // ============ 评分概览（汇总计数） ============
 function refreshScores(){
-  fetch('/api/peiyi/scores')
+  fetch(_withCat('/api/peiyi/scores'))
     .then(function(r){return r.json();})
     .then(function(d){
       if(!d.ok){ document.getElementById('ovCounts').textContent='加载失败'; return; }
@@ -697,7 +780,8 @@ function openDrawer(category, name, url){
   document.getElementById('useBtn').disabled=true;
   document.getElementById('useBtn').textContent='设为当前版本';
   document.getElementById('drawer').classList.add('show');
-  fetch('/api/peiyi/versions/'+encodeURIComponent(category)+'/'+encodeURIComponent(stem))
+  refreshDrawstringStatus();
+  fetch(_withCat('/api/peiyi/versions/'+encodeURIComponent(category)+'/'+encodeURIComponent(stem)))
     .then(function(r){return r.json();})
     .then(function(d){
       if(!d.ok){ document.getElementById('drawerVers').innerHTML='<div style="color:#f87171">加载失败：'+(d.error||'')+'</div>'; return; }
@@ -750,23 +834,23 @@ function selectVersion(ver, isPreview){
     '遮挡占比 '+(m.occ_ratio!=null?(m.occ_ratio*100).toFixed(1)+'%':'—')+
     ' · 衣服覆盖 '+(m.body_coverage!=null?(m.body_coverage*100).toFixed(1)+'%':'—')+
     (v.timestamp?(' · '+String(v.timestamp).replace('T',' ').slice(0,16)):'');
-  var bust='?t='+Date.now();
+  // 防缓存串统一走 _bustUrl（非 wb 品类时服务端 URL 已带 ?cat=，需用 & 续接）
   var u=v.urls||{};
   // 如果是在预览校正（_working 有临时图），用临时路径代替版本路径
   var workingBase = '/api/peiyi/working_file/'+encodeURIComponent(DRAWER.category)+'/'+encodeURIComponent(DRAWER.stem)+'/';
   var stem = DRAWER.stem;
   var figs='';
-  if(DRAWER.url) figs+='<figure><img src="'+DRAWER.url+bust+'"><figcaption>① 原图</figcaption></figure>';
+  if(DRAWER.url) figs+='<figure><img src="'+_bustUrl(DRAWER.url)+'"><figcaption>① 原图</figcaption></figure>';
   if(isPreview){
     // 从 _working 加载预览
-    figs+='<figure><img src="'+workingBase+stem+'_parse.png'+bust+'"><figcaption>② 预览效果（绿=主体 / 红=遮挡）</figcaption></figure>';
-    figs+='<figure><img src="'+workingBase+stem+'_occluder.png'+bust+'"><figcaption>③ 遮挡物抠图（预览）</figcaption></figure>';
+    figs+='<figure><img src="'+_withCat(workingBase+stem+'_parse.png')+'?t='+Date.now()+'"><figcaption>② 预览效果（绿=主体 / 红=遮挡）</figcaption></figure>';
+    figs+='<figure><img src="'+_withCat(workingBase+stem+'_occluder.png')+'?t='+Date.now()+'"><figcaption>③ 遮挡物抠图（预览）</figcaption></figure>';
   } else {
-    if(u.parse) figs+='<figure><img src="'+u.parse+bust+'"><figcaption>② 分层预览（绿=主体 / 红=遮挡物）</figcaption></figure>';
-    if(u.occluder) figs+='<figure><img src="'+u.occluder+bust+'"><figcaption>③ 遮挡物抠图（最上层）</figcaption></figure>';
+    if(u.parse) figs+='<figure><img src="'+_bustUrl(u.parse)+'"><figcaption>② 分层预览（绿=主体 / 红=遮挡物）</figcaption></figure>';
+    if(u.occluder) figs+='<figure><img src="'+_bustUrl(u.occluder)+'"><figcaption>③ 遮挡物抠图（最上层）</figcaption></figure>';
   }
-  if(u.body_mask) figs+='<figure><img src="'+u.body_mask+bust+'"><figcaption>④ 主体蒙版（贴图案区域）</figcaption></figure>';
-  if(u.occluder_mask) figs+='<figure><img src="'+u.occluder_mask+bust+'"><figcaption>⑤ 最终遮罩</figcaption></figure>';
+  if(u.body_mask) figs+='<figure><img src="'+_bustUrl(u.body_mask)+'"><figcaption>④ 主体蒙版（贴图案区域）</figcaption></figure>';
+  if(u.occluder_mask) figs+='<figure><img src="'+_bustUrl(u.occluder_mask)+'"><figcaption>⑤ 最终遮罩</figcaption></figure>';
   if(!figs) figs='<div class="empty">该版本无预览图</div>';
   document.getElementById('drawerPreview').innerHTML=figs;
   var useBtn=document.getElementById('useBtn');
@@ -838,7 +922,7 @@ function doPreviewCorrection(x, y, mode){
   fetch('/api/peiyi/correct_preview', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({category: DRAWER.category, name: DRAWER.name, x: x, y: y, mode: mode})
+    body: JSON.stringify(_catBody({category: DRAWER.category, name: DRAWER.name, x: x, y: y, mode: mode}))
   })
   .then(function(r){ return r.json(); })
   .then(function(d){
@@ -860,7 +944,7 @@ function confirmCorrection(){
   fetch('/api/peiyi/correct_confirm', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({category: DRAWER.category, name: DRAWER.name})
+    body: JSON.stringify(_catBody({category: DRAWER.category, name: DRAWER.name}))
   })
   .then(function(r){ return r.json(); })
   .then(function(d){
@@ -886,7 +970,7 @@ function cancelCorrection(){
   fetch('/api/peiyi/correct_cancel', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({category: DRAWER.category, name: DRAWER.name})
+    body: JSON.stringify(_catBody({category: DRAWER.category, name: DRAWER.name}))
   })
   .then(function(r){ return r.json(); })
   .then(function(d){
@@ -905,7 +989,7 @@ function deleteVersion(ver){
   fetch('/api/peiyi/delete_version', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({category: DRAWER.category, stem: DRAWER.stem, version: ver})
+    body: JSON.stringify(_catBody({category: DRAWER.category, stem: DRAWER.stem, version: ver}))
   })
   .then(function(r){ return r.json(); })
   .then(function(d){
@@ -925,7 +1009,7 @@ function importManualMask(){
   fetch('/api/peiyi/import_manual', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({category: DRAWER.category, name: DRAWER.name})
+    body: JSON.stringify(_catBody({category: DRAWER.category, name: DRAWER.name}))
   })
   .then(function(r){ return r.json(); })
   .then(function(d){
@@ -956,7 +1040,7 @@ function useCurrentVersion(){
   var useBtn=document.getElementById('useBtn');
   useBtn.disabled=true; useBtn.textContent='切换中…';
   fetch('/api/peiyi/use_version',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({category:DRAWER.category,stem:DRAWER.stem,version:DRAWER.sel})})
+    body:JSON.stringify(_catBody({category:DRAWER.category,stem:DRAWER.stem,version:DRAWER.sel}))})
     .then(function(r){return r.json();})
     .then(function(d){
       if(!d.ok){ alert('切换失败：'+(d.error||'')); selectVersion(DRAWER.sel); return; }
@@ -970,9 +1054,117 @@ function useCurrentVersion(){
 
 function closeDrawer(){ document.getElementById('drawer').classList.remove('show'); }
 
+// ============ 🧵 抽绳遮罩工具入口 ============
+// 打开抽绳遮罩点选工具（独立服务 8777），按当前图片 cat/分类/款名定向
+function openDrawstringTool(){
+  if(!DRAWER || !DRAWER.stem){ return; }
+  var url = 'http://127.0.0.1:8777/drawstring_tool.html?cat=' + encodeURIComponent(PEIYI_CAT) +
+            '&category=' + encodeURIComponent(DRAWER.category) +
+            '&stem=' + encodeURIComponent(DRAWER.stem);
+  window.open(url, '_blank');
+}
+
+// 刷新抽屉内「抽绳遮罩」状态（查 8777 /status）
+function refreshDrawstringStatus(){
+  if(!DRAWER || !DRAWER.stem){ return; }
+  renderDrawstringPreview();
+  var el = document.getElementById('dsStatus');
+  if(!el){ return; }
+  var u = 'http://127.0.0.1:8777/status?cat=' + encodeURIComponent(PEIYI_CAT) +
+          '&category=' + encodeURIComponent(DRAWER.category) +
+          '&stem=' + encodeURIComponent(DRAWER.stem);
+  function showOk(d){
+    if(d.exists){
+      el.innerHTML = '✅ 已生成抽绳遮罩';
+      el.style.color = '#7ee787';
+    } else {
+      el.innerHTML = '○ 尚未生成抽绳遮罩';
+      el.style.color = '#9aa0a6';
+    }
+  }
+  fetch(u).then(function(r){ return r.json(); }).then(showOk).catch(function(){
+    // 8777 可能还在启动中（刚打开页面）：先拉起再重试一次
+    try { fetch('/api/drawstring/ensure', {method:'POST'}); } catch(e){}
+    setTimeout(function(){
+      fetch(u).then(function(r){ return r.json(); }).then(showOk).catch(function(){
+        el.innerHTML = '⚠ 工具未运行（8777）';
+        el.style.color = '#ffb74d';
+      });
+    }, 1300);
+  });
+}
+
+// 把原图(白W1.jpg)与抽绳遮罩(白W1_drawstring_mask.png)合成，在抽屉里显示结合预览：
+// 绳子区域以半透明红色叠加，一眼看清「绳子识别在哪里、是否准确」。
+function renderDrawstringPreview(){
+  if(!DRAWER || !DRAWER.stem){ return; }
+  var box = document.getElementById('dsPreviewBox');
+  if(!box){ return; }
+  var maskName = DRAWER.stem + '_drawstring_mask.png';
+  var maskUrl = _withCat('/api/peiyi/material/' + encodeURIComponent(DRAWER.category) + '/' + encodeURIComponent(maskName));
+  var baseUrl = DRAWER.url;
+  var imgMask = new Image();
+  imgMask.onload = function(){
+    var imgBase = new Image();
+    imgBase.onload = function(){
+      try {
+        var mW = imgMask.width, mH = imgMask.height;
+        var tmp = document.createElement('canvas');
+        tmp.width = mW; tmp.height = mH;
+        var tctx = tmp.getContext('2d');
+        tctx.drawImage(imgBase, 0, 0, mW, mH);
+        var baseData = tctx.getImageData(0, 0, mW, mH);
+        var bd = baseData.data;
+        var mc = document.createElement('canvas');
+        mc.width = mW; mc.height = mH;
+        mc.getContext('2d').drawImage(imgMask, 0, 0);
+        var md = mc.getContext('2d').getImageData(0, 0, mW, mH).data;
+        for(var i = 0; i < md.length; i += 4){
+          if(md[i] > 127){            // 遮罩白色=绳子
+            bd[i]   = bd[i]   * 0.45 + 255 * 0.55;   // 红
+            bd[i+1] = bd[i+1] * 0.45;                 // 压低绿
+            bd[i+2] = bd[i+2] * 0.45;                 // 压低蓝
+          }
+        }
+        tctx.putImageData(baseData, 0, 0);
+        var c = document.getElementById('dsCanvas');
+        c.width = mW; c.height = mH;
+        c.getContext('2d').drawImage(tmp, 0, 0);
+        box.style.display = 'block';
+      } catch(e){
+        box.style.display = 'none';   // 跨域/读取失败则隐藏，不影响其它功能
+      }
+    };
+    imgBase.onerror = function(){ box.style.display = 'none'; };
+    imgBase.src = _bustUrl(baseUrl);
+  };
+  imgMask.onerror = function(){ box.style.display = 'none'; };
+  imgMask.src = maskUrl;
+}
+
 buildCards();
 refreshAll();
 refreshScores();
+
+// ============ 🧵 抽绳工具服务(8777) 随「卫衣·胚衣制作」页面生命周期 ============
+// 仅卫衣页(PEIYI_CAT==='hoodie')需要抽绳工具：页面加载即拉起 8777，页面关闭即关闭。
+(function(){
+  if (PEIYI_CAT !== 'hoodie') { return; }
+  // 页面加载：确保 8777 已启动（若已在运行则后端直接返回，不会重复拉起）
+  try { fetch('/api/drawstring/ensure', {method:'POST'}); } catch(e){}
+  // 页面关闭/刷新：关闭 8777（用 keepalive / sendBeacon 保证请求能发出）
+  function stopDs(){
+    try {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('/api/drawstring/stop', new Blob(['{}'], {type:'application/json'}));
+      } else {
+        fetch('/api/drawstring/stop', {method:'POST', keepalive:true});
+      }
+    } catch(e){}
+  }
+  window.addEventListener('pagehide', stopDs);
+  window.addEventListener('beforeunload', stopDs);
+})();
 </script>
 </body>
 </html>

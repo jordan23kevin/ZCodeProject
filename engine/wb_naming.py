@@ -8,7 +8,7 @@
 占位符说明：
   {dx}    款号，如 DX0650 / HX0001
   {side}  面：W=正面 / B=背面
-  {color} 颜色：白 / 黑 / 蜜瓜橙 / 浅黄色 / 蓝绿色 / 灰蓝色 / 孔雀蓝 / 明黄色 / 草绿色 / 肉粉色
+  {color} 颜色：白 / 黑 / 蜜瓜橙 / 浅黄色 / 蓝绿色 / 宝蓝色 / 孔雀蓝 / 明黄色 / 草绿色 / 粉红色
 
 当前规则（用户定稿 2026-07-12，示例 DX0650）：
   平铺图（T恤平铺在场景里）：DX0650_W白T.jpg / DX0650_B黑T.jpg
@@ -59,12 +59,12 @@ _FLAT_MANDATORY_HOODIE = {
 }
 
 _SIDES = "WB"
-# 颜色名体系：白/黑 单字 + 卫衣 8 英文色的中文名（用户 2026-08-19 提供）：
-#   Melon Orange=蜜瓜橙、Straw Yellow=浅黄色、Blue Green=蓝绿色、Grey Blue=灰蓝色、
-#   Peacock Blue=孔雀蓝、Light Yellow=明黄色、Grass Green=草绿色、flesh pink=肉粉色。
+# 颜色名体系：白/黑 单字 + 卫衣 8 英文色的中文名（用户 2026-08-19 提供，2026-08-20 改：Grey Blue=宝蓝色、flesh pink=粉红色）：
+#   Melon Orange=蜜瓜橙、Straw Yellow=浅黄色、Blue Green=蓝绿色、Grey Blue=宝蓝色、
+#   Peacock Blue=孔雀蓝、Light Yellow=明黄色、Grass Green=草绿色、flesh pink=粉红色。
 # 成品文件名 {color} 用这些中文名（如 HX0001_W蜜瓜橙T.jpg / HX0001_蜜瓜橙W.jpg）。
-COLOR_NAMES = ("白", "黑", "蜜瓜橙", "浅黄色", "蓝绿色", "灰蓝色",
-               "孔雀蓝", "明黄色", "草绿色", "肉粉色")
+COLOR_NAMES = ("白", "黑", "蜜瓜橙", "浅黄色", "蓝绿色", "宝蓝色",
+               "孔雀蓝", "明黄色", "草绿色", "粉红色")
 # color 正则（按长度降序，先长后短）
 _COLORS_PAT = "(?:" + "|".join(re.escape(c) for c in sorted(COLOR_NAMES, key=len, reverse=True)) + ")"
 
