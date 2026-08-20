@@ -1,12 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.6.2
+Y2 Bridge Server v2.6.3
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.6.3：
+  - /api/batch-upload 启动前先自动清理仍在运行的旧 wb_listing.py 进程（_kill_stale_wb_listing，
+    只杀命令行含 wb_listing.py 的 python 进程）：用户规则"点批量上传/强制重新上款后只执行最新任务"；
+    顺带解决僵尸进程占用已上款记录/标题缓存导致删记录 Permission denied 的源头。
+    清理放在 force 删记录之前，杀完等 0.5s 让文件句柄释放。
 
 变更 v2.6.2：
   - 修复「强制重新上款点了没反应（开 Edge 但不传图）」：已上款记录/标题缓存文件被占用
@@ -3928,6 +3934,34 @@ def api_open_file():
             return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _kill_stale_wb_listing():
+    """启动新上款任务前，清理仍在运行的旧 wb_listing.py 进程。
+    僵尸进程的危害：①占用已上款记录/标题缓存文件 → 强制重新上款删记录 Permission denied；
+    ②与新任务并发操作同一浏览器页面。只杀命令行含 wb_listing.py 的 python 进程，不误杀别的。
+    返回被杀掉的 PID 列表。"""
+    killed = []
+    try:
+        out = subprocess.check_output([
+            "powershell", "-NoProfile", "-Command",
+            "Get-CimInstance Win32_Process -Filter \"Name like '%python%'\" | "
+            "Where-Object { $_.CommandLine -like '*wb_listing.py*' } | "
+            "Select-Object -ExpandProperty ProcessId"
+        ], text=True, timeout=15)
+        for line in out.splitlines():
+            pid = line.strip()
+            if pid.isdigit():
+                r = subprocess.run(["taskkill", "/F", "/PID", pid],
+                                   capture_output=True, text=True, timeout=10)
+                if r.returncode == 0:
+                    killed.append(int(pid))
+    except Exception as e:
+        print(f"[batch-upload] 清理旧上款进程失败: {e}", flush=True)
+    if killed:
+        print(f"[batch-upload] 已清理旧上款进程: {killed}", flush=True)
+        time.sleep(0.5)  # 等文件句柄释放，避免紧随其后的删记录仍撞锁
+    return killed
+
+
 @app.route('/api/batch-upload', methods=['POST'])
 def api_batch_upload():
     """批量上款：调用 E:\Claude code\wb上款\wb_listing.py 逐个 DX 上款。
@@ -3972,6 +4006,10 @@ def api_batch_upload():
             "ok": False,
             "error": f"上款脚本不存在: {upload_script}"
         }), 404
+
+    # 启动前先清理仍在运行的旧 wb_listing 进程（僵尸进程会占用记录文件导致强制上款删记录失败，
+    # 且可能与新任务并发操作同一页面）；用户规则：只执行最新的上款任务
+    stale_killed = _kill_stale_wb_listing()
 
     # 强制重新上款：先从已上款记录中删除对应款号，让 wb_listing.py 正常执行
     # 同时清除标题缓存，强制重新走豆包用最新提示词生成标题
@@ -4047,6 +4085,7 @@ def api_batch_upload():
         "script": str(script_path),
         "selected": valid_dx,
         "force": force,
+        "stale_killed": stale_killed,
         "removed": removed,
         "cache_removed": cache_removed,
     })
