@@ -115,6 +115,19 @@
 <div id="preview" class="preview"><img id="previewImg" src=""></div>
 
 <script>
+// 品类透传：T恤=wb（URL 无参数，行为不变）；卫衣=hoodie（?cat=hoodie，所有 API 带上；
+// 卫衣缺 listing profile 时后端会返回明确错误并在此展示）
+var CAT=(function(){var c=new URLSearchParams(location.search).get('cat');return c==='hoodie'?'hoodie':'wb';})();
+var IS_HOODIE=(CAT==='hoodie');
+function withCat(url){if(!IS_HOODIE)return url;return url+(url.indexOf('?')>=0?'&':'?')+'cat='+CAT;}
+if(IS_HOODIE){
+  document.addEventListener('DOMContentLoaded',function(){
+    document.title=document.title+'（卫衣）';
+    var h1=document.querySelector('h1');
+    if(h1&&h1.textContent.indexOf('卫衣')<0)h1.textContent=h1.textContent+' · 🧥 卫衣';
+  });
+}
+
 function showToast(m){
   var t=document.getElementById('toast');
   t.textContent=m;t.style.display='block';
@@ -135,7 +148,7 @@ function copyDx(dx){
 
 function delUploadImg(btn,dx,file){
   if(!confirm('删除 '+dx+'/'+file+' ？（送回收站，可撤销）'))return;
-  fetch('/api/upload/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx:dx,file:file})})
+  fetch(withCat('/api/upload/delete'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx:dx,file:file})})
     .then(function(r){return r.json();})
     .then(function(d){
       showToast(d.msg||d.error||'未知结果');
@@ -164,7 +177,11 @@ var currentPending=[];
 function loadProjects(){
   document.getElementById('pendingGrid').innerHTML='<p class="empty">加载中…</p>';
   document.getElementById('completedGrid').innerHTML='<p class="empty">加载中…</p>';
-  fetch('/api/upload/projects').then(function(r){return r.json();}).then(function(d){
+  fetch(withCat('/api/upload/projects')).then(function(r){return r.json();}).then(function(d){
+    if(d.ok===false&&d.error){
+      document.getElementById('emptyState').innerHTML='<p class="empty">⚠️ '+d.error+'</p>';
+      return;
+    }
     allProjects=d.projects||[];
     fillDateSel();
     return loadProgress();
@@ -176,7 +193,7 @@ function loadProjects(){
 }
 
 function loadProgress(){
-  return fetch('/api/upload/progress').then(function(r){return r.json();}).then(function(d){
+  return fetch(withCat('/api/upload/progress')).then(function(r){return r.json();}).then(function(d){
     progressData=d||{};
     updateProgressPanel();
   }).catch(function(e){console.log('progress load failed',e);});
@@ -197,8 +214,19 @@ function fillDateSel(){
   }
 }
 
+// 卫衣（hoodie）10 色顺序（与后端 wb_listing._HOODIE_COLOR_TO_DXM 一致）
+var HOODIE_COLORS=['白','黑','蜜瓜橙','浅黄色','蓝绿色','宝蓝色','孔雀蓝','明黄色','草绿色','粉红色'];
+
 function upGroup(name,dx){
   var stem=name.replace(/\.[^.]+$/,'');
+  if(IS_HOODIE){
+    // 卫衣：按颜色分组（同色模特+平铺并排一行，每行 2 张），T恤 走下方 BW/B/W 逻辑
+    var body=stem.indexOf(dx+'_')===0?stem.substr(dx.length+1):stem;
+    for(var i=0;i<HOODIE_COLORS.length;i++){
+      if(body.indexOf(HOODIE_COLORS[i])>=0)return HOODIE_COLORS[i];
+    }
+    return '其他';
+  }
   if(stem.indexOf('BW')>=0)return 'BW';
   if(stem.indexOf(dx+'_B_')===0||stem.endsWith('_B'))return 'B';
   if(stem.indexOf(dx+'_W_')===0||stem.endsWith('_W'))return 'W';
@@ -227,7 +255,7 @@ function buildCard(p){
     if(!groups[g])groups[g]=[];
     groups[g].push(f);
   });
-  var order=['BW','B','W','其他'];
+  var order=IS_HOODIE?HOODIE_COLORS.concat(['其他']):['BW','B','W','其他'];
   var rows=[];
   order.forEach(function(g){
     if(!groups[g])return;
@@ -236,9 +264,9 @@ function buildCard(p){
       var origTs=f.mtime;
       var safeFile=f.name.replace(/'/g,"\\'");
       return '<div class="up-item">'
-        +'<div class="up-thumb cell" data-src="/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+origTs+'" onclick="openDxFolder(\''+p.dx+'\')" title="点击打开 '+p.dx+'/03_UPLOAD">'
+        +'<div class="up-thumb cell" data-src="'+withCat('/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+origTs)+'" onclick="openDxFolder(\''+p.dx+'\')" title="点击打开 '+p.dx+'/03_UPLOAD">'
         +'<button class="del-overlay" onclick="event.stopPropagation();delUploadImg(this,\''+p.dx+'\',\''+safeFile+'\')" title="删除成品图">×</button>'
-        +'<img src="/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts+'" loading="lazy" decoding="async" onerror="this.onerror=null;this.src=\'/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+origTs+'\'">'
+        +'<img src="'+withCat('/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts)+'" loading="lazy" decoding="async" onerror="this.onerror=null;this.src=\'/api/upload/original?dx='+p.dx+'&file=\'+encodeURIComponent(\''+safeFile+'\')+\'&t='+origTs+(IS_HOODIE?'&cat=hoodie':'')+'\'">'
         +'</div>'
         +'<div class="up-label" title="'+f.name+'">'+upLabel(f.name,p.dx)+'</div>'
         +'</div>';
@@ -357,7 +385,7 @@ function refreshOnlineListed(){
   var btn=document.getElementById('refreshOnlineBtn');
   btn.disabled=true;btn.textContent='⏳ 刷新中…';
   showToast('🌐 正在增量刷新：翻到上次边界款为止，自动检测并移除下架款…');
-  fetch('/api/upload/refresh-online-listed',{method:'POST'})
+  fetch(withCat('/api/upload/refresh-online-listed'),{method:'POST'})
     .then(function(r){return r.json();})
     .then(function(d){
       showToast(d.ok?'✅ '+d.msg:'❌ '+(d.error||'未知错误'));
@@ -377,7 +405,7 @@ function deepCleanOnlineListed(){
   var btn=document.getElementById('deepCleanBtn');
   btn.disabled=true;btn.textContent='⏳ 清理中…';
   showToast('🧹 正在深度清理：翻完所有页，全量覆盖…');
-  fetch('/api/upload/refresh-online-listed?mode=deep',{method:'POST'})
+  fetch(withCat('/api/upload/refresh-online-listed?mode=deep'),{method:'POST'})
     .then(function(r){return r.json();})
     .then(function(d){
       showToast(d.ok?'✅ '+d.msg:'❌ '+(d.error||'未知错误'));
@@ -510,7 +538,7 @@ function batchUpload(){
   var btn=document.getElementById('uploadBtn');
   btn.disabled=true;btn.textContent='⏳ 上传中…';
   showToast('⏳ 启动批量上传 '+list.length+' 款…');
-  fetch('/api/batch-upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx_list:list, force: force})})
+  fetch(withCat('/api/batch-upload'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx_list:list, force: force})})
     .then(function(r){return r.json();})
     .then(function(d){
       var msg=d.msg||d.error||JSON.stringify(d)||'未知错误';
