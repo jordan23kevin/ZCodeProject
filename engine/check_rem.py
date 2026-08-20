@@ -4,10 +4,12 @@
 01_AI 生成图、02_REM_BG 去背图、03_UPLOAD 贴图成品，方便人工判断
 去背质量、贴图完整度与黑T专用图优先级。
 
-功能 v2.7.0（T恤 BW 贴图去掉模特图 · 修串类污染）：
+功能 v2.7.0（T恤 BW 贴图去掉模特图 · 修串类污染 · T恤成品行按款型3/2列）：
   - v2.6.9「BW款补模特图」块漏加品类门，T恤（wb）BW 款贴图时也被补 W/B 模特图。
     用户规则：T恤 BW 只用平铺图，BW 补模特图是卫衣（hoodie）专属。
     该块加 `_CAT == "hoodie"` 门禁，T恤 恢复原行为（BW=平铺+BW合成）。
+  - T恤 成品展示行按款型分列：BW 款每色 3 张（B/W 平铺+BW合成）→ 3 列；
+    单 W/单 B 每色 2 张 → 2 列；卫衣保持固定 2 列不变（up-row-imgs 内联列数）。
 
 功能 v2.6.9（多品类独立 · 卫衣全部颜色贴图 · 成品按衫色分行 · 仅本张重贴品类正确 · B面源cut修复 · 反黑反白专用贴图 · 单面批量黑白专用cut路由 · BW款补模特图 · 成品行固定2列 · 仅本张BW款黑白专用cut · BW拆分cut模特图+贴图进度）：
   - 支持 --cat / --port 命令行参数，单进程服务单一品类：T恤 wb@8766、卫衣 hoodie@8767。
@@ -2897,6 +2899,9 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         group_order = ["黑", "白"] + seen + ["其他"]
 
         rows = []
+        # T恤（wb）：BW 款每色 3 张（B/W 平铺 + BW 合成）→ 3 列；单 W/单 B 每色 2 张 → 2 列。
+        # 卫衣（hoodie）保持固定 2 列不变。
+        cols = 3 if (_CAT == "wb" and (dx.endswith("BW") or dx.endswith("WB"))) else 2
         for g in group_order:
             if g not in groups:
                 continue
@@ -2924,7 +2929,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             rows.append(
                 f'<div class="up-row">'
                 f'<div class="up-row-badge"><span class="badge {badge_class}">{g}</span></div>'
-                f'<div class="up-row-imgs">' + ''.join(thumbs) + '</div>'
+                f'<div class="up-row-imgs" style="grid-template-columns:repeat({cols},minmax(0,1fr))">' + ''.join(thumbs) + '</div>'
                 f'</div>'
             )
 
