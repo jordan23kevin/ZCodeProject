@@ -1,4 +1,4 @@
-/* check_rem.js — AI 去背 贴图 OS v2.7.4 (前端交互) */
+/* check_rem.js — AI 去背 贴图 OS v2.7.5 (前端交互) */
 function showToast(m){var t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',3500);}
 function toggleSelectAll(checked){
   document.querySelectorAll('.card').forEach(function(card){
@@ -549,7 +549,7 @@ function revJumpGrid(d){
 }
 function revGo(i){revState.idx=i;renderRev();}
 function revNav(d){revState.view==='grid'?revJumpGrid(d):revStep(d);}
-// 总览网格渲染：同色一列，单元按 4/5 比例自适应；色多图少时自动分带（几组颜色上下排列）放大图片
+// 总览网格渲染：卫衣同色一列、T恤同色一行，单元按 4/5 比例自适应；色多图少时自动分带放大图片
 function renderRevGrid(list){
   var colors=revColors();
   var ncols=colors.length;
@@ -561,33 +561,47 @@ function renderRevGrid(list){
   var baseW=(rm&&rm.clientWidth)?rm.clientWidth:window.innerWidth;
   var baseH=(rm&&rm.clientHeight)?rm.clientHeight:window.innerHeight-74;
   var availW=baseW-104, availH=baseH-28;
-  // 选最优分带数 B：列数=ceil(色数/B)，行数=B*每色张数；单元宽取 宽约束 与 高约束(4/5) 的较小值，B 使单元最大者胜
+  // T恤只有黑/白两色：同色同一行（行内横排铺满横向空间）；卫衣等多色品类保持同色同列
+  var rowMode=(window.CAT==='wb');
+  var hdW=rowMode?64:0;  // 行模式色标在行首，占宽
+  // 选最优分带数 B：每带 ceil(色数/B) 个颜色；单元宽取 宽约束 与 高约束(4/5) 的较小值，B 使单元最大者胜
   var best=null;
   for(var B=1;B<=ncols;B++){
-    var colsB=Math.ceil(ncols/B);
-    var rowsB=maxRows*B;
-    var wB=Math.floor(Math.min((availW-(colsB-1)*gap)/colsB,(availH-(rowsB-1)*gap-(B-1)*bandGap-24*B)/(rowsB*1.25)));
-    if(wB>=80&&(!best||wB>best.w))best={B:B,cols:colsB,rows:rowsB,w:wB};
+    var perBand=Math.ceil(ncols/B), wB;
+    if(rowMode){
+      wB=Math.floor(Math.min((availW-hdW-(maxRows-1)*gap)/maxRows,(availH-(ncols-1)*gap-(B-1)*bandGap)/(ncols*1.25)));
+    }else{
+      var rowsB=maxRows*B;
+      wB=Math.floor(Math.min((availW-(perBand-1)*gap)/perBand,(availH-(rowsB-1)*gap-(B-1)*bandGap-24*B)/(rowsB*1.25)));
+    }
+    if(wB>=80&&(!best||wB>best.w))best={B:B,cols:perBand,w:wB};
   }
-  if(!best)best={B:1,cols:ncols,rows:maxRows,w:Math.max(80,Math.floor((availW-(ncols-1)*gap)/ncols))};
+  if(!best)best={B:1,cols:ncols,w:Math.max(80,Math.floor(rowMode?(availW-hdW-(maxRows-1)*gap)/maxRows:(availW-(ncols-1)*gap)/ncols))};
   var cellW=Math.min(520,best.w), cellH=Math.floor(cellW*1.25);
+  // 单元大时用大缩略图（默认 300；更大尺寸单独缓存一份），网格里也清晰
+  var sz=Math.min(1200,Math.max(300,Math.ceil(cellW/100)*100));
   document.getElementById('revDx').textContent=revState.dx;
   document.getElementById('revName').textContent='点击任意图看大图；←/→ 换款；Esc 关闭';
   document.getElementById('revCount').textContent=list.length+' 张 · '+ncols+' 色';
-  // 按 best.cols 把颜色切成若干带（每带一行颜色列，同色仍只在同一列）
+  // 按 best.cols 把颜色切成若干带（列模式：每带一组颜色列；行模式：每带一组颜色行，同色始终同列/同行）
   var bands=[];
   for(var i=0;i<colors.length;i+=best.cols)bands.push(colors.slice(i,i+best.cols));
+  function cellHtml(it){
+    var i2=list.indexOf(it);
+    return '<div class="rev-cell" style="width:'+cellW+'px;height:'+cellH+'px" onclick="revState.idx='+i2+';revState.view=\'one\';renderRev()" title="'+it.n+'">'
+      +'<img src="/thumb?dx='+revState.dx+'&kind=up&file='+encodeURIComponent(it.n)+'&t='+it.t+'&sz='+sz+'" loading="lazy">'
+      +'<button class="rev-cell-del" onclick="event.stopPropagation();revState.idx='+i2+';revDelete(true)" title="删除（送回收站）">×</button>'
+      +'<span class="rev-cell-cap">'+it.l+'</span>'
+      +'</div>';
+  }
   var html=bands.map(function(band){
+    if(rowMode){
+      return '<div class="rev-band rows">'+band.map(function(col){
+        return '<div class="rev-rowline"><span class="rev-col-hd">'+col.c+'</span>'+col.items.map(cellHtml).join('')+'</div>';
+      }).join('')+'</div>';
+    }
     var colsHtml=band.map(function(col){
-      var cells=col.items.map(function(it){
-        var i2=list.indexOf(it);
-        return '<div class="rev-cell" style="width:'+cellW+'px;height:'+cellH+'px" onclick="revState.idx='+i2+';revState.view=\'one\';renderRev()" title="'+it.n+'">'
-          +'<img src="/thumb?dx='+revState.dx+'&kind=up&file='+encodeURIComponent(it.n)+'&t='+it.t+'" loading="lazy">'
-          +'<button class="rev-cell-del" onclick="event.stopPropagation();revState.idx='+i2+';revDelete(true)" title="删除（送回收站）">×</button>'
-          +'<span class="rev-cell-cap">'+it.l+'</span>'
-          +'</div>';
-      }).join('');
-      return '<div class="rev-col"><span class="rev-col-hd">'+col.c+'</span>'+cells+'</div>';
+      return '<div class="rev-col"><span class="rev-col-hd">'+col.c+'</span>'+col.items.map(cellHtml).join('')+'</div>';
     }).join('');
     return '<div class="rev-band">'+colsHtml+'</div>';
   }).join('');

@@ -157,7 +157,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.7.4"
+__version__ = "2.7.5"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -659,9 +659,9 @@ def list_dates(projects):
 
 
 # ── 缩略图 ─────────────────────────────────────────
-def get_thumb(dx, kind, file):
+def get_thumb(dx, kind, file, size=300):
     """kind: 'ai' → 01_AI/file ; 'rem' → 02_REM_BG/file ; 'up' → 03_UPLOAD/file
-    返回缩略图路径（不存在则生成）。"""
+    返回缩略图路径（不存在则生成）。size=缩略图边长（默认 300）。"""
     sub = "01_AI" if kind == "ai" else "02_REM_BG" if kind == "rem" else "03_UPLOAD"
     src = BASE / dx / sub / file
     if not src.exists():
@@ -671,6 +671,9 @@ def get_thumb(dx, kind, file):
     # 仅靠 mtime 判新鲜会把"覆盖前的旧内容缩略图"当新鲜，导致两款颜色显示同一张图
     st = src.stat()
     thumb_name = f"{dx}__{kind}__{file}.{st.st_size}.jpg"
+    if size != 300:
+        # 非默认尺寸单独存一份，不动 300px 默认缓存
+        thumb_name = f"{dx}__{kind}__{file}.{st.st_size}.{size}px.jpg"
     thumb = THUMB_DIR / thumb_name
     if not thumb.exists() or thumb.stat().st_mtime < st.st_mtime:
         try:
@@ -680,7 +683,7 @@ def get_thumb(dx, kind, file):
             bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
             bg.alpha_composite(img)
             img = bg.convert("RGB")
-            img.thumbnail((300, 300))
+            img.thumbnail((size, size))
             img.save(str(thumb), "JPEG", quality=85)
         except Exception as e:
             print(f"  [缩略图失败] {dx}/{file}: {e}", flush=True)
@@ -1683,7 +1686,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_html("<h2 style='background:#1a1a1a;color:#fff;padding:40px;'>还没有数据</h2>".encode("utf-8"))
         elif path == "/thumb":
-            self._serve_thumb(dx, kind, file)
+            self._serve_thumb(dx, kind, file, qs.get("sz", [""])[0])
         elif path == "/original":
             self._serve_original(dx, kind, file)
         elif path == "/open":
@@ -2156,6 +2159,10 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .rev-band {{ display:flex; gap:10px; justify-content:center; align-items:flex-start; }}
 .rev-col {{ display:flex; flex-direction:column; gap:8px; align-items:center; min-width:0; }}
 .rev-col-hd {{ font-size:12px; color:#ddd; background:rgba(255,255,255,.1); padding:2px 10px; border-radius:9px; white-space:nowrap; }}
+/* v2.7.5 T恤审图行模式：同色同一行，色标在行首 */
+.rev-band.rows {{ flex-direction:column; align-items:flex-start; gap:10px; }}
+.rev-rowline {{ display:flex; gap:10px; align-items:center; }}
+.rev-rowline .rev-col-hd {{ flex:none; min-width:44px; text-align:center; }}
 .rev-cell {{ position:relative; background:#fff; border-radius:6px; overflow:hidden; cursor:zoom-in; border:1px solid #333; flex:none; }}
 .rev-cell img {{ width:100%; height:100%; object-fit:contain; display:block; }}
 .rev-cell:hover img {{ transform:scale(1.04); }}
@@ -2212,7 +2219,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 <div id="toast" class="toast"></div>
 <div id="preview" class="preview"><img id="previewImg" src=""></div>
 <button id="backToTop" onclick="window.scrollTo({{top:0,behavior:'smooth'}});" title="回到顶部">⬆</button>
-  <script>var UP_FILES={up_files_json};var DX_ORDER={dx_order_json};</script>
+  <script>var UP_FILES={up_files_json};var DX_ORDER={dx_order_json};var CAT='{_CAT}';</script>
   <script src="/check_rem.js?v={__version__}"></script></body></html>"""
 
     # JS 文件
@@ -2233,11 +2240,17 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         self._send_json(scan_projects())
 
     # 缩略图
-    def _serve_thumb(self, dx, kind, file):
+    def _serve_thumb(self, dx, kind, file, sz=""):
         # 防目录穿越
         if "/" in file or "\\" in file or "/" in dx or "\\" in dx or not _ID_RE.match(dx):
             self._send(400, b"bad"); return
-        thumb = get_thumb(dx, kind, file)
+        # v2.7.5 审图网格大单元需要更清晰缩略图：?sz= 指定边长（默认 300，封顶 1200）
+        try:
+            size = int(sz)
+        except (TypeError, ValueError):
+            size = 300
+        size = max(100, min(1200, size))
+        thumb = get_thumb(dx, kind, file, size)
         if not thumb:
             self._send(404, b"NO THUMB"); return
         data = thumb.read_bytes()
