@@ -1,4 +1,4 @@
-/* check_rem.js — AI 去背 贴图 OS v2.7.2 (前端交互) */
+/* check_rem.js — AI 去背 贴图 OS v2.7.3 (前端交互) */
 function showToast(m){var t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',3500);}
 function toggleSelectAll(checked){
   document.querySelectorAll('.card').forEach(function(card){
@@ -508,8 +508,8 @@ function openRev(dx,fIdx){
   revState.view='grid';
   revState.idx=(fIdx>0&&all[fIdx]&&!all[fIdx]._deleted)?list.indexOf(all[fIdx]):0;
   if(revState.idx<0)revState.idx=0;
-  renderRev();
   document.getElementById('rev').classList.add('active');
+  renderRev();
 }
 function closeRev(){
   revState.dx=null;
@@ -555,8 +555,12 @@ function renderRevGrid(list){
   var ncols=colors.length;
   var maxRows=0;
   colors.forEach(function(c){if(c.items.length>maxRows)maxRows=c.items.length;});
-  var gap=10,bandGap=16,padX=40,topH=54,bottomPad=20;
-  var availW=window.innerWidth-padX-20, availH=window.innerHeight-topH-bottomPad-12;
+  var gap=10,bandGap=16;
+  // 可用区域直接实测 .rev-main 内容盒（padding 48×2 / 8×2），再留 8/12px 余量，保证最左最右列完整显示、不与翻页箭头重叠
+  var rm=document.querySelector('.rev-main');
+  var baseW=(rm&&rm.clientWidth)?rm.clientWidth:window.innerWidth;
+  var baseH=(rm&&rm.clientHeight)?rm.clientHeight:window.innerHeight-74;
+  var availW=baseW-104, availH=baseH-28;
   // 选最优分带数 B：列数=ceil(色数/B)，行数=B*每色张数；单元宽取 宽约束 与 高约束(4/5) 的较小值，B 使单元最大者胜
   var best=null;
   for(var B=1;B<=ncols;B++){

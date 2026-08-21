@@ -157,7 +157,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.7.2"
+__version__ = "2.7.3"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -2128,18 +2128,18 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .rev-count {{ font-size:15px; color:#888; white-space:nowrap; }}
 .rev-close {{ padding:7px 14px; font-size:16px; background:#333; color:#eee; border:1px solid #555; border-radius:6px; cursor:pointer; }}
 .rev-close:hover {{ background:#444; }}
-.rev-main {{ flex:1; display:flex; align-items:center; justify-content:center; position:relative; min-height:0; padding:8px 70px; }}
+.rev-main {{ flex:1; display:flex; align-items:center; justify-content:center; position:relative; min-height:0; padding:8px 48px; }}
 .rev-stage {{ position:relative; max-width:100%; max-height:100%; display:flex; align-items:center; justify-content:center; }}
-.rev-stage img {{ max-width:calc(100vw - 160px); max-height:calc(100vh - 210px); object-fit:contain; border-radius:6px; box-shadow:0 4px 30px rgba(0,0,0,.7); }}
+.rev-stage img {{ max-width:calc(100vw - 120px); max-height:calc(100vh - 210px); object-fit:contain; border-radius:6px; box-shadow:0 4px 30px rgba(0,0,0,.7); }}
 .rev-stage .rev-del {{ position:absolute; top:8px; right:8px; z-index:5; width:34px; height:34px; background:#e53935; color:#fff; border:none; border-radius:6px; font-size:20px; line-height:1; cursor:pointer; }}
 .rev-stage .rev-del:hover {{ background:#b71c1c; }}
 .rev-stage .rev-restick {{ position:absolute; top:8px; left:8px; z-index:5; width:34px; height:34px; background:#2196F3; color:#fff; border:none; border-radius:6px; font-size:18px; line-height:1; cursor:pointer; }}
 .rev-stage .rev-restick:hover {{ background:#1565C0; }}
 .rev-stage .rev-cap {{ position:absolute; bottom:8px; left:8px; z-index:5; background:rgba(0,0,0,.68); color:#fff; font-size:13px; padding:3px 10px; border-radius:10px; max-width:70%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
-.rev-arrow {{ position:absolute; top:50%; transform:translateY(-50%); width:52px; height:84px; font-size:40px; line-height:1; background:rgba(255,255,255,.08); color:#eee; border:none; border-radius:8px; cursor:pointer; user-select:none; }}
+.rev-arrow {{ position:absolute; top:50%; transform:translateY(-50%); width:34px; height:56px; font-size:26px; line-height:1; background:rgba(255,255,255,.08); color:#eee; border:none; border-radius:8px; cursor:pointer; user-select:none; z-index:6; }}
 .rev-arrow:hover {{ background:rgba(255,255,255,.2); }}
-.rev-arrow.left {{ left:10px; }}
-.rev-arrow.right {{ right:10px; }}
+.rev-arrow.left {{ left:6px; }}
+.rev-arrow.right {{ right:6px; }}
 .rev-strip {{ flex:none; display:flex; gap:8px; overflow-x:auto; padding:10px 16px 14px; border-top:1px solid #333; background:rgba(255,255,255,.03); }}
 .rev-thumb {{ width:64px; height:80px; object-fit:cover; border-radius:6px; cursor:pointer; opacity:.55; border:2px solid transparent; flex:none; background:#fff; }}
 .rev-thumb:hover {{ opacity:.85; }}
