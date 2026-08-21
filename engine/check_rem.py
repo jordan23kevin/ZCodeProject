@@ -157,7 +157,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.7.1"
+__version__ = "2.7.2"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -2145,7 +2145,8 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .rev-thumb:hover {{ opacity:.85; }}
 .rev-thumb.active {{ opacity:1; border-color:#2196F3; }}
 /* v2.7.1 审图总览网格：同色同列，自动铺满 */
-.rev-gridall {{ flex:1; display:flex; gap:10px; justify-content:center; align-items:flex-start; padding:12px 20px; min-height:0; overflow:hidden; }}
+.rev-gridall {{ flex:1; display:flex; flex-direction:column; gap:16px; align-items:center; justify-content:center; padding:12px 20px; min-height:0; overflow:hidden; }}
+.rev-band {{ display:flex; gap:10px; justify-content:center; align-items:flex-start; }}
 .rev-col {{ display:flex; flex-direction:column; gap:8px; align-items:center; min-width:0; }}
 .rev-col-hd {{ font-size:12px; color:#ddd; background:rgba(255,255,255,.1); padding:2px 10px; border-radius:9px; white-space:nowrap; }}
 .rev-cell {{ position:relative; background:#fff; border-radius:6px; overflow:hidden; cursor:zoom-in; border:1px solid #333; flex:none; }}
@@ -2973,44 +2974,17 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         seen = [g for g in groups if g not in ("黑", "白", "其他")]
         group_order = ["黑", "白"] + seen + ["其他"]
 
-        rows = []
-        # v2.7.1 已贴图固定两列显示（用户规则：所有款统一两列）
-        cols = 2
+        # v2.7.2 已贴图区不再平铺缩略图：卡片只留「已贴图 N 张 + 🔍审图」入口，
+        # 图片全部收进全屏审图；此处仅按 同色同列 顺序采集 UP_FILES 审图数据。
         for g in group_order:
             if g not in groups:
                 continue
-            thumbs = []
             for f in sorted(groups[g], key=lambda x: x.name):
-                thumb = get_thumb(dx, "up", f.name)
-                if not thumb:
-                    continue
                 ts = int(f.stat().st_mtime)
                 label = self._up_label(f.name, dx)
-                safe_file = f.name.replace("'", "\\'")
-                rev_idx = len(self._up_files.setdefault(dx, []))
-                self._up_files[dx].append({"n": f.name, "t": ts, "l": label, "c": g})
-                thumbs.append(
-                    f'<div class="up-item" id="up-{dx}-{safe_file}">'
-                    f'<div class="up-thumb cell">'
-                    f'<button class="del" onclick="event.stopPropagation();delImg(\'{dx}\',\'up\',\'{safe_file}\',\'up-{dx}-{safe_file}\')" title="删除贴图成品">×</button>'
-                    f'<button class="resticker" onclick="event.stopPropagation();resticker(\'{dx}\',\'{safe_file}\',\'up-{dx}-{safe_file}\')" title="重新贴图（仅本张）">↻</button>'
-                    f'<img src="/thumb?dx={dx}&kind=up&file={quote(f.name)}&t={ts}" onclick="openRev(\'{dx}\',{rev_idx})" loading="lazy" decoding="async">'
-                    f'</div>'
-                    f'<div class="up-label" title="{f.name}">{label}</div>'
-                    f'</div>'
-                )
-            if not thumbs:
-                continue
-            badge_class = {'黑': 'badge-black', '白': 'badge-white'}.get(g, 'badge-other')
-            rows.append(
-                f'<div class="up-row">'
-                f'<div class="up-row-badge"><span class="badge {badge_class}">{g}</span></div>'
-                f'<div class="up-row-imgs" style="grid-template-columns:repeat({cols},minmax(0,1fr))">' + ''.join(thumbs) + '</div>'
-                f'</div>'
-            )
+                self._up_files.setdefault(dx, []).append({"n": f.name, "t": ts, "l": label, "c": g})
 
-        gallery = '<div class="up-rows">' + ''.join(rows) + '</div>'
-        return f'<div class="upload-bar has-up"><div class="up-header"><span class="tag-up">\U0001f4ce \u5df2\u8d34\u56fe</span><span class="up-count">{len(files)} 张</span><button class="rev-open" onclick="openRev(\'{dx}\',0)" title="全屏审图">🔍 审图</button></div>{gallery}</div>'
+        return f'<div class="upload-bar has-up"><div class="up-header"><span class="tag-up">\U0001f4ce \u5df2\u8d34\u56fe</span><span class="up-count">{len(files)} 张</span><button class="rev-open" onclick="openRev(\'{dx}\',0)" title="全屏审图（看全部成品）">🔍 审图</button></div></div>'
 
     def _up_group(self, name, dx):
         """根据文件名判断成品属于 BW / B / W / 其他（规则见 wb_naming.group_of）。"""
