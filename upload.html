@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.1</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.2</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -101,7 +101,7 @@
 </style>
 </head>
 <body>
-<h1>WB 上款 <span class="v">v2.5.1</span></h1>
+<h1>WB 上款 <span class="v">v2.5.2</span></h1>
 <div class="toolbar">
   <select id="dateSel" onchange="switchDate(this.value)">
     <option value="">全部日期</option>
@@ -311,6 +311,8 @@ var DOT_COLORS={'白':'#f5f5f5','黑':'#222','蜜瓜橙':'#f4a259','浅黄色':'
   'BW':'#9c27b0','B':'#222','W':'#f5f5f5','其他':'#757575'};
 // 每款文件列表全局缓存（审图模式数据源；renderCards 每次重建）
 var DX_FILES={};
+// v2.5.2 当前页面款号顺序（renderCards 重建；审图跨款翻页用）
+var DX_ORDER=[];
 // v2.5.1 封面颜色轮换：renderCards 重建时归零，buildCard 每卡递增
 var _renderSeq=0;
 
@@ -427,10 +429,28 @@ function closeReviewer(){
   document.getElementById('reviewer').classList.remove('active');
   document.getElementById('revImg').src='';
 }
+// v2.5.2 跨款移动：返回下/上一个有图款的 dx，到尽头返回 null
+function revJump(d){
+  var pos=DX_ORDER.indexOf(revState.dx);
+  if(pos<0)return null;
+  var i=pos+d;
+  while(i>=0&&i<DX_ORDER.length){
+    var dx=DX_ORDER[i];
+    if((DX_FILES[dx]||[]).some(function(f){return !f._deleted;}))return dx;
+    i+=d;
+  }
+  return null;
+}
 function revStep(d){
   var list=revFiles();
   if(!list.length)return;
-  revState.idx=(revState.idx+d+list.length)%list.length;
+  var ni=revState.idx+d;
+  if(ni>=0&&ni<list.length){revState.idx=ni;renderReviewer();return;}
+  // v2.5.2 越过本款边界 → 跨款：右=下一款第一张，左=上一款最后一张
+  var nd=revJump(d);
+  if(!nd){showToast(d>0?'已经是最后一张（最后一款）':'已经是第一张（第一款）');return;}
+  revState.dx=nd;
+  revState.idx=d>0?0:revFiles().length-1;
   renderReviewer();
 }
 function revGo(i){revState.idx=i;renderReviewer();}
@@ -500,6 +520,7 @@ function renderCards(){
   });
 
   currentPending=pending;
+  DX_ORDER=pending.concat(completed).map(function(p){return p.dx;});
   document.getElementById('pendingGrid').innerHTML=pending.map(buildCard).join('')||'<p class="empty">暂无未上款数据</p>';
   document.getElementById('completedGrid').innerHTML=completed.map(buildCard).join('')||'<p class="empty">暂无已上款数据</p>';
   document.getElementById('pendingSection').style.display='block';
