@@ -485,16 +485,27 @@ document.addEventListener('DOMContentLoaded', function(){
     }
   });
 });
-/* ---- v2.7.0 成品全屏审图 ---- */
-var revState={dx:null,idx:0};
+
+/* ---- v2.7.1 成品审图：总览网格（同色同列）+ 单图模式 ---- */
+var revState={dx:null,idx:0,view:'grid'};
 function revFiles(){
   return (UP_FILES[revState.dx]||[]).filter(function(f){return !f._deleted;});
+}
+function revColors(){
+  var out=[],seen={};
+  revFiles().forEach(function(f){
+    var c=f.c||'其他';
+    if(!seen[c]){seen[c]={c:c,items:[]};out.push(seen[c]);}
+    seen[c].items.push(f);
+  });
+  return out;
 }
 function openRev(dx,fIdx){
   var all=UP_FILES[dx]||[];
   var list=all.filter(function(f){return !f._deleted;});
   if(!list.length){showToast('该款没有可审阅的成品图');return;}
   revState.dx=dx;
+  revState.view='grid';
   revState.idx=(fIdx>0&&all[fIdx]&&!all[fIdx]._deleted)?list.indexOf(all[fIdx]):0;
   if(revState.idx<0)revState.idx=0;
   renderRev();
@@ -505,6 +516,7 @@ function closeRev(){
   document.getElementById('rev').classList.remove('active');
   document.getElementById('revStage').innerHTML='';
 }
+function revToGrid(){revState.view='grid';renderRev();}
 // 跨款移动：返回下/上一个有成品图的款，到尽头返回 null
 function revJump(d){
   var pos=DX_ORDER.indexOf(revState.dx);
@@ -528,35 +540,80 @@ function revStep(d){
   revState.idx=d>0?0:revFiles().length-1;
   renderRev();
 }
+// 总览模式 ←/→：整款切换（保持总览）
+function revJumpGrid(d){
+  var nd=revJump(d);
+  if(!nd){showToast(d>0?'已经是最后一款':'已经是第一款');return;}
+  revState.dx=nd;revState.idx=0;
+  renderRev();
+}
 function revGo(i){revState.idx=i;renderRev();}
-function renderRev(){
-  var list=revFiles();
-  if(!list.length){closeRev();return;}
-  if(revState.idx>=list.length)revState.idx=list.length-1;
-  if(revState.idx<0)revState.idx=0;
+function revNav(d){revState.view==='grid'?revJumpGrid(d):revStep(d);}
+// 总览网格渲染：同色一列，自动算行列与单元尺寸
+function renderRevGrid(list){
+  var colors=revColors();
+  var ncols=colors.length;
+  var maxRows=0;
+  colors.forEach(function(c){if(c.items.length>maxRows)maxRows=c.items.length;});
+  var gap=10,padX=40,topH=54,bottomPad=14;
+  var availW=window.innerWidth-padX, availH=window.innerHeight-topH-bottomPad-30;
+  var cellW=Math.floor((availW-(ncols-1)*gap)/ncols);
+  var cellH=Math.floor((availH-(maxRows-1)*8-24)/Math.max(maxRows,1));
+  var cell=Math.max(60,Math.min(cellW,cellH,340));
+  document.getElementById('revDx').textContent=revState.dx;
+  document.getElementById('revName').textContent='点击任意图看大图；←/→ 换款；Esc 关闭';
+  document.getElementById('revCount').textContent=list.length+' 张 · '+ncols+' 色';
+  var html=colors.map(function(col){
+    var cells=col.items.map(function(it){
+      var i=list.indexOf(it);
+      return '<div class="rev-cell" style="width:'+cell+'px;height:'+cell+'px" onclick="revState.idx='+i+';revState.view=\'one\';renderRev()" title="'+it.n+'">'
+        +'<img src="/thumb?dx='+revState.dx+'&kind=up&file='+encodeURIComponent(it.n)+'&t='+it.t+'" loading="lazy">'
+        +'<button class="rev-cell-del" onclick="event.stopPropagation();revState.idx='+i+';revDelete(true)" title="删除（送回收站）">×</button>'
+        +'<span class="rev-cell-cap">'+it.l+'</span>'
+        +'</div>';
+    }).join('');
+    return '<div class="rev-col"><span class="rev-col-hd">'+col.c+'</span>'+cells+'</div>';
+  }).join('');
+  document.getElementById('revStage').innerHTML='<div class="rev-gridall">'+html+'</div>';
+  document.getElementById('revStrip').style.display='none';
+  document.getElementById('revOverviewBtn').style.display='none';
+}
+// 单图模式渲染
+function renderRevOne(list){
   var f=list[revState.idx];
   var dx=revState.dx;
   document.getElementById('revDx').textContent=dx;
   document.getElementById('revName').textContent=f.l+' · '+f.n;
   document.getElementById('revCount').textContent=(revState.idx+1)+' / '+list.length;
-  var safeFile=f.n.replace(/'/g,"\\'");
   document.getElementById('revStage').innerHTML=
     '<img src="/original?dx='+dx+'&kind=up&file='+encodeURIComponent(f.n)+'&t='+f.t+'">'
     +'<button class="rev-restick" onclick="revResticker()" title="重新贴图（仅本张）">↻</button>'
-    +'<button class="rev-del" onclick="revDelete()" title="删除 '+f.n+'（送回收站，可撤销）">×</button>'
+    +'<button class="rev-del" onclick="revDelete(false)" title="删除 '+f.n+'（送回收站，可撤销）">×</button>'
     +'<span class="rev-cap">'+f.l+'</span>';
   var html=list.map(function(it,i){
     return '<img class="rev-thumb'+(i===revState.idx?' active':'')+'" src="/thumb?dx='+dx+'&kind=up&file='+encodeURIComponent(it.n)+'&t='+it.t+'" onclick="revGo('+i+')" loading="lazy" title="'+it.n+'">';
   }).join('');
   var strip=document.getElementById('revStrip');
+  strip.style.display='flex';
   strip.innerHTML=html;
   var cur=strip.children[revState.idx];
   if(cur&&cur.scrollIntoView)cur.scrollIntoView({inline:'center',block:'nearest'});
+  document.getElementById('revOverviewBtn').style.display='';
 }
-function revDelete(){
+function renderRev(){
+  var list=revFiles();
+  if(!list.length){closeRev();return;}
+  if(revState.idx>=list.length)revState.idx=list.length-1;
+  if(revState.idx<0)revState.idx=0;
+  if(revState.view==='grid')renderRevGrid(list);
+  else renderRevOne(list);
+}
+// stayGrid=true：总览里删图后留在总览
+function revDelete(stayGrid){
   var list=revFiles();
   if(!list.length)return;
   var f=list[revState.idx];
+  if(!f)return;
   var dx=revState.dx;
   if(!confirm('删除 '+dx+'/up/'+f.n+' ？（送回收站，可撤销）'))return;
   fetch('/del?dx='+dx+'&which=up&file='+encodeURIComponent(f.n)).then(function(r){return r.json();}).then(function(d){
@@ -565,6 +622,7 @@ function revDelete(){
       f._deleted=true;
       var item=document.getElementById('up-'+dx+'-'+f.n);
       if(item)item.classList.add('deleted');
+      if(!stayGrid&&revState.view!=='grid')revState.view='one';
       renderRev();
     }
   }).catch(function(e){showToast('❌ 请求失败: '+e);});
@@ -588,7 +646,11 @@ function revResticker(){
 }
 document.addEventListener('keydown',function(e){
   if(!revState.dx)return;
-  if(e.key==='Escape'){e.stopPropagation();closeRev();}
-  else if(e.key==='ArrowLeft')revStep(-1);
-  else if(e.key==='ArrowRight')revStep(1);
+  if(e.key==='Escape'){
+    e.stopPropagation();
+    if(revState.view==='one'){revState.view='grid';renderRev();}
+    else closeRev();
+  }
+  else if(e.key==='ArrowLeft'){revState.view==='grid'?revJumpGrid(-1):revStep(-1);}
+  else if(e.key==='ArrowRight'){revState.view==='grid'?revJumpGrid(1):revStep(1);}
 },true);

@@ -157,7 +157,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.7.0"
+__version__ = "2.7.1"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -2144,6 +2144,19 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .rev-thumb {{ width:64px; height:80px; object-fit:cover; border-radius:6px; cursor:pointer; opacity:.55; border:2px solid transparent; flex:none; background:#fff; }}
 .rev-thumb:hover {{ opacity:.85; }}
 .rev-thumb.active {{ opacity:1; border-color:#2196F3; }}
+/* v2.7.1 审图总览网格：同色同列，自动铺满 */
+.rev-gridall {{ flex:1; display:flex; gap:10px; justify-content:center; align-items:flex-start; padding:12px 20px; min-height:0; overflow:hidden; }}
+.rev-col {{ display:flex; flex-direction:column; gap:8px; align-items:center; min-width:0; }}
+.rev-col-hd {{ font-size:12px; color:#ddd; background:rgba(255,255,255,.1); padding:2px 10px; border-radius:9px; white-space:nowrap; }}
+.rev-cell {{ position:relative; background:#fff; border-radius:6px; overflow:hidden; cursor:zoom-in; border:1px solid #333; flex:none; }}
+.rev-cell img {{ width:100%; height:100%; object-fit:contain; display:block; }}
+.rev-cell:hover img {{ transform:scale(1.04); }}
+.rev-cell img {{ transition:transform .15s; }}
+.rev-cell .rev-cell-del {{ position:absolute; top:3px; right:3px; width:22px; height:22px; background:#e53935; color:#fff; border:none; border-radius:4px; font-size:14px; line-height:1; cursor:pointer; z-index:5; display:none; }}
+.rev-cell:hover .rev-cell-del {{ display:flex; align-items:center; justify-content:center; }}
+.rev-cell .rev-cell-cap {{ position:absolute; bottom:2px; left:3px; background:rgba(0,0,0,.6); color:#fff; font-size:11px; padding:1px 6px; border-radius:7px; z-index:4; }}
+.rev-overview-btn {{ padding:7px 12px; font-size:14px; background:#2196F3; color:#fff; border:none; border-radius:6px; cursor:pointer; white-space:nowrap; }}
+.rev-overview-btn:hover {{ background:#1976D2; }}
 
 </style></head><body>
 <h1>AI 去背 贴图 OS（{_CAT_LABEL}） <span class="v">v{__version__}</span></h1>
@@ -2177,13 +2190,14 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
   <div class="rev-top">
     <span id="revDx" class="rev-dx"></span>
     <span id="revName" class="rev-name"></span>
+    <button class="rev-overview-btn" id="revOverviewBtn" onclick="revToGrid()" style="display:none" title="返回总览 (Esc)">⊞ 总览</button>
     <span id="revCount" class="rev-count"></span>
     <button class="rev-close" onclick="closeRev()" title="关闭 (Esc)">✕</button>
   </div>
   <div class="rev-main">
-    <button class="rev-arrow left" onclick="revStep(-1)" title="上一张 (←)">‹</button>
+    <button class="rev-arrow left" onclick="revNav(-1)" title="上一张 / 上一款 (←)">‹</button>
     <div class="rev-stage" id="revStage"></div>
-    <button class="rev-arrow right" onclick="revStep(1)" title="下一张 (→)">›</button>
+    <button class="rev-arrow right" onclick="revNav(1)" title="下一张 / 下一款 (→)">›</button>
   </div>
   <div class="rev-strip" id="revStrip"></div>
 </div>
@@ -2960,9 +2974,8 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         group_order = ["黑", "白"] + seen + ["其他"]
 
         rows = []
-        # T恤（wb）：BW 款每色 3 张（B/W 平铺 + BW 合成）→ 3 列；单 W/单 B 每色 2 张 → 2 列。
-        # 卫衣（hoodie）保持固定 2 列不变。
-        cols = 3 if (_CAT == "wb" and (dx.endswith("BW") or dx.endswith("WB"))) else 2
+        # v2.7.1 已贴图固定两列显示（用户规则：所有款统一两列）
+        cols = 2
         for g in group_order:
             if g not in groups:
                 continue
@@ -2975,7 +2988,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 label = self._up_label(f.name, dx)
                 safe_file = f.name.replace("'", "\\'")
                 rev_idx = len(self._up_files.setdefault(dx, []))
-                self._up_files[dx].append({"n": f.name, "t": ts, "l": label})
+                self._up_files[dx].append({"n": f.name, "t": ts, "l": label, "c": g})
                 thumbs.append(
                     f'<div class="up-item" id="up-{dx}-{safe_file}">'
                     f'<div class="up-thumb cell">'
