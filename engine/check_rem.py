@@ -157,7 +157,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.7.3"
+__version__ = "2.7.4"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -667,9 +667,12 @@ def get_thumb(dx, kind, file):
     if not src.exists():
         return None
     # 缩略图命名：DX0244__ai__DX0244_BW.png.jpg（用双下划线分隔避免与文件名冲突）
-    thumb_name = f"{dx}__{kind}__{file}.jpg"
+    # v2.7.4 缓存键加入源文件大小：贴图管线覆盖成品时保留旧 mtime（copy2/move），
+    # 仅靠 mtime 判新鲜会把"覆盖前的旧内容缩略图"当新鲜，导致两款颜色显示同一张图
+    st = src.stat()
+    thumb_name = f"{dx}__{kind}__{file}.{st.st_size}.jpg"
     thumb = THUMB_DIR / thumb_name
-    if not thumb.exists() or thumb.stat().st_mtime < src.stat().st_mtime:
+    if not thumb.exists() or thumb.stat().st_mtime < st.st_mtime:
         try:
             img = Image.open(src)
             img = img.convert("RGBA")
@@ -2002,7 +2005,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .toolbar button {{ padding:11px 20px; font-size:16px; cursor:pointer; background:#2196F3; color:#fff; border:none; border-radius:5px; margin-left:8px; font-weight:600; }}
 .toolbar button:hover {{ background:#1976D2; }}
 .toolbar .cnt {{ color:#888; margin-left:12px; font-size:14px; }}
-.grid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(520px,1fr)); gap:18px; max-width:1920px; margin:0 auto; }}
+.grid {{ display:grid; grid-template-columns:repeat(auto-fill,480px); gap:16px; max-width:1920px; margin:0 auto; justify-content:center; align-items:start; }}
 .card {{ background:#1e1e1e; border-radius:10px; border:1px solid #333; overflow:hidden; }}
 .card-head {{ display:flex; align-items:center; gap:10px; padding:12px 16px; background:#252525; border-bottom:1px solid #333; }}
 .dxname {{ font-weight:700; font-size:18px; cursor:pointer; color:#4CAF50; letter-spacing:.3px; }}
@@ -2011,21 +2014,21 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .pair {{ border-top:1px solid #2a2a2a; padding:8px 0 4px; }}
 .pair:first-child {{ border-top:none; padding-top:0; }}
 .stem {{ color:#888; font-size:13px; margin-bottom:5px; padding:0 2px; }}
-.pair-imgs {{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }}
+.pair-imgs {{ display:grid; grid-template-columns:150px 150px; gap:10px; justify-content:start; }}
 .versions-row {{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start; }}
-.version-block {{ display:flex; flex-direction:column; gap:3px; min-width:220px; flex:0 0 auto; max-width:100%; }}
+.version-block {{ display:flex; flex-direction:column; gap:3px; min-width:0; flex:0 0 auto; max-width:100%; }}
 .version-label {{ color:#888; font-size:11px; text-align:center; display:flex; align-items:center; justify-content:center; gap:4px; }}
-.bw-group {{ display:flex; flex-wrap:wrap; gap:10px; }}
-.bw-half {{ flex:1 1 0; min-width:220px; max-width:100%; }}
+.bw-group {{ display:flex; flex-direction:column; gap:10px; }}
+.bw-half {{ min-width:0; max-width:100%; }}
 .black-variant-block {{ min-width:160px; }}
 .cell-wrap {{ display:flex; flex-direction:column; min-width:0; }}
-.cell {{ width:100%; height:220px; max-height:220px; background:#fff; border-radius:6px; overflow:hidden; display:flex; align-items:center; justify-content:center; position:relative; box-sizing:border-box; }}
+.cell {{ width:100%; height:150px; max-height:150px; background:#fff; border-radius:6px; overflow:hidden; display:flex; align-items:center; justify-content:center; position:relative; box-sizing:border-box; }}
 .cell.missing {{ background:#2a1a1a; color:#e57373; font-size:14px; }}
 .cell img {{ width:100%; height:100%; object-fit:contain; cursor:pointer; transition:transform .15s; }}
 .cell:hover img {{ transform:scale(1.06); }}
 .cell .tag {{ position:absolute; top:4px; left:4px; background:rgba(0,0,0,.7); color:#fff; font-size:11px; padding:2px 6px; border-radius:3px; line-height:1.6; }}
-.btn-bar {{ display:flex; align-items:center; gap:4px; padding:5px 2px 3px; min-height:30px; flex-wrap:wrap; }}
-.btn-bar button {{ border:none; border-radius:4px; cursor:pointer; font-size:13px; padding:3px 8px; line-height:24px; flex-shrink:0; }}
+.btn-bar {{ display:flex; align-items:center; gap:3px; padding:4px 2px 2px; min-height:26px; flex-wrap:wrap; }}
+.btn-bar button {{ border:none; border-radius:4px; cursor:pointer; font-size:12px; padding:2px 6px; line-height:20px; flex-shrink:0; }}
 .btn-bar .del {{ background:#e53935; color:#fff; }}
 .btn-bar .del:hover {{ background:#b71c1c; }}
 .btn-bar .rmbg {{ background:#ff9800; color:#fff; }}
@@ -2086,7 +2089,11 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 .up-row {{ display:flex; flex-direction:row; gap:12px; align-items:flex-start; }}
 .up-row-badge {{ flex:0 0 auto; display:flex; align-items:flex-start; padding-top:4px; }}
 .up-row-imgs {{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:12px; align-items:start; }}
-.bv-imgs {{ gap:14px; }}
+/* 反相变体：紧凑横条小图，不再占整行大格 */
+.bv-imgs {{ display:flex; flex-wrap:wrap; gap:10px; }}
+.bv-imgs .cell-wrap {{ width:88px; flex:none; }}
+.bv-imgs .cell {{ height:88px; max-height:88px; }}
+.bv-imgs .btn-bar {{ max-width:88px; }}
 .up-item {{ display:flex; flex-direction:column; align-items:center; width:100%; }}
 .up-thumb {{ width:100%; height:220px; border-radius:6px; overflow:hidden; background:#fff; cursor:pointer; position:relative; border:1px solid #333; }}
 .up-thumb img {{ width:100%; height:100%; object-fit:contain; transition:transform .15s; }}

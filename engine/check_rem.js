@@ -1,4 +1,4 @@
-/* check_rem.js — AI 去背 贴图 OS v2.7.3 (前端交互) */
+/* check_rem.js — AI 去背 贴图 OS v2.7.4 (前端交互) */
 function showToast(m){var t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',3500);}
 function toggleSelectAll(checked){
   document.querySelectorAll('.card').forEach(function(card){
