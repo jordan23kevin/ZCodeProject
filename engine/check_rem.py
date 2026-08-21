@@ -157,7 +157,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.6.9"
+__version__ = "2.7.0"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -1771,6 +1771,7 @@ class Handler(BaseHTTPRequestHandler):
             0 if _has_missing(p) else 1, p["dx"]
         ))
         cards = []
+        self._up_files = {}   # v2.7.0 成品审图数据源：{dx:[{n,t,l}...]}，由 _upload_detail 填充
         for p in projects:
             dx = p["dx"]
             rows = []
@@ -1984,6 +1985,8 @@ class Handler(BaseHTTPRequestHandler):
                 {up_detail}
             </div>''')
         cards_html = "\n".join(cards) or '<p class="empty">暂无数据</p>'
+        up_files_json = json.dumps(self._up_files, ensure_ascii=False)
+        dx_order_json = json.dumps([p["dx"] for p in projects], ensure_ascii=False)
 
         return f"""<!DOCTYPE html>
 <html lang="zh"><head><meta charset="utf-8">
@@ -2107,31 +2110,87 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 #psStatus .psbar-wrap {{ display:none; width:150px; height:9px; border-radius:5px; background:rgba(255,255,255,.25); overflow:hidden; margin-left:6px; }}
 #psStatus .psbar {{ display:block; height:100%; width:0%; background:#00e676; transition:width .3s ease; }}
 
+/* ---- v2.7.0 界面降噪 + 成品审图 ---- */
+.tb-row {{ display:flex; align-items:center; justify-content:center; gap:8px; flex-wrap:wrap; }}
+.tb-row + .tb-row {{ margin-top:8px; }}
+.tb-sep {{ width:1px; height:22px; background:#444; margin:0 4px; }}
+.btn-stem {{ display:none; }}   /* 长文件名收纳：悬停 title 仍可见，不再占视觉 */
+.cell {{ cursor:zoom-in; }}
+.up-thumb {{ cursor:zoom-in; }}
+.upload-bar.has-up .rev-open {{ font-size:12px; padding:3px 12px; border-radius:4px; border:none; cursor:pointer; background:#2196F3; color:#fff; font-weight:600; }}
+.upload-bar.has-up .rev-open:hover {{ background:#1976D2; }}
+/* 全屏审图（成品） */
+.rev {{ position:fixed; inset:0; background:rgba(0,0,0,.93); z-index:10000; display:none; flex-direction:column; }}
+.rev.active {{ display:flex; }}
+.rev-top {{ display:flex; align-items:center; gap:14px; padding:12px 20px; border-bottom:1px solid #333; flex:none; }}
+.rev-dx {{ font-weight:800; font-size:20px; color:#4CAF50; letter-spacing:.3px; }}
+.rev-name {{ font-size:15px; color:#bbb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0; }}
+.rev-count {{ font-size:15px; color:#888; white-space:nowrap; }}
+.rev-close {{ padding:7px 14px; font-size:16px; background:#333; color:#eee; border:1px solid #555; border-radius:6px; cursor:pointer; }}
+.rev-close:hover {{ background:#444; }}
+.rev-main {{ flex:1; display:flex; align-items:center; justify-content:center; position:relative; min-height:0; padding:8px 70px; }}
+.rev-stage {{ position:relative; max-width:100%; max-height:100%; display:flex; align-items:center; justify-content:center; }}
+.rev-stage img {{ max-width:calc(100vw - 160px); max-height:calc(100vh - 210px); object-fit:contain; border-radius:6px; box-shadow:0 4px 30px rgba(0,0,0,.7); }}
+.rev-stage .rev-del {{ position:absolute; top:8px; right:8px; z-index:5; width:34px; height:34px; background:#e53935; color:#fff; border:none; border-radius:6px; font-size:20px; line-height:1; cursor:pointer; }}
+.rev-stage .rev-del:hover {{ background:#b71c1c; }}
+.rev-stage .rev-restick {{ position:absolute; top:8px; left:8px; z-index:5; width:34px; height:34px; background:#2196F3; color:#fff; border:none; border-radius:6px; font-size:18px; line-height:1; cursor:pointer; }}
+.rev-stage .rev-restick:hover {{ background:#1565C0; }}
+.rev-stage .rev-cap {{ position:absolute; bottom:8px; left:8px; z-index:5; background:rgba(0,0,0,.68); color:#fff; font-size:13px; padding:3px 10px; border-radius:10px; max-width:70%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.rev-arrow {{ position:absolute; top:50%; transform:translateY(-50%); width:52px; height:84px; font-size:40px; line-height:1; background:rgba(255,255,255,.08); color:#eee; border:none; border-radius:8px; cursor:pointer; user-select:none; }}
+.rev-arrow:hover {{ background:rgba(255,255,255,.2); }}
+.rev-arrow.left {{ left:10px; }}
+.rev-arrow.right {{ right:10px; }}
+.rev-strip {{ flex:none; display:flex; gap:8px; overflow-x:auto; padding:10px 16px 14px; border-top:1px solid #333; background:rgba(255,255,255,.03); }}
+.rev-thumb {{ width:64px; height:80px; object-fit:cover; border-radius:6px; cursor:pointer; opacity:.55; border:2px solid transparent; flex:none; background:#fff; }}
+.rev-thumb:hover {{ opacity:.85; }}
+.rev-thumb.active {{ opacity:1; border-color:#2196F3; }}
+
 </style></head><body>
 <h1>AI 去背 贴图 OS（{_CAT_LABEL}） <span class="v">v{__version__}</span></h1>
 <div class="toolbar">
+  <div class="tb-row">
   <select id="dateSel" onchange="switchDate(this.value)">
 {date_opts_html}
   </select>
 	  <input id="search" placeholder="搜索 {PREFIX}号…" oninput="filterCards()">
-	  <button onclick="filterCards()" style="cursor:pointer;background:#4CAF50;color:#fff;border:none;border-radius:4px;margin-left:4px;">🔍 搜索</button>
+	  <button onclick="filterCards()" style="cursor:pointer;background:#4CAF50;color:#fff;border:none;border-radius:4px;margin-left:0;">🔍 搜索</button>
   <button onclick="fetch('/refresh').then(function(r){{return r.json();}}).then(function(d){{showToast(d.msg);setTimeout(function(){{location.reload();}},500);}}).catch(function(){{location.reload();}});" title="重新扫描全部（自动跳过未变更的缩略图）">🔄 刷新全部</button>
-	  <label style="color:#eee;cursor:pointer;user-select:none;margin-left:8px;">
+  <span class="tb-sep"></span>
+  <span id="psStatus"><span class="dot"></span><span id="psStatusText">PS 空闲</span><span id="psBarWrap" class="psbar-wrap"><span id="psBar" class="psbar"></span></span></span>
+	  <span class="cnt" id="cnt">{len(projects)} 款</span>
+  </div>
+  <div class="tb-row">
+	  <label style="color:#eee;cursor:pointer;user-select:none;">
 	    <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)" style="width:18px;height:18px;accent-color:#4CAF50;vertical-align:middle;"> 全选
 	  </label>
-	  <button onclick="batchRembg()" id="batchBtn" style="cursor:pointer;background:#ff9800;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>⚡ 批量去背 (0)</button>
-	  <button onclick="copyMissing()" title="复制当前日期缺图款号（缺AI图/缺去背）" style="background:#e91e63;">📋 复制缺图款号</button>
-	  <button onclick="batchSticker()" id="batchStickerBtn" title="批量贴图：单面款走模特图贴图，其它走平铺图贴图+BW合成，不处理黑版文件，不反相" style="cursor:pointer;background:#7b1fa2;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>📎 批量贴图 (0)</button>
-	  <button onclick="batchInvertRem('black')" id="batchInvertBtn" title="批量反黑：对选中款的所有B/W/BW去背图生成黑版专用图，并自动平铺图贴图+BW合成" style="cursor:pointer;background:#311b92;color:#fff;border:none;border-radius:4px;font-weight:bold;" disabled>🌑 批量反黑 (0)</button>
-	  <button onclick="batchInvertRem('white')" id="batchInvertWhiteBtn" title="批量反白：对选中款的所有B/W/BW去背图生成白版专用图，并自动平铺图贴图+BW合成" style="cursor:pointer;background:#9575cd;color:#000;border:none;border-radius:4px;font-weight:bold;" disabled>☀ 批量反白 (0)</button>
-	  <button onclick="copyNoSticker()" title="复制当前日期所有未生成成品的款号" style="background:#7b1fa2;">📋 复制缺贴图</button>
-	  <span id="psStatus"><span class="dot"></span><span id="psStatusText">PS 空闲</span><span id="psBarWrap" class="psbar-wrap"><span id="psBar" class="psbar"></span></span></span>
-	  <span class="cnt" id="cnt">{len(projects)} 款</span>
+	  <button onclick="batchRembg()" id="batchBtn" style="cursor:pointer;background:#ff9800;color:#fff;border:none;border-radius:4px;font-weight:bold;margin-left:0;" disabled>⚡ 批量去背 (0)</button>
+	  <button onclick="batchSticker()" id="batchStickerBtn" title="批量贴图：单面款走模特图贴图，其它走平铺图贴图+BW合成，不处理黑版文件，不反相" style="cursor:pointer;background:#7b1fa2;color:#fff;border:none;border-radius:4px;font-weight:bold;margin-left:0;" disabled>📎 批量贴图 (0)</button>
+	  <button onclick="batchInvertRem('black')" id="batchInvertBtn" title="批量反黑：对选中款的所有B/W/BW去背图生成黑版专用图，并自动平铺图贴图+BW合成" style="cursor:pointer;background:#311b92;color:#fff;border:none;border-radius:4px;font-weight:bold;margin-left:0;" disabled>🌑 批量反黑 (0)</button>
+	  <button onclick="batchInvertRem('white')" id="batchInvertWhiteBtn" title="批量反白：对选中款的所有B/W/BW去背图生成白版专用图，并自动平铺图贴图+BW合成" style="cursor:pointer;background:#9575cd;color:#000;border:none;border-radius:4px;font-weight:bold;margin-left:0;" disabled>☀ 批量反白 (0)</button>
+  <span class="tb-sep"></span>
+	  <button onclick="copyMissing()" title="复制当前日期缺图款号（缺AI图/缺去背）" style="background:#e91e63;margin-left:0;">📋 复制缺图款号</button>
+	  <button onclick="copyNoSticker()" title="复制当前日期所有未生成成品的款号" style="background:#7b1fa2;margin-left:0;">📋 复制缺贴图</button>
+  </div>
 	</div>
 	<div class="grid" id="grid">{cards_html}</div>
+<div id="rev" class="rev">
+  <div class="rev-top">
+    <span id="revDx" class="rev-dx"></span>
+    <span id="revName" class="rev-name"></span>
+    <span id="revCount" class="rev-count"></span>
+    <button class="rev-close" onclick="closeRev()" title="关闭 (Esc)">✕</button>
+  </div>
+  <div class="rev-main">
+    <button class="rev-arrow left" onclick="revStep(-1)" title="上一张 (←)">‹</button>
+    <div class="rev-stage" id="revStage"></div>
+    <button class="rev-arrow right" onclick="revStep(1)" title="下一张 (→)">›</button>
+  </div>
+  <div class="rev-strip" id="revStrip"></div>
+</div>
 <div id="toast" class="toast"></div>
 <div id="preview" class="preview"><img id="previewImg" src=""></div>
 <button id="backToTop" onclick="window.scrollTo({{top:0,behavior:'smooth'}});" title="回到顶部">⬆</button>
+  <script>var UP_FILES={up_files_json};var DX_ORDER={dx_order_json};</script>
   <script src="/check_rem.js?v={__version__}"></script></body></html>"""
 
     # JS 文件
@@ -2915,12 +2974,14 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 ts = int(f.stat().st_mtime)
                 label = self._up_label(f.name, dx)
                 safe_file = f.name.replace("'", "\\'")
+                rev_idx = len(self._up_files.setdefault(dx, []))
+                self._up_files[dx].append({"n": f.name, "t": ts, "l": label})
                 thumbs.append(
                     f'<div class="up-item" id="up-{dx}-{safe_file}">'
                     f'<div class="up-thumb cell">'
                     f'<button class="del" onclick="event.stopPropagation();delImg(\'{dx}\',\'up\',\'{safe_file}\',\'up-{dx}-{safe_file}\')" title="删除贴图成品">×</button>'
                     f'<button class="resticker" onclick="event.stopPropagation();resticker(\'{dx}\',\'{safe_file}\',\'up-{dx}-{safe_file}\')" title="重新贴图（仅本张）">↻</button>'
-                    f'<img src="/thumb?dx={dx}&kind=up&file={quote(f.name)}&t={ts}" onclick="openFolder(\'{dx}\',\'up\')" loading="lazy" decoding="async">'
+                    f'<img src="/thumb?dx={dx}&kind=up&file={quote(f.name)}&t={ts}" onclick="openRev(\'{dx}\',{rev_idx})" loading="lazy" decoding="async">'
                     f'</div>'
                     f'<div class="up-label" title="{f.name}">{label}</div>'
                     f'</div>'
@@ -2936,7 +2997,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             )
 
         gallery = '<div class="up-rows">' + ''.join(rows) + '</div>'
-        return f'<div class="upload-bar has-up"><div class="up-header"><span class="tag-up">\U0001f4ce \u5df2\u8d34\u56fe</span><span class="up-count">{len(files)} 张</span></div>{gallery}</div>'
+        return f'<div class="upload-bar has-up"><div class="up-header"><span class="tag-up">\U0001f4ce \u5df2\u8d34\u56fe</span><span class="up-count">{len(files)} 张</span><button class="rev-open" onclick="openRev(\'{dx}\',0)" title="全屏审图">🔍 审图</button></div>{gallery}</div>'
 
     def _up_group(self, name, dx):
         """根据文件名判断成品属于 BW / B / W / 其他（规则见 wb_naming.group_of）。"""

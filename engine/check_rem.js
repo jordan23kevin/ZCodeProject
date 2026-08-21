@@ -1,4 +1,4 @@
-/* check_rem.js — AI 去背 贴图 OS v2.2.6 (前端交互) */
+/* check_rem.js — AI 去背 贴图 OS v2.7.0 (前端交互) */
 function showToast(m){var t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',3500);}
 function toggleSelectAll(checked){
   document.querySelectorAll('.card').forEach(function(card){
@@ -485,3 +485,110 @@ document.addEventListener('DOMContentLoaded', function(){
     }
   });
 });
+/* ---- v2.7.0 成品全屏审图 ---- */
+var revState={dx:null,idx:0};
+function revFiles(){
+  return (UP_FILES[revState.dx]||[]).filter(function(f){return !f._deleted;});
+}
+function openRev(dx,fIdx){
+  var all=UP_FILES[dx]||[];
+  var list=all.filter(function(f){return !f._deleted;});
+  if(!list.length){showToast('该款没有可审阅的成品图');return;}
+  revState.dx=dx;
+  revState.idx=(fIdx>0&&all[fIdx]&&!all[fIdx]._deleted)?list.indexOf(all[fIdx]):0;
+  if(revState.idx<0)revState.idx=0;
+  renderRev();
+  document.getElementById('rev').classList.add('active');
+}
+function closeRev(){
+  revState.dx=null;
+  document.getElementById('rev').classList.remove('active');
+  document.getElementById('revStage').innerHTML='';
+}
+// 跨款移动：返回下/上一个有成品图的款，到尽头返回 null
+function revJump(d){
+  var pos=DX_ORDER.indexOf(revState.dx);
+  if(pos<0)return null;
+  var i=pos+d;
+  while(i>=0&&i<DX_ORDER.length){
+    var dx=DX_ORDER[i];
+    if((UP_FILES[dx]||[]).some(function(f){return !f._deleted;}))return dx;
+    i+=d;
+  }
+  return null;
+}
+function revStep(d){
+  var list=revFiles();
+  if(!list.length)return;
+  var ni=revState.idx+d;
+  if(ni>=0&&ni<list.length){revState.idx=ni;renderRev();return;}
+  var nd=revJump(d);
+  if(!nd){showToast(d>0?'已经是最后一款的最后一张':'已经是第一款的第一张');return;}
+  revState.dx=nd;
+  revState.idx=d>0?0:revFiles().length-1;
+  renderRev();
+}
+function revGo(i){revState.idx=i;renderRev();}
+function renderRev(){
+  var list=revFiles();
+  if(!list.length){closeRev();return;}
+  if(revState.idx>=list.length)revState.idx=list.length-1;
+  if(revState.idx<0)revState.idx=0;
+  var f=list[revState.idx];
+  var dx=revState.dx;
+  document.getElementById('revDx').textContent=dx;
+  document.getElementById('revName').textContent=f.l+' · '+f.n;
+  document.getElementById('revCount').textContent=(revState.idx+1)+' / '+list.length;
+  var safeFile=f.n.replace(/'/g,"\\'");
+  document.getElementById('revStage').innerHTML=
+    '<img src="/original?dx='+dx+'&kind=up&file='+encodeURIComponent(f.n)+'&t='+f.t+'">'
+    +'<button class="rev-restick" onclick="revResticker()" title="重新贴图（仅本张）">↻</button>'
+    +'<button class="rev-del" onclick="revDelete()" title="删除 '+f.n+'（送回收站，可撤销）">×</button>'
+    +'<span class="rev-cap">'+f.l+'</span>';
+  var html=list.map(function(it,i){
+    return '<img class="rev-thumb'+(i===revState.idx?' active':'')+'" src="/thumb?dx='+dx+'&kind=up&file='+encodeURIComponent(it.n)+'&t='+it.t+'" onclick="revGo('+i+')" loading="lazy" title="'+it.n+'">';
+  }).join('');
+  var strip=document.getElementById('revStrip');
+  strip.innerHTML=html;
+  var cur=strip.children[revState.idx];
+  if(cur&&cur.scrollIntoView)cur.scrollIntoView({inline:'center',block:'nearest'});
+}
+function revDelete(){
+  var list=revFiles();
+  if(!list.length)return;
+  var f=list[revState.idx];
+  var dx=revState.dx;
+  if(!confirm('删除 '+dx+'/up/'+f.n+' ？（送回收站，可撤销）'))return;
+  fetch('/del?dx='+dx+'&which=up&file='+encodeURIComponent(f.n)).then(function(r){return r.json();}).then(function(d){
+    showToast(d.msg);
+    if(d.ok){
+      f._deleted=true;
+      var item=document.getElementById('up-'+dx+'-'+f.n);
+      if(item)item.classList.add('deleted');
+      renderRev();
+    }
+  }).catch(function(e){showToast('❌ 请求失败: '+e);});
+}
+function revResticker(){
+  var list=revFiles();
+  if(!list.length)return;
+  var f=list[revState.idx];
+  var dx=revState.dx;
+  if(!confirm('重新贴图 '+dx+'/'+f.n+' ？\n仅重新生成这一张，不影响同款其他贴图。'))return;
+  showToast('⏳ 正在重新贴图 '+f.n+'…');
+  fetch('/resticker?dx='+dx+'&file='+encodeURIComponent(f.n)).then(function(r){return r.json();}).then(function(d){
+    showToast(d.msg);
+    if(d.ok){
+      f.t=Date.now();   // 破缓存
+      var item=document.getElementById('up-'+dx+'-'+f.n);
+      if(item){var img=item.querySelector('img');if(img)img.src=img.src.split('&t=')[0]+'&t='+f.t;}
+      renderRev();
+    }
+  }).catch(function(e){showToast('❌ 重新贴图请求失败：'+e);});
+}
+document.addEventListener('keydown',function(e){
+  if(!revState.dx)return;
+  if(e.key==='Escape'){e.stopPropagation();closeRev();}
+  else if(e.key==='ArrowLeft')revStep(-1);
+  else if(e.key==='ArrowRight')revStep(1);
+},true);
