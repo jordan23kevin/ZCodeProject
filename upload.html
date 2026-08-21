@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.3</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.4</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -39,8 +39,9 @@
   .dxname:hover{text-decoration:underline}
   .pcount{color:#888;font-size:14px;margin-left:auto}
   .up-gallery{padding:12px 14px 8px}
-  /* v2.5.3 展开=原位展开（卡不挪位），卡内两行横向图流 */
-  .up-gallery-flow{display:grid;grid-template-rows:repeat(2,auto);grid-auto-flow:column;grid-auto-columns:140px;gap:12px;overflow-x:auto;padding:6px 2px 10px}
+  /* v2.5.4 展开=卡不动，图流搬到卡后独立全宽带（两行横向大图） */
+  .gal-band{grid-column:1/-1;background:#1b1b1b;border:1px solid #333;border-radius:10px}
+  .up-gallery-flow{display:grid;grid-template-rows:repeat(2,auto);grid-auto-flow:column;grid-auto-columns:230px;gap:14px;overflow-x:auto;padding:12px 14px 14px}
   .up-item{display:flex;flex-direction:column;align-items:center}
   .up-thumb{width:100%;aspect-ratio:4/5;height:auto;border-radius:8px;overflow:hidden;background:#fff;cursor:pointer;position:relative;border:1px solid #333}
   .up-thumb .thumb-badge{position:absolute;top:4px;left:4px;font-size:12px;padding:1px 7px;border-radius:4px;z-index:5;opacity:.92}
@@ -103,7 +104,7 @@
 </style>
 </head>
 <body>
-<h1>WB 上款 <span class="v">v2.5.3</span></h1>
+<h1>WB 上款 <span class="v">v2.5.4</span></h1>
 <div class="toolbar">
   <select id="dateSel" onchange="switchDate(this.value)">
     <option value="">全部日期</option>
@@ -396,12 +397,37 @@ function buildCard(p){
     +'</div>';
 }
 
-function toggleGallery(dx,btn){
+/* v2.5.4 展开状态持久化：renderCards 轮询重建后自动恢复展开 */
+var EXPANDED={};
+function expandGallery(dx,scroll){
+  var card=document.getElementById('card-'+dx);
   var g=document.getElementById('gal-'+dx);
-  if(!g)return;
-  var open=g.style.display!=='none';
-  g.style.display=open?'none':'block';
-  if(btn)btn.textContent=open?'▸ 展开':'▾ 收起';
+  if(!card||!g)return;
+  var band=document.getElementById('gband-'+dx);
+  if(!band){
+    band=document.createElement('div');
+    band.className='gal-band';
+    band.id='gband-'+dx;
+    card.parentNode.insertBefore(band,card.nextSibling);
+  }
+  g.style.display='block';
+  band.appendChild(g);
+  var btn=card.querySelector('.card-actions button:nth-child(2)');
+  if(btn)btn.textContent='▾ 收起';
+  if(scroll&&band.scrollIntoView)band.scrollIntoView({block:'nearest'});
+}
+function collapseGallery(dx){
+  var card=document.getElementById('card-'+dx);
+  var g=document.getElementById('gal-'+dx);
+  var band=document.getElementById('gband-'+dx);
+  if(card&&g){g.style.display='none';card.appendChild(g);}
+  if(band)band.parentNode.removeChild(band);
+  var btn=card&&card.querySelector('.card-actions button:nth-child(2)');
+  if(btn)btn.textContent='▸ 展开';
+}
+function toggleGallery(dx,btn){
+  if(EXPANDED[dx]){delete EXPANDED[dx];collapseGallery(dx);}
+  else{EXPANDED[dx]=1;expandGallery(dx,true);}
 }
 
 /* ---- v2.5.0 全屏审图模式 ---- */
@@ -543,6 +569,7 @@ function renderCards(){
   document.getElementById('cnt').textContent=(pending.length+completed.length)+' 款';
   bindPreview();
   updateUploadBtn();
+  for(var ex in EXPANDED){if(EXPANDED[ex])expandGallery(ex,false);}
 }
 
 function filterCards(){renderCards();}
