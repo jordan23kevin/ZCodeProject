@@ -1,12 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.6.3
+Y2 Bridge Server v2.6.4
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.6.4：
+  - 修复 /api/open「📂 打开文件夹」对卫衣（HX 前缀）报"参数非法"：原正则写死 ^DX...，
+    且目录固定 PROJECTS_DIR（D:\Semems WB）。改走 _upload_cat_guard + _dx_re(ctx["prefix"])，
+    按 ?cat= 路由到对应品类 02_PROJECTS（hoodie→D:\Semems Hoodie），wb 行为不变。
 
 变更 v2.6.3：
   - /api/batch-upload 启动前先自动清理仍在运行的旧 wb_listing.py 进程（_kill_stale_wb_listing，
@@ -3871,13 +3876,16 @@ def _open_folder_front(folder_path: Path):
 
 @app.route('/api/open')
 def api_open_dx():
-    """打开指定 DX 的子文件夹（ai/rem/up）"""
+    """打开指定款的子文件夹（ai/rem/up）；?cat= 缺省 wb，卫衣走 D:\\Semems Hoodie"""
+    cat, ctx, err = _upload_cat_guard()
+    if err:
+        return err
     dx = request.args.get("dx", "")
     which = request.args.get("which", "")
-    if not re.match(r"^DX\d+(?:BW|B|W)?$", dx) or which not in ("ai", "rem", "up"):
+    if not _dx_re(ctx["prefix"]).match(dx) or which not in ("ai", "rem", "up"):
         return jsonify({"ok": False, "error": "参数非法"}), 400
     sub = {"ai": "01_AI", "rem": "02_REM_BG", "up": "03_UPLOAD"}[which]
-    folder = PROJECTS_DIR / dx / sub
+    folder = ctx["projects"] / dx / sub
     if folder.exists():
         _open_folder_front(folder)
         return jsonify({"ok": True})
