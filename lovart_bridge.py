@@ -7308,6 +7308,156 @@ def api_activity_select():
     return jsonify({"success": True, "message": f"已提交 {len(selected)} 个活动，继续执行", "themes": selected})
 
 
+# ============================================================================
+# 商品信息同步（报活动前置：抓取最新商品信息，用户指定页数）
+# ============================================================================
+ACTIVITY_SYNC_SCRIPT = ACTIVITY_DIR + '/sync_products.py'
+ACTIVITY_SYNC_RESULT = ACTIVITY_DIR + '/state/product_sync/latest_sync_result.json'
+
+sync_task = {
+    "status": "idle",          # idle | running | completed | error
+    "started_at": None,
+    "completed_at": None,
+    "proc": None,
+    "log": [],
+    "log_index": 0,
+}
+sync_lock = threading.Lock()
+
+
+def _sync_log_reader(proc):
+    """后台线程：读取同步脚本 stdout/stderr 写入 sync_task 日志。"""
+    def _read_stream(stream, kind):
+        try:
+            for raw in iter(stream.readline, b""):
+                line = None
+                for enc in ("utf-8", "gbk", "gb2312"):
+                    try:
+                        line = raw.decode(enc, errors="strict").rstrip("\r\n")
+                        break
+                    except Exception:
+                        continue
+                if line is None:
+                    line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                if not line:
+                    continue
+                with sync_lock:
+                    sync_task["log"].append(line)
+        except Exception:
+            pass
+
+    try:
+        _read_stream(proc.stdout, "out")
+        _read_stream(proc.stderr, "err")
+    finally:
+        rc = proc.wait()
+        for t in (proc.stdout, proc.stderr):
+            try:
+                t.close()
+            except Exception:
+                pass
+        with sync_lock:
+            if sync_task["status"] == "running":
+                sync_task["status"] = "completed" if rc == 0 else "error"
+            sync_task["completed_at"] = datetime.now().isoformat()
+            sync_task["proc"] = None
+
+
+@app.route('/api/activity/sync-products', methods=['POST'])
+def api_activity_sync_products():
+    """启动商品信息同步（报活动前置：抓最新商品信息，可指定页数）。"""
+    data = request.get_json(silent=True) or {}
+    pages = str(data.get("pages") or "").strip() or "5"
+
+    with sync_lock:
+        if sync_task.get("status") == "running" and sync_task.get("proc") and sync_task["proc"].poll() is None:
+            return jsonify({"success": False, "message": "商品信息同步已在运行，请等待完成"}), 409
+        sync_task["status"] = "running"
+        sync_task["started_at"] = datetime.now().isoformat()
+        sync_task["completed_at"] = None
+        sync_task["log"] = [f"[{datetime.now().strftime('%H:%M:%S')}] 启动: 商品信息同步 (页 {pages})"]
+        sync_task["log_index"] = 0
+
+    if not os.path.exists(ACTIVITY_SYNC_SCRIPT):
+        with sync_lock:
+            sync_task["status"] = "error"
+            sync_task["completed_at"] = datetime.now().isoformat()
+        return jsonify({"success": False, "message": f"同步脚本不存在: {ACTIVITY_SYNC_SCRIPT}"}), 404
+
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        proc = subprocess.Popen(
+            [get_python(), ACTIVITY_SYNC_SCRIPT, "--pages", pages],
+            cwd=ACTIVITY_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=1,
+            env=env,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except Exception as e:
+        with sync_lock:
+            sync_task["status"] = "error"
+            sync_task["completed_at"] = datetime.now().isoformat()
+            sync_task["proc"] = None
+        return jsonify({"success": False, "message": f"启动同步脚本失败: {e}"}), 500
+
+    with sync_lock:
+        sync_task["proc"] = proc
+    threading.Thread(target=_sync_log_reader, args=(proc,), daemon=True).start()
+    return jsonify({"success": True, "message": f"已启动商品信息同步（{pages} 页）"})
+
+
+@app.route('/api/activity/sync-status')
+def api_activity_sync_status():
+    """获取商品信息同步状态（增量日志 + 结果汇总）。"""
+    with sync_lock:
+        idx = sync_task.get("log_index", 0)
+        all_logs = sync_task.get("log", [])
+        logs = all_logs[idx:]
+        sync_task["log_index"] = len(all_logs)
+
+        elapsed = 0
+        if sync_task.get("status") == "running" and sync_task.get("started_at"):
+            try:
+                elapsed = int((datetime.now() - datetime.fromisoformat(sync_task["started_at"])).total_seconds())
+            except Exception:
+                pass
+
+        result = None
+        try:
+            if os.path.exists(ACTIVITY_SYNC_RESULT):
+                result = json.loads(Path(ACTIVITY_SYNC_RESULT).read_text(encoding="utf-8"))
+        except Exception:
+            result = None
+
+        return jsonify({
+            "status": sync_task.get("status", "idle"),
+            "started_at": sync_task.get("started_at"),
+            "completed_at": sync_task.get("completed_at"),
+            "elapsed_sec": elapsed,
+            "log": logs,
+            "result": result,
+        })
+
+
+@app.route('/api/activity/sync-download')
+def api_activity_sync_download():
+    """下载商品信息同步生成的 Excel。"""
+    filename = request.args.get("file", "").strip()
+    if not filename:
+        return jsonify({"error": "请指定文件名"}), 400
+    filename = os.path.basename(filename)
+    if not filename.endswith(".xlsx"):
+        return jsonify({"error": "仅支持 .xlsx 文件"}), 400
+    path = Path(ACTIVITY_DIR) / "state" / "product_sync" / filename
+    if not path.exists():
+        return jsonify({"error": "文件不存在"}), 404
+    return send_file(str(path), as_attachment=True, download_name=filename)
+
+
 @app.route('/retail_price')
 def retail_price_page():
     """Temu 建议零售价填写页面。"""

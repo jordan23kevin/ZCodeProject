@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Temu 报活动 v4.1.3</title>
+<title>Temu 报活动 v4.3.0</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px;min-height:100vh}
@@ -47,17 +47,42 @@
   .log-box .line.error{color:#f87171}
 
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:14px 26px;border-radius:8px;font-size:16px;display:none;z-index:999;max-width:80%}
+
+  /* ===== 活动勾选面板 ===== */
+  #selectPanel{display:none;border-color:#9e6a03}
+  #selectPanel.submitted{opacity:.75}
+  .sel-actions{margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .sel-actions button{padding:7px 14px;font-size:14px;border-radius:5px;border:1px solid #555;background:#2a2a2a;color:#eee;cursor:pointer;font-weight:600}
+  .sel-actions button:hover:not(:disabled){background:#333}
+  .sel-actions button:disabled{opacity:.45;cursor:not-allowed}
+  .sel-actions .btn-go{background:#4CAF50;color:#fff;border:none}
+  .sel-actions .btn-go:hover:not(:disabled){background:#388e3c}
+  .sel-hint{color:#f7c843;font-size:14px}
+  .sel-list{max-height:340px;overflow-y:auto;border:1px solid #333;border-radius:6px;background:#0d0d0d}
+  .sel-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid #222;cursor:pointer;font-size:14px}
+  .sel-row:hover{background:#1c1c1c}
+  .sel-row input{width:17px;height:17px;accent-color:#4CAF50;flex-shrink:0;cursor:pointer}
+  .sel-row .nm{flex:1;color:#eee}
+  .sel-row .meta{color:#888;font-size:13px;white-space:nowrap}
+  .sel-row .disc{color:#7ee787;font-weight:700;white-space:nowrap}
 </style>
 </head>
 <body>
-<h1>Temu 报活动 <span class="v">v4.1.3</span></h1>
+<h1>Temu 报活动 <span class="v">v4.3.0</span></h1>
 
 <div class="toolbar">
   <button class="btn-green" onclick="startActivity('/api/activity/start')" id="btnStart">🚀 启动报活动</button>
   <button class="btn-red" onclick="stopActivity()" id="btnStop" disabled>⏹ 停止</button>
+  <span style="display:inline-block;width:10px"></span>
+  <input type="text" id="syncPages" placeholder="页数 如 5 或 1-3" title="获取最新商品信息页数（每页50商品）；留空=默认5页" style="width:110px;padding:11px 10px;font-size:15px;border-radius:5px;border:1px solid #555;background:#2a2a2a;color:#eee">
+  <button class="btn-green" onclick="startSyncProducts()" id="btnSync">📥 获取最新商品信息</button>
   <label>
     <input type="checkbox" id="autoScroll" checked style="width:16px;height:16px;accent-color:#4CAF50;vertical-align:middle"> 日志自动滚动
   </label>
+</div>
+<div id="syncResult" style="display:none;margin-bottom:14px;padding:10px 14px;border-radius:6px;background:#1e3a2a;border:1px solid #2e6b4f;color:#a8e6c1;font-size:14px">
+  📥 商品信息同步完成：<b id="syncSummary">-</b> &nbsp;
+  <a id="syncExcelLink" href="#" style="color:#6cc9ff" target="_blank">下载 Excel</a>
 </div>
 
 <div class="panel">
@@ -72,6 +97,19 @@
     <span>总耗时: <b id="totalElapsed" class="num">0s</b></span>
   </div>
   <div class="progress-bar-wrap"><div id="progressBar" class="progress-bar"></div></div>
+</div>
+
+<div class="panel" id="selectPanel">
+  <div class="panel-title">
+    <span>勾选要报名的活动（<span id="selCount">0</span>/<span id="selTotal">0</span>）</span>
+    <span class="sel-hint" id="selHint">⏳ 勾选后点「继续」</span>
+  </div>
+  <div class="sel-actions">
+    <button onclick="selAll(true)" id="btnSelAll">全选</button>
+    <button onclick="selAll(false)" id="btnSelNone">全不选</button>
+    <button class="btn-go" onclick="submitSelection()" id="btnContinue">▶ 继续</button>
+  </div>
+  <div class="sel-list" id="selList"></div>
 </div>
 
 <div class="panel">
@@ -140,6 +178,52 @@ function clearLog(){
   document.getElementById('logBox').innerHTML='';
 }
 
+// ── 商品信息同步（报活动前置：抓最新商品信息，可指定页数）──
+var syncTimer=null;
+function startSyncProducts(){
+  var pages=document.getElementById('syncPages').value.trim()||'5';
+  document.getElementById('syncResult').style.display='none';
+  document.getElementById('btnSync').disabled=true;
+  document.getElementById('btnSync').textContent='📥 同步中…';
+  fetch('/api/activity/sync-products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pages:pages})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(!d.success){showToast('❌ '+(d.message||'启动失败'));resetSyncBtn();return;}
+      showToast('✅ '+d.message);
+      if(syncTimer)clearInterval(syncTimer);
+      syncTimer=setInterval(pollSyncStatus,2000);
+      pollSyncStatus();
+    }).catch(function(e){showToast('❌ 请求失败: '+e);resetSyncBtn();});
+}
+function resetSyncBtn(){
+  document.getElementById('btnSync').disabled=false;
+  document.getElementById('btnSync').textContent='📥 获取最新商品信息';
+}
+function pollSyncStatus(){
+  fetch('/api/activity/sync-status').then(function(r){return r.json();}).then(function(d){
+    if(d.log && d.log.length){
+      d.log.forEach(function(l){appendLog(l,'sync');});
+    }
+    if(d.status==='running') return;
+    clearInterval(syncTimer);syncTimer=null;
+    if(d.status==='error'){
+      showToast('❌ 商品信息同步出错');
+      resetSyncBtn();
+      return;
+    }
+    if(d.status==='completed'){
+      var res=d.result||{};
+      document.getElementById('syncSummary').textContent=
+        (res.spu_count||0)+' 商品 / '+(res.color_count||0)+' 颜色 / '+(res.sku_count||0)+' SKU / '+(res.row_count||0)+' 行（'+(res.elapsed_sec||0)+'s）';
+      var link=document.getElementById('syncExcelLink');
+      link.href='/api/activity/sync-download?file='+encodeURIComponent(res.excel_name||'');
+      document.getElementById('syncResult').style.display='block';
+      showToast('✅ 商品信息同步完成');
+      resetSyncBtn();
+    }
+  }).catch(function(e){console.log('sync poll error',e);});
+}
+
 function startActivity(url){
   fetch(url||'/api/activity/start',{method:'POST',headers:{'Content-Type':'application/json'}})
     .then(function(r){return r.json();})
@@ -186,7 +270,84 @@ function renderSteps(current,completed){
   box.innerHTML=html;
 }
 
-var TOTAL_STEP_ESTIMATE=9;
+var TOTAL_STEP_ESTIMATE=10;
+
+/* ===== 活动勾选 ===== */
+var selSig='';        // 已渲染候选列表的签名（避免轮询重复渲染冲掉勾选）
+var selSubmitted=false;
+
+function renderCandidates(cands){
+  var sig=JSON.stringify(cands.map(function(c){return c.name;}));
+  if(sig===selSig) return;          // 列表没变，不重渲染（保住用户勾选）
+  selSig=sig;
+  var box=document.getElementById('selList');
+  box.innerHTML='';
+  cands.forEach(function(c){
+    var row=document.createElement('label');
+    row.className='sel-row';
+    row.innerHTML='<input type="checkbox" class="sel-cb" value="'
+      +c.name.replace(/"/g,'&quot;')+'">'
+      +'<span class="nm"></span>'
+      +'<span class="meta">'+c.start+' ~ '+c.end+' · '+c.days+'天</span>'
+      +'<span class="disc">'+c.discount+'折</span>';
+    row.querySelector('.nm').textContent=c.name;
+    row.querySelector('.sel-cb').addEventListener('change',updateSelCount);
+    box.appendChild(row);
+  });
+  document.getElementById('selTotal').textContent=cands.length;
+  updateSelCount();
+}
+
+function updateSelCount(){
+  var n=document.querySelectorAll('#selList .sel-cb:checked').length;
+  document.getElementById('selCount').textContent=n;
+}
+
+function selAll(on){
+  document.querySelectorAll('#selList .sel-cb').forEach(function(cb){cb.checked=on;});
+  updateSelCount();
+}
+
+function setSelectPanelDisabled(dis){
+  document.getElementById('btnSelAll').disabled=dis;
+  document.getElementById('btnSelNone').disabled=dis;
+  document.getElementById('btnContinue').disabled=dis;
+  document.querySelectorAll('#selList .sel-cb').forEach(function(cb){cb.disabled=dis;});
+}
+
+function submitSelection(){
+  var themes=[];
+  document.querySelectorAll('#selList .sel-cb:checked').forEach(function(cb){themes.push(cb.value);});
+  if(!themes.length){showToast('⚠️ 请先勾选至少 1 个活动');return;}
+  fetch('/api/activity/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({themes:themes})})
+    .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
+    .then(function(res){
+      if(!res.ok||!res.d.success){showToast('❌ '+(res.d.message||'提交失败'));return;}
+      selSubmitted=true;
+      document.getElementById('selectPanel').classList.add('submitted');
+      document.getElementById('selHint').textContent='✅ 已提交 '+themes.length+' 个活动，引擎继续执行中…';
+      setSelectPanelDisabled(true);
+      showToast('✅ '+res.d.message);
+    }).catch(function(e){showToast('❌ 请求失败: '+e);});
+}
+
+function updateSelectPanel(d){
+  var panel=document.getElementById('selectPanel');
+  if(d.waiting_select && d.candidates && d.candidates.length){
+    if(!selSubmitted){
+      document.getElementById('selHint').textContent='⏳ 勾选后点「继续」';
+      setSelectPanelDisabled(false);
+      panel.classList.remove('submitted');
+    }
+    renderCandidates(d.candidates);
+    panel.style.display='block';
+  }else{
+    panel.style.display='none';
+    selSig='';
+    selSubmitted=false;
+    panel.classList.remove('submitted');
+  }
+}
 
 function pollStatus(){
   fetch('/api/activity/status').then(function(r){return r.json();}).then(function(d){
@@ -202,14 +363,18 @@ function pollStatus(){
     }
 
     renderSteps(state.current_step,completed);
+    updateSelectPanel(d);
 
-    var total=Math.max(TOTAL_STEP_ESTIMATE,completed.length+(state.current_step?1:0));
+    var totalThemes=(state.meta&&state.meta.total_themes)||0;
+    // v4.5.0：总步数 = 16（列活动+勾选+准备阶段14步）+ 每活动2步（开抽屉+上传）；未知时按10步估算
+    var estimate=totalThemes?16+2*totalThemes:TOTAL_STEP_ESTIMATE;
+    var total=Math.max(estimate,completed.length+(state.current_step?1:0));
     var pct=Math.min(100,Math.round((completed.length+(state.current_step?0.5:0))/total*100));
     if(d.status==='completed') pct=100;
     document.getElementById('progressBar').style.width=pct+'%';
 
     if(d.status==='running'){
-      setStatus('running','运行中');
+      setStatus('running',d.waiting_select?'等待勾选活动':'运行中');
     }else if(d.status==='error'){
       setStatus('error','出错');
       stopPoll();
