@@ -1249,6 +1249,57 @@ def get_next_group_id(reg: dict) -> str:
     return f"G_{max_num + 1:05d}"
 
 
+def find_reusable_group(reg: dict, group_number: int, roles_md5: dict, projects_dir: Path = None):
+    """同组链接（生图点击时即建立）：编号 group_number 在注册表已有组时，判断本次文件能否并入旧组。
+
+    解决：同一设计的两半分批生图（先生 15W、再生 15B）旧逻辑每次都开新 group →
+    新 DX 文件夹 → 同设计被拆到两个文件夹（HX0137BW / HX0144B 事故）。
+
+    roles_md5: {角色: md5}（本组本次选中待生成的文件，角色=B/W/BW/WB）
+    组级判定（防 DX0455 式交叉污染——不同设计复用同编号绝不能合并）：
+      - 任一角色在旧组已存在且 MD5 不同 → 新设计复用编号 → 返回 None（开新组）；
+      - BW/WB 是双面完整图，自带两面，不可能是"后到的另一半"：仅当旧组角色集合
+        完全相同且 MD5 全同（同图重生成）才并入，其余一律开新组
+        （HX0065W 事故：13bw 新设计复用编号被并进 13W 的组）；
+      - 旧组缺本次某角色（后到的另一半）或全部角色 MD5 相同（同图重生）→ 并入旧组；
+      - 旧组未落过 dx_folder 或该文件夹已不在磁盘 → None（开了新组才能落新文件夹）。
+    多个候选旧组取最新创建的。返回 (gid, dx_folder) 或 (None, None)。
+    """
+    projects_dir = projects_dir or PROJECTS_DIR
+    FULL_SIDES = {"BW", "WB"}  # 双面完整图角色
+    candidates = {}  # gid -> {"roles": {role: md5}, "created": str, "dx_folder": str}
+    for md5_key, info in reg.get("images", {}).items():
+        if info.get("design_number") != group_number:
+            continue
+        gid = info.get("group_id") or ""
+        if not gid:
+            continue
+        c = candidates.setdefault(gid, {"roles": {}, "created": "", "dx_folder": ""})
+        c["roles"][info.get("role", "")] = md5_key
+        ginfo = reg.get("groups", {}).get(gid) or {}
+        c["created"] = ginfo.get("created", "")
+        c["dx_folder"] = ginfo.get("dx_folder", "")
+    if not candidates:
+        return None, None
+    # 最新创建的优先
+    for gid in sorted(candidates, key=lambda g: candidates[g]["created"], reverse=True):
+        c = candidates[gid]
+        dx = c["dx_folder"]
+        if not dx or not (projects_dir / dx).is_dir():
+            continue
+        if any(r in FULL_SIDES for r in roles_md5) or any(r in FULL_SIDES for r in c["roles"]):
+            # 涉及双面图：只有"同角色集合 + 同 MD5"的同图重生成才允许并入
+            if c["roles"] == roles_md5:
+                return gid, dx
+            continue
+        conflict = any(role in c["roles"] and c["roles"][role] != md5
+                       for role, md5 in roles_md5.items())
+        if conflict:
+            continue   # 同角色不同内容 = 新设计复用编号，绝不能并入
+        return gid, dx
+    return None, None
+
+
 # ---------------------------------------------------------------------------
 # 文件名自动大写（b→B, w→W）
 # ---------------------------------------------------------------------------
@@ -3557,15 +3608,41 @@ def api_upload_delete():
     target = ctx["projects"] / dx / "03_UPLOAD" / filename
     if not target.exists():
         return jsonify({"ok": False, "error": "文件不存在"}), 404
-    ok = send_to_recycle_bin(str(target))
-    if ok:
-        safe_name = re.sub(r'[\\/*?:"<>|]', '_', filename)
-        for tf in ctx["upload_thumb"].glob(f"{dx}__{safe_name}.*"):
-            try:
-                tf.unlink()
-            except Exception:
-                pass
-    return jsonify({"ok": ok, "msg": f"已送回收站: {filename}" if ok else "删除失败"})
+    # 同色联动删除：删一张某颜色 → 同款该颜色全部贴图（平铺/模特/BW合成）一起删
+    targets = [target]
+    try:
+        _engine_dir = str(BASE_DIR / "04_OS" / "engine")
+        if _engine_dir not in sys.path:
+            sys.path.insert(0, _engine_dir)
+        import wb_naming as _wbn
+        info = _wbn.classify(dx, filename)
+        if info and info.get("color"):
+            color = info["color"]
+            up_dir = ctx["projects"] / dx / "03_UPLOAD"
+            targets = [f for f in up_dir.iterdir()
+                       if f.is_file() and f.suffix.lower() in (".jpg", ".jpeg", ".png")
+                       and (_wbn.classify(dx, f.name) or {}).get("color") == color]
+            if target not in targets:
+                targets.append(target)
+    except Exception as e:
+        print(f"[upload/delete] 同色联动解析失败，退回单张删除: {e}")
+        targets = [target]
+    deleted = []
+    for t in targets:
+        if send_to_recycle_bin(str(t)):
+            deleted.append(t.name)
+            safe_name = re.sub(r'[\\/*?:"<>|]', '_', t.name)
+            for tf in ctx["upload_thumb"].glob(f"{dx}__{safe_name}.*"):
+                try:
+                    tf.unlink()
+                except Exception:
+                    pass
+    ok = len(deleted) == len(targets) and bool(deleted)
+    if len(deleted) > 1:
+        msg = f"已送回收站 {len(deleted)} 张（同色联动）: {', '.join(deleted[:6])}{'…' if len(deleted) > 6 else ''}"
+    else:
+        msg = f"已送回收站: {filename}" if deleted else "删除失败"
+    return jsonify({"ok": ok, "msg": msg, "deleted": deleted})
 
 
 def _read_completed_md():
@@ -4097,6 +4174,63 @@ def api_batch_upload():
         "removed": removed,
         "cache_removed": cache_removed,
     })
+
+
+@app.route('/api/upload/stop', methods=['POST'])
+def api_upload_stop():
+    """停止当前品类的上款任务：按 progress 里的 pid 终止 wb_listing.py 进程，
+    并复位 running 状态，让用户可以重新开始。
+    只杀 wb_listing 主进程（不 /T 连 Edge 一起杀——保留 Edge 登录态供下次复用）。
+    """
+    cat, _ctx, cat_err = _upload_cat_guard()
+    if cat_err:
+        return cat_err
+    pf = _upload_progress_file(cat)
+    pid = None
+    if pf.exists():
+        try:
+            pid = (json.loads(pf.read_text(encoding="utf-8")) or {}).get("pid")
+        except Exception:
+            pid = None
+
+    killed = []
+    if pid:
+        try:
+            r = subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                               capture_output=True, text=True, timeout=15)
+            if r.returncode == 0:
+                killed.append(f"进程 {pid}")
+            else:
+                killed.append(f"进程 {pid}（可能已退出: {r.stderr.strip()[:60]}）")
+        except Exception as e:
+            killed.append(f"进程 {pid} 终止异常: {e}")
+    else:
+        killed.append("progress 无 pid（任务可能已结束或为旧版本启动）")
+
+    # 复位 running，让用户可以重新开始
+    try:
+        now_iso = datetime.now().isoformat(timespec="seconds")
+        pf.write_text(json.dumps({
+            "running": False,
+            "pid": None,
+            "started_at": None,
+            "finished_at": now_iso,
+            "selected": [],
+            "pending": [],
+            "completed": [],
+            "failed": [],
+            "current": None,
+            "current_start": None,
+            "total_count": 0,
+            "done_count": 0,
+            "fail_count": 0,
+            "per_dx": {},
+            "updated_at": now_iso,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"复位进度文件失败: {e}"}), 500
+
+    return jsonify({"ok": True, "msg": f"已停止上款任务（{', '.join(killed)}），可以重新开始"})
 
 
 # ============================================================================
@@ -8830,6 +8964,8 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
 
         uid_map = {}       # filename → uid
         group_map = {}     # group_number → group_id
+        reused_groups = 0  # 并入已有组的次数（同组链接）
+        dx_join_map = {}   # filename → 已有 DX 文件夹名（并入旧组时传给 Lovart）
         matched = [g for g in inbox_groups
                    if any(f["filename"] in selected_set for f in g["images"])]
 
@@ -8837,25 +8973,31 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
         log(f"识别到 {len(matched)} 个图片组")
 
         for g in matched:
-            gid = get_next_group_id(reg)
+            # 同组链接：编号已有旧组且角色不冲突 → 并入旧组（后到的另一半进同一 DX 文件夹）；
+            # 角色冲突（同角色不同内容）= 新设计复用编号 → 开新组
+            sel_imgs = [img for img in g["images"] if img["filename"] in selected_set]
+            roles_md5 = {img["suffix"]: compute_md5(str(g_inbox / img["filename"])) for img in sel_imgs}
+            gid, join_dx = find_reusable_group(reg, g["group_number"], roles_md5, g_projects)
+            if gid:
+                log(f"🔗 同组链接: 编号 {g['group_number']} 并入已有组 {gid}（→ {join_dx}）")
+                reused_groups = reused_groups + 1
+            else:
+                gid = get_next_group_id(reg)
+                reg["groups"][gid] = {
+                    "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "images": [],
+                    "source_files": [],
+                    "dx_folder": "",
+                    "status": "pending",
+                }
             group_map[g["group_number"]] = gid
 
-            reg["groups"][gid] = {
-                "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "images": [],
-                "source_files": [],
-                "dx_folder": "",
-                "status": "pending",
-            }
-
-            for img in g["images"]:
+            for img in sel_imgs:
                 fname = img["filename"]
-                if fname not in selected_set:
-                    continue
 
                 uid = get_next_uid(reg, g_prefix)
                 uid_map[fname] = uid
-                md5_val = compute_md5(str(g_inbox / fname))
+                md5_val = roles_md5[img["suffix"]]
 
                 entry = {
                     "md5": md5_val,
@@ -8884,9 +9026,12 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
                 reg["groups"][gid]["images"].append(uid)
                 reg["groups"][gid]["source_files"].append(fname)
                 uid_map[fname] = uid
+                if join_dx:
+                    dx_join_map[fname] = join_dx
 
         save_registry(reg, g_registry)
-        log(f"已分配 {len(uid_map)} 个 UID，{len(group_map)} 个 group_id")
+        log(f"已分配 {len(uid_map)} 个 UID，{len(group_map)} 个 group_id" +
+            (f"（并入旧组 {reused_groups} 个）" if reused_groups else ""))
 
         # ── 1b. 写入 UID manifest ─────────────────
         try:
@@ -8939,6 +9084,10 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
         # 强制生成：用户点“开始 Lovart 生图”即明确要生图，忽略去重
         # （原图编号会复用, 每批从1开始, 否则正常生图会被旧记录误拦）
         env["LOVART_FORCE"] = "1"
+        # 同组链接：并入已有 DX 文件夹的映射（后到的另一半进同一文件夹，编号可复用）
+        if dx_join_map:
+            env["LOVART_DX_MAP"] = json.dumps(dx_join_map, ensure_ascii=False)
+            log(f"同组链接: {len(dx_join_map)} 个文件并入已有文件夹: {sorted(set(dx_join_map.values()))}")
         # 重新生图时使用统一提示词文件，并传入目标 DX 复用映射
         if task_id and task_id.startswith("TASK_REGEN_"):
             prompt_path = g_prompt

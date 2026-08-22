@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.4</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.5</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -104,7 +104,7 @@
 </style>
 </head>
 <body>
-<h1>WB 上款 <span class="v">v2.5.4</span></h1>
+<h1>WB 上款 <span class="v">v2.5.5</span></h1>
 <div class="toolbar">
   <select id="dateSel" onchange="switchDate(this.value)">
     <option value="">全部日期</option>
@@ -122,7 +122,9 @@
     <input type="checkbox" id="forceReupload" style="width:20px;height:20px;accent-color:#ff9800;vertical-align:middle;"> 强制重新上款
   </label>
   <button class="btn-upload" onclick="batchUpload()" id="uploadBtn" disabled>📤 批量上传 (0)</button>
+  <button onclick="stopUpload()" id="stopUploadBtn" title="停止正在运行的上款任务（终止进程并复位状态，可重新开始）" style="background:#e53935;display:none;">⏹ 停止上款</button>
   <button onclick="openRecycleBin()" title="打开系统回收站" style="background:#607d8b;">🗑 回收站</button>
+  <button onclick="toggleExpandAll()" id="expandAllBtn" title="展开/收起当前筛选下所有款的图流" style="background:#00897b;">⏬ 一键展开</button>
   <span class="cnt" id="cnt">0 款</span>
 </div>
 
@@ -206,12 +208,13 @@ function copyDx(dx){
 }
 
 function delUploadImg(btn,dx,file){
-  if(!confirm('删除 '+dx+'/'+file+' ？（送回收站，可撤销）'))return;
+  if(!confirm('删除 '+dx+'/'+file+' ？\n同款「同颜色」的所有贴图（平铺/模特/BW合成）会一起删除（送回收站，可撤销）'))return;
   fetch(withCat('/api/upload/delete'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx:dx,file:file})})
     .then(function(r){return r.json();})
     .then(function(d){
       showToast(d.msg||d.error||'未知结果');
       if(d.ok){
+        if(d.deleted && d.deleted.length){ applyLocalDelete(dx,d.deleted); return; }
         var item=btn.closest('.up-item');
         if(item) item.classList.add('deleted');
       }
@@ -236,12 +239,13 @@ var currentPending=[];
 function loadProjects(){
   document.getElementById('pendingGrid').innerHTML='<p class="empty">加载中…</p>';
   document.getElementById('completedGrid').innerHTML='<p class="empty">加载中…</p>';
-  fetch(withCat('/api/upload/projects')).then(function(r){return r.json();}).then(function(d){
+  fetch(withCat('/api/upload/projects'),{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
     if(d.ok===false&&d.error){
       document.getElementById('emptyState').innerHTML='<p class="empty">⚠️ '+d.error+'</p>';
       return;
     }
     allProjects=d.projects||[];
+    _lastFp=_projectsFp(allProjects);
     fillDateSel();
     return loadProgress();
   }).then(function(){
@@ -258,8 +262,57 @@ function loadProgress(){
   }).catch(function(e){console.log('progress load failed',e);});
 }
 
+// ── 自动刷新：每 4s 轮询，贴图数据（文件名/数量/mtime/在线状态）变了就重渲染 ──
+// 配合图片 URL 的源图 mtime 缓存戳，反黑/反白重贴图后无需 F5 即可看到新图。
+var _lastFp="";
+function _projectsFp(ps){
+  return ps.map(function(p){
+    return p.dx+":"+(p.online_listed?1:0)+":"+p.files.map(function(f){return f.name+"@"+f.mtime;}).join(",");
+  }).join("|");
+}
+// 重渲染但保住用户状态：勾选 / 滚动位置 / 审图（展开状态 renderCards 自带 EXPANDED 记忆）
+function rerenderKeepState(){
+  var checked={};
+  document.querySelectorAll('.dx-check:checked').forEach(function(c){checked[c.getAttribute('data-dx')]=1;});
+  var scrollY=window.scrollY;
+  fillDateSel();
+  renderCards();
+  document.querySelectorAll('.dx-check').forEach(function(c){
+    var dx=c.getAttribute('data-dx');
+    if(dx&&checked[dx])c.checked=true;
+  });
+  updateUploadBtn();
+  window.scrollTo(0,scrollY);
+  if(revState.dx)renderReviewer();   // 审图模式中也实时更新（自带越界钳制）
+}
+// 删除后本地抹除（不整页刷新）：从 allProjects 移除已删文件，空款整条移除，再就地重渲染
+function applyLocalDelete(dx,names){
+  var del={};names.forEach(function(n){del[n]=1;});
+  allProjects=allProjects.filter(function(p){
+    if(p.dx!==dx)return true;
+    p.files=p.files.filter(function(f){return !del[f.name];});
+    return p.files.length>0;
+  });
+  _lastFp=_projectsFp(allProjects);   // 同步指纹，避免 4s 轮询把这次删除当成"外部更新"再刷一次
+  rerenderKeepState();
+}
+function autoRefreshTick(){
+  fetch(withCat('/api/upload/projects'),{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
+    if(!d||d.ok===false)return;
+    var ps=d.projects||[];
+    var fp=_projectsFp(ps);
+    if(fp===_lastFp)return;
+    _lastFp=fp;
+    allProjects=ps;
+    rerenderKeepState();
+    showToast('🔄 检测到贴图更新，已自动刷新');
+  }).catch(function(){});
+}
+setInterval(autoRefreshTick,4000);
+
 function fillDateSel(){
   var sel=document.getElementById('dateSel');
+  var cur=sel.value;   // 自动刷新时保持用户当前选择的日期
   var dates={};
   allProjects.forEach(function(p){if(p.date)dates[p.date]=1;});
   var sortedDates=Object.keys(dates).sort().reverse();
@@ -268,7 +321,8 @@ function fillDateSel(){
     opts.push('<option value="'+dt+'">20'+dt.substr(0,2)+'-'+dt.substr(2,2)+'-'+dt.substr(4,2)+'</option>');
   });
   sel.innerHTML=opts.join('');
-  if(sortedDates.length>0){
+  if(cur && dates[cur]) sel.value=cur;
+  else if(sortedDates.length>0){
     sel.value=sortedDates[0];
   }
 }
@@ -334,7 +388,7 @@ function buildCard(p){
     if(!groups[g])return;
     var cls={'BW':'badge-bw','B':'badge-b','W':'badge-w'}[g]||'badge-other';
     groups[g].forEach(function(f){
-      var ts=f.thumb_mtime || f.mtime;
+      var ts=f.mtime;  // 缓存戳必须用源图 mtime：重贴图后源图变、缩略图还没重建，用 thumb_mtime 会让 URL 不变→浏览器直接用旧缓存
       var origTs=f.mtime;
       var safeFile=f.name.replace(/'/g,"\\'");
       var fIdx=files.indexOf(f);
@@ -366,7 +420,7 @@ function buildCard(p){
   _renderSeq++;
   var coverHtml;
   if(cover){
-    var cts=cover.thumb_mtime||cover.mtime;
+    var cts=cover.mtime;  // 同上：用源图 mtime 保证重贴图后 URL 必变
     var coverIdx=files.indexOf(cover);
     coverHtml='<div class="card-cover" onclick="openReviewer(\''+p.dx+'\','+coverIdx+')" title="点击进入审图模式">'
       +'<img src="'+withCat('/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(cover.name)+'&t='+cts)+'" loading="lazy" decoding="async">'
@@ -428,6 +482,24 @@ function collapseGallery(dx){
 function toggleGallery(dx,btn){
   if(EXPANDED[dx]){delete EXPANDED[dx];collapseGallery(dx);}
   else{EXPANDED[dx]=1;expandGallery(dx,true);}
+  syncExpandAllBtn();
+}
+/* v2.5.5 一键展开/收起当前筛选下的所有款 */
+function toggleExpandAll(){
+  if(!DX_ORDER.length)return;
+  var all=DX_ORDER.every(function(dx){return EXPANDED[dx];});
+  if(all){
+    DX_ORDER.forEach(function(dx){ delete EXPANDED[dx]; collapseGallery(dx); });
+  }else{
+    DX_ORDER.forEach(function(dx){ EXPANDED[dx]=1; expandGallery(dx,false); });
+  }
+  syncExpandAllBtn();
+}
+function syncExpandAllBtn(){
+  var btn=document.getElementById('expandAllBtn');
+  if(!btn)return;
+  var all=DX_ORDER.length>0 && DX_ORDER.every(function(dx){return EXPANDED[dx];});
+  btn.textContent=all?'⏫ 一键收起':'⏬ 一键展开';
 }
 
 /* ---- v2.5.0 全屏审图模式 ---- */
@@ -505,7 +577,7 @@ function renderReviewer(){
   }).join('');
   document.getElementById('revGrid').innerHTML=ghtml;
   var html=list.map(function(it,i){
-    var ts=it.thumb_mtime||it.mtime;
+    var ts=it.mtime;  // 同上：用源图 mtime 保证重贴图后 URL 必变
     var act=(i>=revState.idx&&i<revState.idx+3)?' active':'';
     return '<img class="rev-thumb'+act+'" src="'
       +withCat('/api/upload/thumb?dx='+dx+'&file='+encodeURIComponent(it.name)+'&t='+ts)
@@ -522,12 +594,13 @@ function revDelete(sub){
   var f=list[revState.idx+(sub||0)];
   if(!f)return;
   var dx=revState.dx;
-  if(!confirm('删除 '+dx+'/'+f.name+' ？（送回收站，可撤销）'))return;
+  if(!confirm('删除 '+dx+'/'+f.name+' ？\n同款「同颜色」的所有贴图会一起删除（送回收站，可撤销）'))return;
   fetch(withCat('/api/upload/delete'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx:dx,file:f.name})})
     .then(function(r){return r.json();})
     .then(function(d){
       showToast(d.msg||d.error||'未知结果');
       if(d.ok){
+        if(d.deleted && d.deleted.length){ applyLocalDelete(dx,d.deleted); return; }
         f._deleted=true;   // 本地标记，审图继续；展开视图下次渲染时也会带上 deleted 样式
         renderReviewer();
       }
@@ -570,6 +643,7 @@ function renderCards(){
   bindPreview();
   updateUploadBtn();
   for(var ex in EXPANDED){if(EXPANDED[ex])expandGallery(ex,false);}
+  syncExpandAllBtn();
 }
 
 function filterCards(){renderCards();}
@@ -724,8 +798,16 @@ function startPolling(){
   },2000);
 }
 
+function stopPolling(){
+  if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
+}
+
 function updateProgressPanel(){
   var panel=document.getElementById('progressPanel');
+  var running=!!(progressData && progressData.running);
+  // 停止按钮联动：任务运行中显示「⏹ 停止上款」
+  var stopBtn=document.getElementById('stopUploadBtn');
+  if(stopBtn){ stopBtn.style.display=running?'inline-block':'none'; }
   if(!progressData || (!progressData.running && (!progressData.selected || !progressData.selected.length))){
     panel.classList.remove('active');
     return;
@@ -804,6 +886,30 @@ function batchUpload(){
     }).catch(function(e){
       showToast('❌ 请求失败: '+e);
       btn.textContent='📤 批量上传 (0)';btn.disabled=false;
+    });
+}
+
+// 停止上款：终止当前品类的上款进程并复位状态，可重新开始
+function stopUpload(){
+  if(!confirm('确定停止上款？\n将终止正在运行的上款进程，已上款成功的款保留记录，未上款的可以重新开始。'))return;
+  var btn=document.getElementById('stopUploadBtn');
+  btn.disabled=true;btn.textContent='⏹ 停止中…';
+  showToast('⏳ 正在停止上款…');
+  fetch(withCat('/api/upload/stop'),{method:'POST'})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      btn.disabled=false;btn.textContent='⏹ 停止上款';
+      showToast(d.ok?('✅ '+d.msg):('❌ '+(d.error||'停止失败')));
+      if(d.ok){
+        setTimeout(function(){
+          btn.style.display='none';
+          stopPolling&&stopPolling();
+          loadProgress();
+        },500);
+      }
+    }).catch(function(e){
+      btn.disabled=false;btn.textContent='⏹ 停止上款';
+      showToast('❌ 停止请求失败: '+e);
     });
 }
 
