@@ -279,6 +279,10 @@ _SCAN_DISK_CACHE_TTL = 3600  # 1 小时
 # Photoshop 任务锁：同一时刻只跑一套贴图/BW 任务，防止多线程同时操作 PS
 _PS_TASK_LOCK = threading.Lock()
 
+# 贴图停止旗标：前端「⏹ 停止贴图」按钮置位；_run_sticker_task 每款之间检查，
+# 并通过 should_stop 传给 run_mockup_jobs 杀光 white_t_mockup worker 进程
+_MOCKUP_STOP = threading.Event()
+
 # Photoshop / 后台任务状态摘要（供 Web 页面轮询）
 _PS_STATUS = {
     "running": False,
@@ -1721,6 +1725,8 @@ class Handler(BaseHTTPRequestHandler):
             self._ps_status()
         elif path == "/ps-sticker":
             self._ps_sticker(dx)
+        elif path == "/ps-sticker-stop":
+            self._ps_sticker_stop()
         elif path == "/ps-batch":
             self._ps_batch(dx)
         elif path == "/upscale-rem":
@@ -2187,7 +2193,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 	  <button onclick="filterCards()" style="cursor:pointer;background:#4CAF50;color:#fff;border:none;border-radius:4px;margin-left:0;">🔍 搜索</button>
   <button onclick="fetch('/refresh').then(function(r){{return r.json();}}).then(function(d){{showToast(d.msg);setTimeout(function(){{location.reload();}},500);}}).catch(function(){{location.reload();}});" title="重新扫描全部（自动跳过未变更的缩略图）">🔄 刷新全部</button>
   <span class="tb-sep"></span>
-  <span id="psStatus"><span class="dot"></span><span id="psStatusText">PS 空闲</span><span id="psBarWrap" class="psbar-wrap"><span id="psBar" class="psbar"></span></span></span>
+  <span id="psStatus"><span class="dot"></span><span id="psStatusText">PS 空闲</span><span id="psBarWrap" class="psbar-wrap"><span id="psBar" class="psbar"></span></span><button id="psStopBtn" onclick="stopSticker()" title="停止当前贴图任务：正在贴的那张会贴完/终止，剩余款不再处理" style="cursor:pointer;background:#c62828;color:#fff;border:none;border-radius:4px;font-weight:bold;font-size:12px;padding:2px 8px;margin-left:6px;">⏹ 停止贴图</button></span>
 	  <span class="cnt" id="cnt">{len(projects)} 款</span>
   </div>
   <div class="tb-row">
@@ -2382,7 +2388,11 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             _REMBG_STATE["token"] = token
         # 启动后台 worker（最小化控制台窗口），HTTP 立即返回
         worker = Path(__file__).parent / "_rembg_worker.py"
-        proc = run_minimized([sys.executable, str(worker), dx, file, token], wait=False)
+        # 品类参数透传：worker 子进程没有 --cat/--port 时 _parse_cat_port 会落到默认
+        # wb/8766（T恤根）→ 卫衣单张去背在 T恤 根找不到图 → 美图不启动（2026-08-22 bug）
+        proc = run_minimized(
+            [sys.executable, str(worker), "--cat", _CAT, "--port", str(_PORT), dx, file, token],
+            wait=False)
         with _REMBG_STATE_LOCK:
             _REMBG_STATE["worker_proc"] = proc
         if forced:
@@ -2867,6 +2877,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         results = []
         acquired = False
         task_name = "批量平铺图贴图" if len(dx_list) > 1 else "平铺图贴图"
+        _MOCKUP_STOP.clear()  # 新任务开始前复位停止旗标
         try:
             acquired = _PS_TASK_LOCK.acquire(blocking=True, timeout=-1)
             if not acquired:
@@ -2875,7 +2886,14 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             _set_ps_status(True, task_name, "", f"0/{len(dx_list)}", f"共 {len(dx_list)} 款: {', '.join(dx_list)}")
             print(f"\n[PS任务] 开始{task_name}，共 {len(dx_list)} 款: {', '.join(dx_list)}", flush=True)
             job_sink = []  # 单面款模特图贴图任务：全部款规划完后批量执行（多 worker 常驻进程）
+            stopped = False
             for idx, dx in enumerate(dx_list, 1):
+                if _MOCKUP_STOP.is_set():
+                    stopped = True
+                    for rest_dx in dx_list[idx - 1:]:
+                        results.append((rest_dx, False, "已手动停止"))
+                    print(f"[PS任务] 收到停止指令，剩余 {len(dx_list) - idx + 1} 款跳过", flush=True)
+                    break
                 _set_ps_status(True, task_name, dx, f"{idx}/{len(dx_list)}", f"正在处理 {dx}")
                 try:
                     ok, msg = Handler._run_one_sticker(dx, skip_black=skip_black, job_sink=job_sink, only_color=only_color)
@@ -2887,7 +2905,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 status = "✅" if ok else "❌"
                 print(f"  {status} {dx}: {msg}", flush=True)
             # 批量执行所有单面款贴图任务并按款回填结果
-            if job_sink:
+            if job_sink and not stopped:
                 _set_ps_status(True, task_name, "", "批量贴图执行中", f"共 {len(job_sink)} 张")
                 print(f"[PS任务] 批量执行模特图贴图，共 {len(job_sink)} 张...", flush=True)
                 from w_mockup_extra import run_mockup_jobs
@@ -2895,7 +2913,8 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 def _mockup_progress(done, total):
                     _set_ps_status(True, task_name, "", f"{done}/{total}", f"模特图贴图 {done}/{total} 张")
 
-                exec_res = run_mockup_jobs(job_sink, on_progress=_mockup_progress)
+                exec_res = run_mockup_jobs(job_sink, on_progress=_mockup_progress,
+                                           should_stop=_MOCKUP_STOP.is_set)
                 _set_ps_status(True, task_name, "", "回填结果中", "")
                 per_dx = {}
                 for job, jok, err in exec_res:
@@ -2914,8 +2933,13 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                     if ok2:
                         Handler._register_uploads(dx)
                     print(f"  {'✅' if ok2 else '❌'} {dx}: {msg2}", flush=True)
-            _set_ps_status(True, task_name, "", f"{len(dx_list)}/{len(dx_list)}", "全部完成")
-            print(f"[PS任务] 全部完成\n", flush=True)
+            stopped = stopped or _MOCKUP_STOP.is_set()
+            if stopped:
+                _set_ps_status(True, task_name, "", "", "已手动停止")
+                print(f"[PS任务] 已手动停止\n", flush=True)
+            else:
+                _set_ps_status(True, task_name, "", f"{len(dx_list)}/{len(dx_list)}", "全部完成")
+                print(f"[PS任务] 全部完成\n", flush=True)
         finally:
             if acquired:
                 # 贴图流水线已是纯软件（PIL），不再使用 Photoshop，故不再执行退出 PS 的清理，
@@ -2965,6 +2989,12 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         import threading
         threading.Thread(target=_run_and_register, daemon=True).start()
         self._send_json({"ok": True, "msg": f"已启动 BW合成: {dx}，后台运行中"})
+
+    # 停止贴图：置位停止旗标，运行中的批量任务在每款之间/worker 层面尽快停下
+    def _ps_sticker_stop(self):
+        _MOCKUP_STOP.set()
+        print("[PS任务] 收到前端停止指令", flush=True)
+        self._send_json({"ok": True, "msg": "已发送停止指令，正在停止…"})
 
     # 返回当前 PS / 后台任务状态摘要
     def _ps_status(self):

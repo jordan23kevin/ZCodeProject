@@ -29,14 +29,23 @@ def main():
     log_path, log_f = _setup_logging()
     print(f"[_rembg_worker] 日志: {log_path}", flush=True)
 
-    if len(sys.argv) < 3:
-        print("用法: _rembg_worker.py <DX> <ai_file>", flush=True)
+    # 品类参数透传：check_rem.py 模块级 _parse_cat_port() 从 sys.argv 解析 --cat/--port
+    # 决定 WB_ROOT（8766→D:\Semems WB、8767→D:\Semems Hoodie）。worker 由 /rembg 端点
+    # 启动时已把 --cat/--port 放在参数前部（见 check_rem._rembg），此处只需解析出位置参数。
+    import argparse
+    _ap = argparse.ArgumentParser(add_help=False)
+    _ap.add_argument("--cat")
+    _ap.add_argument("--port")
+    _ns, rest = _ap.parse_known_args()
+
+    if len(rest) < 2:
+        print("用法: _rembg_worker.py [--cat wb|hoodie] [--port N] <DX> <ai_file> [token]", flush=True)
         log_f.close()
         return 1
 
-    dx = sys.argv[1]
-    ai_file = sys.argv[2]
-    token = sys.argv[3] if len(sys.argv) > 3 else None
+    dx = rest[0]
+    ai_file = rest[1]
+    token = rest[2] if len(rest) > 2 else None
     lock = TEMP_REMBG / ".rembg_lock"
 
     try:
