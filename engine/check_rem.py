@@ -1069,8 +1069,11 @@ def batch_rembg(dx_files):
             _old_rem_prefix = os.environ.get("REM_PREFIX")
             os.environ["REM_PREFIX"] = PREFIX
             try:
+                # v3.7: 传 --only 白名单（本次勾选款号），美图只处理这些款，
+                # 防 TEMP_REMBG 历史残留被全扫误处理（用户报"没勾选的款也被去背"）。
+                only_arg = ["--only", ",".join(sorted({dx for dx, *_ in staged}))]
                 proc = run_minimized(
-                    [sys.executable, str(MEITU_SCRIPT), "--skip-precheck"],
+                    [sys.executable, str(MEITU_SCRIPT), "--skip-precheck"] + only_arg,
                     cwd=str(MEITU_SCRIPT.parent),
                     stdout=_lf, stderr=subprocess.STDOUT, timeout=10800,
                 )
