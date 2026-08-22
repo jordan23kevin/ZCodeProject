@@ -295,8 +295,20 @@ _PS_STATUS = {
 _PS_STATUS_LOCK = threading.Lock()
 
 
+# 全局进度分数兜底：心跳（"运行中 · BW合成 5s"）/排队等状态本身不带 x/y，
+# 没它进度条会掉线。凡写过分数进度就记住，后续非分数进度自动回退显示最近一次分数。
+_PS_FRAC = {"idx": 0, "total": 0}
+
+
 def _set_ps_status(running=False, task="", current_dx="", progress="", detail=""):
     """更新 PS / 后台任务状态，detail 可包含更详细的说明。"""
+    progress = progress or ""
+    stripped = progress.strip()
+    if re.fullmatch(r"\d+/\d+", stripped):
+        _PS_FRAC["idx"], _PS_FRAC["total"] = map(int, stripped.split("/"))
+    elif running and _PS_FRAC["total"] > 0:
+        # 非分数进度（"运行中"/"排队任务"/"批量贴图执行中"…）→ 回退为最近分数，进度条不掉
+        progress = f"{_PS_FRAC['idx']}/{_PS_FRAC['total']}"
     with _PS_STATUS_LOCK:
         _PS_STATUS["running"] = running
         _PS_STATUS["task"] = task
@@ -308,6 +320,8 @@ def _set_ps_status(running=False, task="", current_dx="", progress="", detail=""
 
 def _clear_ps_status():
     """清空 PS / 后台任务状态。"""
+    _PS_FRAC["idx"] = 0
+    _PS_FRAC["total"] = 0
     _set_ps_status(False, "", "", "", "")
 
 
@@ -2361,18 +2375,37 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         if not _ID_RE.match(dx) or "/" in file or "\\" in file:
             self._send_json({"ok": False, "msg": "参数非法"}); return
         sub = "01_AI" if which == "ai" else "02_REM_BG" if which == "rem" else "03_UPLOAD"
-        target = BASE / dx / sub / file
+        up_dir = BASE / dx / sub
+        target = up_dir / file
         if not target.exists():
             self._send_json({"ok": False, "msg": f"{file} 不存在"}); return
-        ok = send_to_recycle_bin(str(target))
-        # 删除关联缩略图缓存
-        for tf in THUMB_DIR.glob(f"{dx}__{which}__{file}.*"):
-            try: tf.unlink()
-            except Exception: pass
-        if ok:
+        # 贴图成品同色联动删除：删一张某颜色 → 同款该颜色全部贴图（B/W面平铺+模特+BW合成）一起删
+        targets = [target]
+        if which not in ("ai", "rem"):
+            info = wb_naming.classify(dx, file)
+            if info and info.get("color"):
+                color = info["color"]
+                targets = [f for f in up_dir.iterdir()
+                           if f.is_file() and f.suffix.lower() in (".jpg", ".jpeg", ".png")
+                           and (wb_naming.classify(dx, f.name) or {}).get("color") == color]
+                if target not in targets:
+                    targets.append(target)
+        deleted = []
+        for t in targets:
+            if send_to_recycle_bin(str(t)):
+                deleted.append(t.name)
+                # 删除关联缩略图缓存
+                for tf in THUMB_DIR.glob(f"{dx}__{which}__{t.name}.*"):
+                    try: tf.unlink()
+                    except Exception: pass
+        if deleted:
             _invalidate_scan_cache()
-        msg = f"已送回收站: {file}" if ok else "删除失败"
-        self._send_json({"ok": ok, "msg": msg})
+        ok = len(deleted) == len(targets) and bool(deleted)
+        if len(deleted) > 1:
+            msg = f"已送回收站 {len(deleted)} 张（同色联动）: {', '.join(deleted[:6])}{'…' if len(deleted) > 6 else ''}"
+        else:
+            msg = f"已送回收站: {file}" if deleted else "删除失败"
+        self._send_json({"ok": ok, "msg": msg, "deleted": deleted})
 
     # 重新去背（针对单张 AI 图）
     # HTTP 立即返回，美图在新控制台窗口异步跑；worker 负责同步逻辑 + 释放锁。
@@ -2911,7 +2944,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
                 print(f"  {status} {dx}: {msg}", flush=True)
             # 批量执行所有单面款贴图任务并按款回填结果
             if job_sink and not stopped:
-                _set_ps_status(True, task_name, "", "批量贴图执行中", f"共 {len(job_sink)} 张")
+                _set_ps_status(True, task_name, "", f"0/{len(job_sink)}", f"批量贴图执行中，共 {len(job_sink)} 张")
                 print(f"[PS任务] 批量执行模特图贴图，共 {len(job_sink)} 张...", flush=True)
                 from w_mockup_extra import run_mockup_jobs
 
@@ -3416,15 +3449,16 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         prefix = dx  # DX0264
         # 文件夹跟随：改名后文件夹后缀与文件角色保持一致——B↔W↔BW 任意方向都跟随，
         # 变体名（黑B5/BW2/白W 等）按基础角色算（剥掉 黑/白 前缀和版本号，WB 归一为 BW）。
-        # 例：DX3428B 改成 _BW → 文件夹变 DX3428BW；DX2276BW 改成 _W → 文件夹变 DX2276W
-        m_fold = re.match(r"^DX(\d+)(BW|B|W)?$", dx)
+        # 例：DX3428B 改成 _BW → 文件夹变 DX3428BW；DX2276BW 改成 _W → 文件夹变 DX2276W；
+        #     HX0058BW 改成 _B → 文件夹变 HX0058B（2026-08-22 修复：原正则写死 DX，HX 不跟随）
+        m_fold = re.match(rf"^{PREFIX}(\d+)(BW|B|W)?$", dx)
         m_trole = re.match(r"^[黑白]?(BW|WB|B|W)\d*$", target)
         t_role = m_trole.group(1) if m_trole else None
         if t_role == "WB":
             t_role = "BW"
         folder_follow = None
         if t_role and m_fold and (m_fold.group(2) or "") != t_role:
-            cand = f"DX{m_fold.group(1)}{t_role}"
+            cand = f"{PREFIX}{m_fold.group(1)}{t_role}"
             if cand != dx:
                 if (BASE / cand).exists():
                     self._send_json({"ok": False, "msg": f"目标文件夹 {cand} 已存在，未改名"}); return
