@@ -7313,6 +7313,7 @@ def api_activity_select():
 # ============================================================================
 ACTIVITY_SYNC_SCRIPT = ACTIVITY_DIR + '/sync_products.py'
 ACTIVITY_SYNC_RESULT = ACTIVITY_DIR + '/state/product_sync/latest_sync_result.json'
+ACTIVITY_GO_SIGNAL = ACTIVITY_DIR + '/go.signal'  # 用户『好了』信号（与核价同机制）
 
 sync_task = {
     "status": "idle",          # idle | running | completed | error
@@ -7365,9 +7366,14 @@ def _sync_log_reader(proc):
 
 @app.route('/api/activity/sync-products', methods=['POST'])
 def api_activity_sync_products():
-    """启动商品信息同步（报活动前置：抓最新商品信息，可指定页数）。"""
+    """启动商品信息同步（报活动前置：自动开 Edge → 等『好了』→ 抓最新商品信息，可指定页范围）。"""
     data = request.get_json(silent=True) or {}
-    pages = str(data.get("pages") or "").strip() or "5"
+    start_pg = data.get("start")
+    end_pg = data.get("end")
+    pages = str(data.get("pages") or "").strip() or "1-5"
+
+    if start_pg is not None and end_pg is not None:
+        pages = f"{int(start_pg)}-{int(end_pg)}"
 
     with sync_lock:
         if sync_task.get("status") == "running" and sync_task.get("proc") and sync_task["proc"].poll() is None:
@@ -7383,6 +7389,13 @@ def api_activity_sync_products():
             sync_task["status"] = "error"
             sync_task["completed_at"] = datetime.now().isoformat()
         return jsonify({"success": False, "message": f"同步脚本不存在: {ACTIVITY_SYNC_SCRIPT}"}), 404
+
+    # 清除上一轮残留的 go.signal，避免旧信号被立即消费
+    try:
+        if os.path.exists(ACTIVITY_GO_SIGNAL):
+            os.remove(ACTIVITY_GO_SIGNAL)
+    except Exception as e:
+        print(f"[activity sync] 清除 go.signal 失败: {e}", flush=True)
 
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
@@ -7407,7 +7420,19 @@ def api_activity_sync_products():
     with sync_lock:
         sync_task["proc"] = proc
     threading.Thread(target=_sync_log_reader, args=(proc,), daemon=True).start()
-    return jsonify({"success": True, "message": f"已启动商品信息同步（{pages} 页）"})
+    return jsonify({"success": True, "message": f"已启动商品信息同步（{pages} 页），请在 Edge 确认上新页面后点『好了』"})
+
+
+@app.route('/api/activity/sync-signal', methods=['POST'])
+def api_activity_sync_signal():
+    """创建 go.signal 文件，通知同步脚本用户已在 Edge 确认上新页面。"""
+    try:
+        os.makedirs(os.path.dirname(ACTIVITY_GO_SIGNAL), exist_ok=True)
+        with open(ACTIVITY_GO_SIGNAL, "w", encoding="utf-8") as f:
+            f.write("go")
+        return jsonify({"ok": True, "msg": "已发送『好了』信号，开始获取商品信息"})
+    except Exception as e:
+        return jsonify({"error": f"创建 signal 文件失败: {e}"}), 500
 
 
 @app.route('/api/activity/sync-status')
