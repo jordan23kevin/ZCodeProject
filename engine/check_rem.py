@@ -884,6 +884,9 @@ def rembg_one_file(dx, ai_file):
     cfg["paths"]["DST_OAI"] = str(BASE)                  # 写回 BASE/DX/02_REM_BG
     cfg["paths"]["DST_SAVE"] = str(WB_ROOT / "_temp_rembg" / "save")
     cfg["paths"]["DST_ARCHIVE"] = str(WB_ROOT / "_temp_rembg" / "archive")
+    # 品类 TRACK 注入：美图脚本 _DEFAULTS["TRACK"] 写死 T恤 根（D:/Semems WB/.meitu_track.json），
+    # 不改这里卫衣的 md5 追踪会串到 T恤 track → 卫衣图被误判"已处理"跳过（HX0065W 案例 2026-08-22）
+    cfg["paths"]["TRACK"] = str(MEITU_TRACK)
     (WB_ROOT / "_temp_rembg" / "save").mkdir(parents=True, exist_ok=True)
     (WB_ROOT / "_temp_rembg" / "archive").mkdir(parents=True, exist_ok=True)
     MEITU_CONFIG.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -1041,6 +1044,8 @@ def batch_rembg(dx_files):
     cfg["paths"]["DST_OAI"] = str(BASE)
     cfg["paths"]["DST_SAVE"] = str(WB_ROOT / "_temp_rembg" / "save")
     cfg["paths"]["DST_ARCHIVE"] = str(WB_ROOT / "_temp_rembg" / "archive")
+    # 品类 TRACK 注入：防止卫衣 md5 追踪串到 T恤 track（HX0065W 案例 2026-08-22）
+    cfg["paths"]["TRACK"] = str(MEITU_TRACK)
     (WB_ROOT / "_temp_rembg" / "save").mkdir(parents=True, exist_ok=True)
     (WB_ROOT / "_temp_rembg" / "archive").mkdir(parents=True, exist_ok=True)
     MEITU_CONFIG.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
