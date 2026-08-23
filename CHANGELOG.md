@@ -1,5 +1,14 @@
 # Y2 一体化控制系统 — 更新日志
 
+## bridge v2.7.2 / upload.html v2.5.8b (2026-08-24) — 重贴后整页刷新根因：upload.html 浏览器缓存
+
+- **问题**：用户反馈"重贴后还是会整页刷新"——v2.5.8 已把完成路径改成 `refreshDxImages` 局部刷新，但 `upload_page` 用 `send_file` 默认 Last-Modified 条件缓存，**浏览器一直用旧版 JS**（v2.5.7 及更早的 `loadProjects()` 整卡重建逻辑）。
+- **修复**：
+  - bridge v2.7.2：`/upload` 页面响应加 `Cache-Control: no-store, no-cache, must-revalidate, max-age=0` + `Pragma: no-cache`，强制每次拿最新 upload.html。
+  - upload.html v2.5.8b：`autoRefreshTick`（4s 轮询）从「指纹变→整卡重建 `rerenderKeepState`」改为「指纹变→找出变化的款→逐款 `refreshDxImages` 局部刷图」；新增 `regenCard(dx)` 单卡重建（新增/删除文件时用，保勾选/展开/滚动，不整页）。
+- **验证**：curl `/upload` 响应头含 no-store；重贴 HX0164BW 前后文件集合不变（40→40），完成路径只换 img src。
+- ⚠️ 用户侧：强刷一次（Ctrl+F5）拿到新 JS 后，后续贴图只刷变化图片。
+
 ## upload.html v2.5.8 (2026-08-24) — 重贴/反相完成后只刷新变化图片，不再整页重建
 
 - **需求**：重新贴图后 WB 上款不要整页刷新，只刷新有变化的图片。

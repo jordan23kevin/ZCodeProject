@@ -1,12 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.7.1
+Y2 Bridge Server v2.7.2
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.7.2（2026-08-24）：
+  - /upload 页面（upload.html）send_file 加 Cache-Control: no-store——原默认 Last-Modified
+    条件缓存让浏览器复用旧版 JS，「重贴后只刷变化图片」（upload.html v2.5.8）不生效，
+    用户仍看到整页刷新。
 
 变更 v2.7.1（2026-08-23）：
   - /api/upload/resticker 的 color 参数改为可选：不带 color = 整款全部重新贴图
@@ -3494,7 +3499,12 @@ def upload_page():
     """上款页面：展示 03_UPLOAD 成品并批量上传"""
     html_file = Path(__file__).parent / "upload.html"
     if html_file.exists():
-        return send_file(str(html_file))
+        # v2.7.2 no-cache：send_file 默认带 Last-Modified 条件缓存，浏览器会用旧版 JS，
+        # 导致"重贴后整页刷新"修复（v2.5.8 refreshDxImages 局部刷新）不生效。
+        resp = make_response(send_file(str(html_file)))
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        return resp
     return "<h1>upload.html not found</h1>", 404
 
 
