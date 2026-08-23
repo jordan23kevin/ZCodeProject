@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.8c</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.8d</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -521,13 +521,11 @@ function refreshDxImages(dx){
       for(var i=0;i<old.length;i++){if(old[i].name!==nf[i].name){namesChanged=true;break;}}
     }
     if(namesChanged){ regenCard(dx); return; }
-    // 只更新 mtime 变化的 img src（v2.5.8c：去掉"src 已含该 t 则跳过"判断——
-    // mtime 改成 float 毫秒精度后基本不会撞 t，但快速连击/手动调 src 等场景仍可能撞，
-    // 强制更新让浏览器走 thumb 缓存验证（ETag 304 或后端 thumb mtime>src mtime 返回新 thumb），
-    // 避免显示旧图）
+    // 只更新 mtime 变化的 img src（v2.5.8d：选择器同时覆盖卡片内 + 展开带 gband——
+    // expandGallery 会把 gal 从卡片挪到兄弟节点 gband-<dx>，仅查 #card- 匹配不到展开区）
     var mtimes={}; nf.forEach(function(f){mtimes[f.name]=f.mtime;});
     var changed=0;
-    document.querySelectorAll('#card-'+dx+' img[data-file]').forEach(function(img){
+    document.querySelectorAll('#card-'+dx+' img[data-file], #gband-'+dx+' img[data-file]').forEach(function(img){
       var fn=decodeURIComponent(img.getAttribute('data-file'));
       if(!(fn in mtimes))return;
       var t=mtimes[fn];
@@ -602,23 +600,28 @@ function buildCard(p){
   var order=IS_HOODIE?HOODIE_COLORS.concat(['其他']):['BW','B','W','其他'];
   // v2.5.1 展开区：按颜色顺序平铺成"两行横向大图流"，每图左上角带色徽
   var items=[];
+  var bwShared=!!p.bw_shared;  // BW 款 B/W 同一张贴图（源图 {dx}_BW_cut.png，无独立 B/W cut）
+  var invSeen={};  // ⚡反相按钮（卡级去重）：BW共用→每色仅第1张图1个；B+W分开→B面/W面每色第1张各1个
   order.forEach(function(g){
     if(!groups[g])return;
     var cls={'BW':'badge-bw','B':'badge-b','W':'badge-w'}[g]||'badge-other';
-    var sideSeen={};  // 组内 B/W/BW 各面第一张才放 ⚡（B+W 两张图时两面都可反相；BW 单张仍只一个）
     groups[g].forEach(function(f){
       var ts=f.mtime;  // 缓存戳必须用源图 mtime：重贴图后源图变、缩略图还没重建，用 thumb_mtime 会让 URL 不变→浏览器直接用旧缓存
       var origTs=f.mtime;
       var safeFile=f.name.replace(/'/g,"\\'");
       var fIdx=files.indexOf(f);
-      // ⚡ 反相按钮：B 面第一张、W 面第一张、BW 第一张各自放一个，点击反相重贴该图颜色
+      // ⚡ 反相按钮：BW共用→该色第一张图（反相 {dx}_BW_cut.png）；B+W分开→该色 B面/W面第一张（各反相 {dx}_B/W_cut.png）
       var side=extractSide(f.name,p.dx);
-      var sideKey=(side==='BW'||side==='B'||side==='W')?side:'';
-      var isFirstOfSide=sideKey&&!sideSeen[sideKey];
-      if(sideKey)sideSeen[sideKey]=true;
       var invColor=extractColor(f.name,p.dx);
-      var invertHtml=(isFirstOfSide&&invColor&&!f._deleted)
-        ?'<button class="invert-btn" title="色级反相：只反相'+side+'面源图（'+side+'_cut.png）生成'+invColor+'色专用贴图，只重贴'+invColor+'（同反黑/反白逻辑）" onclick="event.stopPropagation();runInvert(\''+p.dx+'\',\''+side+'\',\''+invColor+'\')">⚡</button>'
+      var invSide='',invKey='';
+      if(invColor&&!f._deleted){
+        if(bwShared){invSide='BW';invKey=invColor;}
+        else if(side==='B'||side==='W'){invSide=side;invKey=invColor+':'+side;}
+      }
+      var isInvertFirst=invKey&&!invSeen[invKey];
+      if(invKey)invSeen[invKey]=true;
+      var invertHtml=isInvertFirst
+        ?'<button class="invert-btn" title="色级反相：反相'+invSide+'面源图（'+invSide+'_cut.png）生成'+invColor+'色专用贴图，只重贴'+invColor+'（同反黑/反白逻辑）" onclick="event.stopPropagation();runInvert(\''+p.dx+'\',\''+invSide+'\',\''+invColor+'\')">⚡</button>'
         :'';
       // 🔄 重新贴图：每组颜色第一张图（原图重贴该色组，不反相）
       var isGroupFirst=(f===groups[g][0]&&!f._deleted);

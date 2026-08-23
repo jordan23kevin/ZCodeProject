@@ -1,5 +1,12 @@
 # Y2 一体化控制系统 — 更新日志
 
+## upload.html v2.5.8d (2026-08-24) — 展开图流不刷新的修复：refreshDxImages 选择器覆盖 gband
+
+- **问题**：用户反馈 v2.5.8c 后"审图页面刷新成新图了，但展开页面还是旧图"。
+- **根因**：`expandGallery` 会把 `gal-<dx>` 从卡片 `#card-<dx>` 挪到兄弟节点 `#gband-<dx>`（全宽带），`refreshDxImages` 的选择器只查 `#card-<dx> img[data-file]`——**匹配不到展开图流里的 img**。审图模式因 `renderReviewer()` 全量重建所以刷新了，展开区漏掉。
+- **修复**：选择器改为 `#card-<dx> img[data-file], #gband-<dx> img[data-file]`（同时覆盖卡片内 + 展开带）。
+- 验证：JS 语法 OK，gband 选择器确认存在。
+
 ## bridge v2.7.3 / upload.html v2.5.8c (2026-08-24) — "图片也没刷新"根因：mtime 秒级截断
 
 - **问题**：用户反馈 v2.5.8 局部刷新后"图片也没有刷新"——refreshDxImages 不更新 img src。
