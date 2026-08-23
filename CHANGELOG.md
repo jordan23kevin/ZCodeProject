@@ -1,5 +1,14 @@
 # Y2 一体化控制系统 — 更新日志
 
+## bridge v2.7.3 / upload.html v2.5.8c (2026-08-24) — "图片也没刷新"根因：mtime 秒级截断
+
+- **问题**：用户反馈 v2.5.8 局部刷新后"图片也没有刷新"——refreshDxImages 不更新 img src。
+- **根因**：`/api/upload/projects` 返回的 `files[].mtime` 用 `int(st_mtime)` 截断到**秒**——同秒内快速重贴（mtime 整数秒值相同）→ 前端 `refreshDxImages` 的 "src 已含该 t 则跳过" 判断命中 → img src 不更新 → 浏览器不重新加载 → 显示旧图。实测实际文件 mtime 是 `1787503925.6302`（float 毫秒），但 API 返回 `1787503925`（丢失小数）。
+- **修复**：
+  - bridge v2.7.3：`/api/upload/projects` 返回的 mtime 改用 float 秒（保留毫秒精度），同秒重贴也能区分。
+  - upload.html v2.5.8c：`refreshDxImages` 去掉"src 已含 t 则跳过"判断（兜底强制刷新，thumb 有 ETag/304 保护，无重贴时也无下载开销）。
+- **验证**：实测 mtime from API 改为 `1787503925.6302452`（float）；刷新页面后重贴同秒图片会刷新。
+
 ## bridge v2.7.2 / upload.html v2.5.8b (2026-08-24) — 重贴后整页刷新根因：upload.html 浏览器缓存
 
 - **问题**：用户反馈"重贴后还是会整页刷新"——v2.5.8 已把完成路径改成 `refreshDxImages` 局部刷新，但 `upload_page` 用 `send_file` 默认 Last-Modified 条件缓存，**浏览器一直用旧版 JS**（v2.5.7 及更早的 `loadProjects()` 整卡重建逻辑）。

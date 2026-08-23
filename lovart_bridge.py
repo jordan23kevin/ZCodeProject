@@ -1,12 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.7.2
+Y2 Bridge Server v2.7.3
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.7.3（2026-08-24）：
+  - /api/upload/projects 返回的 files[].mtime 改用 float 秒（毫秒精度），原来是 int 截断到秒——
+    同秒内快速重贴时 mtime 整数秒值相同，前端 refreshDxImages 的"src 已含 t 则跳过"
+    判断命中，导致 img src 不更新、浏览器不重新加载、显示旧图。修后 mtime 用 float
+    （如 1787503925.63），同秒重贴也能区分。
 
 变更 v2.7.2（2026-08-24）：
   - /upload 页面（upload.html）send_file 加 Cache-Control: no-store——原默认 Last-Modified
@@ -1704,9 +1710,9 @@ def _scan_upload_projects(projects_dir: Path = None, prefix: str = "DX", thumb_d
             ext = f.suffix.lower()
             if ext not in ('.png', '.jpg', '.jpeg', '.webp'):
                 continue
-            src_mtime = int(f.stat().st_mtime)
+            src_mtime = f.stat().st_mtime
             thumb = _upload_thumb_path(dx, f.name, thumb_dir=thumb_dir)
-            thumb_mtime = int(thumb.stat().st_mtime) if thumb.exists() else src_mtime
+            thumb_mtime = thumb.stat().st_mtime if thumb.exists() else src_mtime
             files.append({"name": f.name, "mtime": src_mtime, "thumb_mtime": thumb_mtime})
         if not files:
             continue
@@ -1772,7 +1778,7 @@ def _scan_ai_review_projects(projects_dir: Path = None, prefix: str = "DX"):
                 continue
             all_files.append(f.name)
             try:
-                file_mtimes[f.name] = int(f.stat().st_mtime)
+                file_mtimes[f.name] = f.stat().st_mtime  # float 秒（毫秒精度），避免同秒重贴 mtime 撞车导致前端跳过刷新
             except Exception:
                 file_mtimes[f.name] = 0
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.8b</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.8c</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -511,29 +511,32 @@ function refreshDxImages(dx){
     if(!np)return;
     var old=DX_FILES[dx]||[];
     var nf=np.files||[];
+    // 先同步新数据（regenCard / img 更新都依赖最新 allProjects 与 mtime）
+    allProjects=d.projects;
+    _lastFp=_projectsFp(allProjects);
+    DX_FILES[dx]=nf;
     // 文件名集合变了 → 只重建该款卡片（保勾选/展开/滚动），不整页
     var namesChanged = old.length!==nf.length;
     if(!namesChanged){
       for(var i=0;i<old.length;i++){if(old[i].name!==nf[i].name){namesChanged=true;break;}}
     }
     if(namesChanged){ regenCard(dx); return; }
-    // 只更新 mtime 变化的 img src
+    // 只更新 mtime 变化的 img src（v2.5.8c：去掉"src 已含该 t 则跳过"判断——
+    // mtime 改成 float 毫秒精度后基本不会撞 t，但快速连击/手动调 src 等场景仍可能撞，
+    // 强制更新让浏览器走 thumb 缓存验证（ETag 304 或后端 thumb mtime>src mtime 返回新 thumb），
+    // 避免显示旧图）
     var mtimes={}; nf.forEach(function(f){mtimes[f.name]=f.mtime;});
     var changed=0;
     document.querySelectorAll('#card-'+dx+' img[data-file]').forEach(function(img){
       var fn=decodeURIComponent(img.getAttribute('data-file'));
       if(!(fn in mtimes))return;
       var t=mtimes[fn];
-      // src 已含该 t= 则跳过（未变化）
-      if(img.getAttribute('src').indexOf('&t='+t)>=0 || img.getAttribute('src').indexOf('?t='+t)>=0)return;
       img.setAttribute('src', withCat('/api/upload/thumb?dx='+encodeURIComponent(dx)+'&file='+encodeURIComponent(fn)+'&t='+t));
       changed++;
     });
-    // 同步指纹 + DX_FILES 缓存，避免 4s 自动刷新再整卡重建
-    allProjects=d.projects;
-    _lastFp=_projectsFp(allProjects);
-    DX_FILES[dx]=nf;
     if(changed>0)showToast('🔄 已刷新 '+changed+' 张变化图片');
+    // 审图模式打开时同步重建（大图/胶片条用 DX_FILES 最新 mtime 重新生成 URL）
+    if(revState.dx===dx)renderReviewer();
   }).catch(function(){});
 }
 
