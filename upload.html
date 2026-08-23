@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.5</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.6</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -49,6 +49,10 @@
   .up-thumb:hover img{transform:scale(1.05)}
   .up-thumb .del-overlay{position:absolute;top:4px;right:4px;width:26px;height:26px;background:#e53935;color:#fff;border:none;border-radius:4px;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:5}
   .up-thumb .del-overlay:hover{background:#b71c1c}
+  .up-thumb .invert-btn{position:absolute;bottom:4px;right:4px;width:30px;height:30px;background:#7b1fa2;color:#fff;border:none;border-radius:50%;font-size:15px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:5;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+  .up-thumb .invert-btn:hover{background:#9c27b0}
+  .up-thumb .resticker-btn{position:absolute;bottom:4px;left:4px;width:30px;height:30px;background:#00897b;color:#fff;border:none;border-radius:50%;font-size:15px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:5;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+  .up-thumb .resticker-btn:hover{background:#26a69a}
   .up-item.deleted{opacity:.3}
   .up-label{color:#aaa;font-size:15px;margin-top:7px;text-align:center;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .badge{display:inline-block;font-size:13px;font-weight:bold;padding:3px 9px;border-radius:4px;margin-right:5px}
@@ -66,6 +70,8 @@
   .card-cover img{width:100%;height:100%;object-fit:contain;transition:transform .2s;display:block}
   .card-cover:hover img{transform:scale(1.03)}
   .card-cover .cover-count{position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.68);color:#fff;font-size:13px;padding:3px 10px;border-radius:11px}
+  .card-cover .cover-resticker{position:absolute;top:8px;right:8px;width:34px;height:34px;background:#e65100;color:#fff;border:none;border-radius:50%;font-size:16px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:6;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+  .card-cover .cover-resticker:hover{background:#f57c00}
   .card-cover .cover-empty{display:flex;align-items:center;justify-content:center;height:100%;color:#bbb;font-size:15px}
   .color-dots{display:flex;gap:6px;flex-wrap:wrap;padding:10px 14px 0}
   .color-dot{width:15px;height:15px;border-radius:50%;border:1px solid #666}
@@ -122,6 +128,7 @@
     <input type="checkbox" id="forceReupload" style="width:20px;height:20px;accent-color:#ff9800;vertical-align:middle;"> 强制重新上款
   </label>
   <button class="btn-upload" onclick="batchUpload()" id="uploadBtn" disabled>📤 批量上传 (0)</button>
+  <button class="btn-upload" onclick="apiUpload()" id="apiUploadBtn" title="纯接口上款：不操作浏览器，直接调店小秘接口建品+传图+发布（需要标题已生成过；快，每款约1分钟）" style="background:#7b1fa2;">⚡ API 上款</button>
   <button onclick="stopUpload()" id="stopUploadBtn" title="停止正在运行的上款任务（终止进程并复位状态，可重新开始）" style="background:#e53935;display:none;">⏹ 停止上款</button>
   <button onclick="openRecycleBin()" title="打开系统回收站" style="background:#607d8b;">🗑 回收站</button>
   <button onclick="toggleExpandAll()" id="expandAllBtn" title="展开/收起当前筛选下所有款的图流" style="background:#00897b;">⏬ 一键展开</button>
@@ -361,6 +368,124 @@ function formatDuration(sec){
   return h+'h '+m+'m';
 }
 
+// ── 色级反相（反黑/反白/反<色>）：每组 B/W/BW 各面第一张成品图上的 ⚡ 按钮，点击直接反相重贴该图颜色 ──
+function extractColor(name,dx){
+  // 从成品文件名提取 10 色之一（卫衣/T恤通用）：DX0650_W白T.jpg→白、HX0117BW_白BW.jpg→白、_黑X→黑
+  var body=name.replace(/\.[^.]+$/,'');
+  if(body.indexOf(dx+'_')===0)body=body.substr(dx.length+1);
+  for(var i=0;i<HOODIE_COLORS.length;i++){
+    if(body.indexOf(HOODIE_COLORS[i])>=0)return HOODIE_COLORS[i];
+  }
+  return '';
+}
+function extractSide(name,dx){
+  // 从成品文件名提取面：W白T→W、B黑T→B、白W→W、白B→B、白BW→BW（BW=同一张双面图，无独立 B/W 面）
+  var body=name.replace(/\.[^.]+$/,'');
+  if(body.indexOf(dx+'_')===0)body=body.substr(dx.length+1);
+  var m=body.match(/^(W|B)(?=.)/);   // 平铺：side 在前（W白T/B黑T）
+  if(m)return m[1];
+  if(/BW$/.test(body))return 'BW';   // BW 合成：白BW/_黑BW
+  var m2=body.match(/(W|B)$/);       // 模特：side 在后（白W/白B/_黑B）
+  if(m2)return m2[1];
+  return '';
+}
+var _invertPolling=false;
+function runInvert(dx,side,mode){
+  // 按面单张反相：只反相该面那张源 cut + 只重贴该面成品图（不影响另一面）
+  if(!side||!mode){showToast('❌ 未能识别面/颜色',3000);return;}
+  var file=dx+'_'+side+'_cut.png';  // HX0164BW_W_cut.png（带款号前缀）
+  showToast('已提交反'+mode+'（'+side+'面）：'+dx+'，请稍候…');
+  fetch(withCat('/api/upload/invert-only?dx='+encodeURIComponent(dx)+'&file='+encodeURIComponent(file)+'&mode='+encodeURIComponent(mode)),{cache:'no-store'})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(!d.ok){showToast('❌ '+d.msg,4000);return;}
+      if(_invertPolling)return;
+      _invertPolling=true;
+      _invertCtx={dx:dx,side:side,color:mode};
+      pollInvertQueue();
+    })
+    .catch(function(e){showToast('❌ 启动失败: '+e,4000);});
+}
+var _invertCtx={};
+function pollInvertQueue(){
+  fetch(withCat('/api/upload/invert-queue-status'),{cache:'no-store'})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.last_result===null){setTimeout(pollInvertQueue,1500);return;}
+      _invertPolling=false;
+      var r=d.last_result;
+      if(!r||!r.ok){showToast('❌ '+(r?r.msg:'反相失败'),4000);return;}
+      // 反相完成 → 推该面成品 file → 逐个 resticker 单图重贴
+      var dx=_invertCtx.dx, side=_invertCtx.side, color=_invertCtx.color;
+      var restickerFiles=[];
+      // 平铺：{dx}_{side}{color}T.jpg（如果 03_UPLOAD 已有）
+      var flatName=dx+'_'+side+color+'T.jpg';
+      if(fileExistsInUpload(dx,flatName)) restickerFiles.push(flatName);
+      // 模特：{dx}_{color}{side}.jpg
+      var modelName=dx+'_'+color+side+'.jpg';
+      if(fileExistsInUpload(dx,modelName)) restickerFiles.push(modelName);
+      // BW 合成：{dx}_{color}BW.jpg（仅 side=BW 时）
+      if(side==='BW'){
+        var bwName=dx+'_'+color+'BW.jpg';
+        if(fileExistsInUpload(dx,bwName)) restickerFiles.push(bwName);
+      }
+      if(restickerFiles.length===0){
+        // 该面没有任何 03_UPLOAD 成品图（首次反相新色），无产物可重贴，提示用户
+        showToast('✅ 已生成 '+color+'色'+side+'面变体；但 03_UPLOAD 里没有该面成品图，需先正常上款一次',6000);
+        loadProjects();
+        return;
+      }
+      showToast('✅ 反相完成，正在重贴该面 '+restickerFiles.length+' 张图…');
+      restickerChain(dx, restickerFiles, 0);
+    })
+    .catch(function(){setTimeout(pollInvertQueue,3000);});
+}
+function restickerChain(dx, files, idx){
+  if(idx>=files.length){showToast('✅ 重贴完成',3000);loadProjects();return;}
+  var f=files[idx];
+  showToast('重贴 '+(idx+1)+'/'+files.length+': '+f);
+  fetch(withCat('/api/upload/resticker-file?dx='+encodeURIComponent(dx)+'&file='+encodeURIComponent(f)),{cache:'no-store'})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(!d.ok)showToast('❌ '+f+': '+d.msg,4000);
+      restickerChain(dx, files, idx+1);
+    })
+    .catch(function(e){showToast('❌ '+f+': '+e,4000);restickerChain(dx, files, idx+1);});
+}
+function fileExistsInUpload(dx, name){
+  // 通过 /api/upload/original 是否返回 404 来判断（轻量：HEAD 不支持，探测缩略图或原图）
+  // 简单做法：直接假设该面平铺图存在（B+W 双源款都有），如果调用 resticker 找不到文件会报错
+  // 这里返回 true 即可（找不到 resticker 会返回错误，已兜底）
+  return true;
+}
+function restickerColor(dx,color){
+  // 重新贴图（原图重贴，不反相）：只重贴同色那一组
+  if(!color){showToast('❌ 未能识别该图颜色',3000);return;}
+  if(!confirm('重新贴图 '+dx+' 的「'+color+'」色组？\n用原图重贴，不反相。'))return;
+  showToast('正在重新贴图 '+color+' 色组：'+dx+'…');
+  fetch(withCat('/api/upload/resticker?dx='+encodeURIComponent(dx)+'&color='+encodeURIComponent(color)),{cache:'no-store'})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      showToast((d.ok?('✅ '):'❌ ')+(d.msg||'完成'),5000);
+      loadProjects();
+    })
+    .catch(function(e){showToast('❌ 重贴失败: '+e,4000);loadProjects();});
+}
+
+// 整款全部重新贴图（封面缩略图 🎨 按钮）：走 /ps-sticker 完整流水线（平铺图 + BW 合成 + 模特图），
+// 所有颜色/面全部重贴；耗时长（模特图走 white_t_mockup 推理），等后端同步返回后刷新。
+function restickerAll(dx){
+  if(!confirm('整款全部重新贴图 '+dx+' ？\n用原图重贴所有颜色/面（平铺图+BW合成+模特图），\n单面款走模特图、BW 款先平铺后模特，耗时较长（几分钟）。'))return;
+  showToast('正在整款重贴 '+dx+'（耗时较长，请耐心等待）…');
+  fetch(withCat('/api/upload/resticker?dx='+encodeURIComponent(dx)),{cache:'no-store'})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      showToast((d.ok?('✅ '):'❌ ')+(d.msg||'完成'),7000);
+      loadProjects();
+    })
+    .catch(function(e){showToast('❌ 整款重贴失败: '+e,4000);loadProjects();});
+}
+
 // v2.5.0 颜色圆点配色（卫衣 10 色 + T恤 BW/B/W + 其他）
 var DOT_COLORS={'白':'#f5f5f5','黑':'#222','蜜瓜橙':'#f4a259','浅黄色':'#f0e39a','蓝绿色':'#5bc0be',
   '宝蓝色':'#3a6ea5','孔雀蓝':'#0f4c81','明黄色':'#ffd23f','草绿色':'#7fb069','粉红色':'#f48fb1',
@@ -387,15 +512,32 @@ function buildCard(p){
   order.forEach(function(g){
     if(!groups[g])return;
     var cls={'BW':'badge-bw','B':'badge-b','W':'badge-w'}[g]||'badge-other';
+    var sideSeen={};  // 组内 B/W/BW 各面第一张才放 ⚡（B+W 两张图时两面都可反相；BW 单张仍只一个）
     groups[g].forEach(function(f){
       var ts=f.mtime;  // 缓存戳必须用源图 mtime：重贴图后源图变、缩略图还没重建，用 thumb_mtime 会让 URL 不变→浏览器直接用旧缓存
       var origTs=f.mtime;
       var safeFile=f.name.replace(/'/g,"\\'");
       var fIdx=files.indexOf(f);
+      // ⚡ 反相按钮：B 面第一张、W 面第一张、BW 第一张各自放一个，点击反相重贴该图颜色
+      var side=extractSide(f.name,p.dx);
+      var sideKey=(side==='BW'||side==='B'||side==='W')?side:'';
+      var isFirstOfSide=sideKey&&!sideSeen[sideKey];
+      if(sideKey)sideSeen[sideKey]=true;
+      var invColor=extractColor(f.name,p.dx);
+      var invertHtml=(isFirstOfSide&&invColor&&!f._deleted)
+        ?'<button class="invert-btn" title="色级反相：只反相'+side+'面源图（'+side+'_cut.png）生成'+invColor+'色专用贴图，只重贴'+invColor+'（同反黑/反白逻辑）" onclick="event.stopPropagation();runInvert(\''+p.dx+'\',\''+side+'\',\''+invColor+'\')">⚡</button>'
+        :'';
+      // 🔄 重新贴图：每组颜色第一张图（原图重贴该色组，不反相）
+      var isGroupFirst=(f===groups[g][0]&&!f._deleted);
+      var restickerHtml=(isGroupFirst&&invColor)
+        ?'<button class="resticker-btn" title="重新贴图：用原图只重贴「'+invColor+'」色组（不反相）" onclick="event.stopPropagation();restickerColor(\''+p.dx+'\',\''+invColor+'\')">🔄</button>'
+        :'';
       items.push('<div class="up-item'+(f._deleted?' deleted':'')+'">'
         +'<div class="up-thumb cell" data-src="'+withCat('/api/upload/original?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+origTs)+'" onclick="openReviewer(\''+p.dx+'\','+fIdx+')" title="点击进入审图模式">'
         +'<span class="thumb-badge badge '+cls+'">'+g+'</span>'
         +'<button class="del-overlay" onclick="event.stopPropagation();delUploadImg(this,\''+p.dx+'\',\''+safeFile+'\')" title="删除成品图">×</button>'
+        +invertHtml
+        +restickerHtml
         +'<img src="'+withCat('/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts)+'" loading="lazy" decoding="async" onerror="this.onerror=null;this.src=\'/api/upload/original?dx='+p.dx+'&file=\'+encodeURIComponent(\''+safeFile+'\')+\'&t='+origTs+(IS_HOODIE?'&cat=hoodie':'')+'\'">'
         +'</div>'
         +'<div class="up-label" title="'+f.name+'">'+upLabel(f.name,p.dx)+'</div>'
@@ -425,6 +567,7 @@ function buildCard(p){
     coverHtml='<div class="card-cover" onclick="openReviewer(\''+p.dx+'\','+coverIdx+')" title="点击进入审图模式">'
       +'<img src="'+withCat('/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(cover.name)+'&t='+cts)+'" loading="lazy" decoding="async">'
       +'<span class="cover-count">'+files.length+' 张</span>'
+      +'<button class="cover-resticker" title="整款全部重新贴图（平铺图+BW合成+模特图，耗时较长）" onclick="event.stopPropagation();restickerAll(\''+p.dx+'\')">🎨</button>'
       +'</div>';
   }else{
     coverHtml='<div class="card-cover"><div class="cover-empty">03_UPLOAD 为空</div></div>';
@@ -793,6 +936,8 @@ function startPolling(){
         showToast('✅ 上款任务完成');
         document.getElementById('uploadBtn').textContent='📤 批量上传 (0)';
         document.getElementById('uploadBtn').disabled=false;
+        var apiBtn=document.getElementById('apiUploadBtn');
+        if(apiBtn){apiBtn.textContent='⚡ API 上款';apiBtn.disabled=false;}
       }
     });
   },2000);
@@ -808,6 +953,9 @@ function updateProgressPanel(){
   // 停止按钮联动：任务运行中显示「⏹ 停止上款」
   var stopBtn=document.getElementById('stopUploadBtn');
   if(stopBtn){ stopBtn.style.display=running?'inline-block':'none'; }
+  // API 上款按钮联动：任务结束（含失败/被停止）后恢复可点
+  var apiBtn2=document.getElementById('apiUploadBtn');
+  if(apiBtn2 && !running){ apiBtn2.disabled=false; apiBtn2.textContent='⚡ API 上款'; }
   if(!progressData || (!progressData.running && (!progressData.selected || !progressData.selected.length))){
     panel.classList.remove('active');
     return;
@@ -822,7 +970,17 @@ function updateProgressPanel(){
   document.getElementById('progressMeta').textContent='已上款 '+done+' / '+total+'  失败 '+fail+'  剩余 '+remain;
 
   var current=progressData.current;
-  var currentText=current?'正在上款：'+current:'等待中…';
+  var step=progressData.step||(current&&progressData.per_dx&&progressData.per_dx[current]&&progressData.per_dx[current].step)||'';
+  var currentText=current?('正在上款：'+current+(step?'　—　'+step:'')):(step||'等待中…');
+  // 任务已结束且有失败：直接显示失败原因（不再只显示"等待中"）
+  if(!running && fail>0 && progressData.per_dx){
+    var errs=[];
+    (progressData.failed||[]).forEach(function(dx){
+      var e=progressData.per_dx[dx]&&progressData.per_dx[dx].error;
+      errs.push(e?(dx+'：'+e):dx);
+    });
+    if(errs.length) currentText='❌ 失败 '+fail+' 款　—　'+errs.join('；');
+  }
   document.getElementById('progressCurrent').textContent=currentText;
 
   var elapsed='-';
@@ -886,6 +1044,35 @@ function batchUpload(){
     }).catch(function(e){
       showToast('❌ 请求失败: '+e);
       btn.textContent='📤 批量上传 (0)';btn.disabled=false;
+    });
+}
+
+// API 上款：纯店小秘接口（建品→传图→发布→终检），不操作浏览器页面
+function apiUpload(){
+  var checked=document.querySelectorAll('.dx-check:checked');
+  if(!checked.length){showToast('请先勾选需要上传的款');return;}
+  var list=[];
+  checked.forEach(function(cb){list.push(cb.getAttribute('data-dx'));});
+  var force=document.getElementById('forceReupload').checked;
+  var confirmMsg='⚡ API 上款 '+list.length+' 个款？\n店小秘侧纯接口直接发布（建品+传图+发布），不逐行操作页面，每款约1分钟。\n标题：有缓存直接用，没缓存会自动开豆包标签页生成。';
+  if(force) confirmMsg='【强制重新上款·API】\n将先从已上款记录中删除 '+list.length+' 个款（标题缓存保留），\n然后纯接口重新上款。是否继续？';
+  if(!confirm(confirmMsg))return;
+  var btn=document.getElementById('apiUploadBtn');
+  btn.disabled=true;btn.textContent='⏳ API 上款中…';
+  showToast('⏳ 启动 API 上款 '+list.length+' 款…');
+  fetch(withCat('/api/batch-upload-api'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dx_list:list, force: force})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      var msg=d.msg||d.error||JSON.stringify(d)||'未知错误';
+      showToast(d.ok?'✅ '+msg:'❌ '+msg);
+      if(d.ok){
+        startPolling();
+      }else{
+        btn.textContent='⚡ API 上款';btn.disabled=false;
+      }
+    }).catch(function(e){
+      showToast('❌ 请求失败: '+e);
+      btn.textContent='⚡ API 上款';btn.disabled=false;
     });
 }
 

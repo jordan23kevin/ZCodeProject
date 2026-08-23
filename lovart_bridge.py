@@ -1,17 +1,30 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.6.4
+Y2 Bridge Server v2.7.1
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
 
+变更 v2.7.1（2026-08-23）：
+  - /api/upload/resticker 的 color 参数改为可选：不带 color = 整款全部重新贴图
+    （WB 上款页封面缩略图新增 🎨 按钮），转发 check_rem /ps-sticker?dx= 完整流水线
+    （平铺图 + BW 合成 + 模特图），同步等待 timeout 300s→900s（整款含模特图可达数分钟）。
+
 变更 v2.6.4：
   - 修复 /api/open「📂 打开文件夹」对卫衣（HX 前缀）报"参数非法"：原正则写死 ^DX...，
     且目录固定 PROJECTS_DIR（D:\Semems WB）。改走 _upload_cat_guard + _dx_re(ctx["prefix"])，
     按 ?cat= 路由到对应品类 02_PROJECTS（hoodie→D:\Semems Hoodie），wb 行为不变。
+
+变更 v2.7.0（2026-08-23）：
+  - 新增 /api/batch-upload-api：API 上款（纯店小秘接口，不操作浏览器页面），拉起
+    E:\Claude code\wb上款\api_upload_run.py 完成 建品→COS传图→发布→终检。
+    与 UI 路径共用进度文件/已上款记录（running 守卫互斥）；_kill_stale_wb_listing
+    扩展为同时清理 wb_listing.py 与 api_upload_run.py 僵尸进程（双向互斥）；
+    force 只删已上款记录、不清标题缓存（API 路径优先读缓存，缺缓存自动开豆包生成）。
+    payload 生成规则实证见 wb上款/_debug/stage1_diff_report.txt（与真实发布抓包逐字段一致）。
 
 变更 v2.6.3：
   - /api/batch-upload 启动前先自动清理仍在运行的旧 wb_listing.py 进程（_kill_stale_wb_listing，
@@ -4020,16 +4033,16 @@ def api_open_file():
 
 
 def _kill_stale_wb_listing():
-    """启动新上款任务前，清理仍在运行的旧 wb_listing.py 进程。
+    """启动新上款任务前，清理仍在运行的旧 wb_listing.py / api_upload_run.py 进程。
     僵尸进程的危害：①占用已上款记录/标题缓存文件 → 强制重新上款删记录 Permission denied；
-    ②与新任务并发操作同一浏览器页面。只杀命令行含 wb_listing.py 的 python 进程，不误杀别的。
+    ②与新任务并发操作同一浏览器页面/同一批店小秘接口。只杀命令行含这两个脚本名的 python 进程。
     返回被杀掉的 PID 列表。"""
     killed = []
     try:
         out = subprocess.check_output([
             "powershell", "-NoProfile", "-Command",
             "Get-CimInstance Win32_Process -Filter \"Name like '%python%'\" | "
-            "Where-Object { $_.CommandLine -like '*wb_listing.py*' } | "
+            "Where-Object { $_.CommandLine -like '*wb_listing.py*' -or $_.CommandLine -like '*api_upload_run.py*' } | "
             "Select-Object -ExpandProperty ProcessId"
         ], text=True, timeout=15)
         for line in out.splitlines():
@@ -4176,6 +4189,103 @@ def api_batch_upload():
     })
 
 
+@app.route('/api/batch-upload-api', methods=['POST'])
+def api_batch_upload_api():
+    """API 上款：调用 E:\\Claude code\\wb上款\\api_upload_run.py，纯店小秘接口完成
+    建品→传图→发布→终检，不操作浏览器页面（每款几分钟→几十秒）。
+    与 UI 路径共用同一份进度文件/已上款记录，前端进度展示无感切换。
+    与 UI 路径的互斥：共用进度文件 running 守卫 + 启动前 _kill_stale_wb_listing 双向清理。
+    注意：API 路径不重新生成标题（只读标题缓存），force 只删已上款记录、不清标题缓存。
+    """
+    cat, ctx, cat_err = _upload_cat_guard()
+    if cat_err:
+        return cat_err
+    data = request.get_json(silent=True) or {}
+    dx_list = data.get("dx_list", [])
+    force = data.get("force", False)
+    if not dx_list:
+        return jsonify({"ok": False, "error": "请指定款号"}), 400
+
+    # 防并发：与 UI 路径共用同一进度文件，running 且 30 分钟内 → 拒绝重复启动
+    _pf = _upload_progress_file(cat)
+    if _pf.exists():
+        try:
+            _pd = json.loads(_pf.read_text(encoding="utf-8"))
+            if _pd.get("running") and _pd.get("started_at"):
+                from datetime import datetime as _dt
+                try:
+                    _start = _dt.fromisoformat(str(_pd["started_at"]))
+                    _age = (_dt.now() - _start).total_seconds()
+                    if 0 <= _age < 30 * 60:
+                        return jsonify({
+                            "ok": False,
+                            "error": f"已有上款任务正在运行（{int(_age)}s 前启动）。请等它跑完再点，不要重复点击。"
+                        }), 409
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    script_path = WB_LISTING_DIR / "api_upload_run.py"
+    if not script_path.exists():
+        return jsonify({"ok": False, "error": f"API 上款脚本不存在: {script_path}"}), 404
+
+    # 用户规则：只执行最新的上款任务（双向清理 UI/API 两条路径的旧进程）
+    stale_killed = _kill_stale_wb_listing()
+
+    # 强制重新上款：只删已上款记录（API 路径不重新生成标题，保留标题缓存）
+    removed = []
+    if force:
+        removed = _remove_from_completed_md(dx_list, cat=cat)
+        if removed is None:
+            return jsonify({
+                "ok": False,
+                "error": "强制重新上款失败：已上款记录文件被占用（Permission denied）。请等当前上款进程结束后重试。"
+            }), 500
+
+    valid_dx = []
+    for dx in dx_list:
+        dx_folder = ctx["projects"] / dx
+        if dx_folder.exists() and (dx_folder / "03_UPLOAD").exists():
+            valid_dx.append(dx)
+    if not valid_dx:
+        return jsonify({"ok": False, "error": "勾选的款均无 03_UPLOAD 成品"}), 400
+
+    args = [sys.executable, str(script_path)]
+    for dx in valid_dx:
+        args.extend(["--only", dx])
+    args.extend(["--cat", cat])
+
+    # 重置进度文件（schema 与 UI 路径一致，另标 mode=api）
+    try:
+        now_iso = datetime.now().isoformat(timespec="seconds")
+        _upload_progress_file(cat).write_text(
+            json.dumps({
+                "running": True, "mode": "api", "started_at": now_iso, "finished_at": None,
+                "selected": valid_dx, "pending": valid_dx, "completed": [], "failed": [],
+                "current": None, "current_start": None, "total_count": len(valid_dx),
+                "done_count": 0, "fail_count": 0, "per_dx": {}, "updated_at": now_iso,
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        print(f"[batch-upload-api] 重置进度文件失败: {e}", flush=True)
+
+    try:
+        run_minimized(args, wait=False, no_console=True)
+    except Exception as e:
+        print(f"[batch-upload-api] 启动 {valid_dx} 失败: {e}", flush=True)
+        return jsonify({"ok": False, "error": f"启动脚本失败: {e}"}), 500
+
+    msg = f"已启动 API 上款（纯接口，不动浏览器），精确处理 {len(valid_dx)} 个款：{', '.join(valid_dx)}"
+    if force:
+        msg = f"【强制重新上款·API】已删除已上款记录中的 {len(removed)} 个款（标题缓存保留），并启动处理：{', '.join(valid_dx)}"
+    return jsonify({
+        "ok": True, "msg": msg, "script": str(script_path),
+        "selected": valid_dx, "force": force, "stale_killed": stale_killed, "removed": removed,
+    })
+
+
 @app.route('/api/upload/stop', methods=['POST'])
 def api_upload_stop():
     """停止当前品类的上款任务：按 progress 里的 pid 终止 wb_listing.py 进程，
@@ -4231,6 +4341,202 @@ def api_upload_stop():
         return jsonify({"ok": False, "error": f"复位进度文件失败: {e}"}), 500
 
     return jsonify({"ok": True, "msg": f"已停止上款任务（{', '.join(killed)}），可以重新开始"})
+
+
+@app.route('/api/upload/batch-invert-rem')
+def api_upload_batch_invert_rem():
+    """批量反相（反黑/反白/反<色>）：转发到 check_rem /batch-invert-rem（按品类端口，解决跨端口 CORS）。
+
+    参数：dx=款号（可逗号分隔）、mode=black|white|中文色名（蜜瓜橙/浅黄色/明黄色/蓝绿色/宝蓝色/孔雀蓝/草绿色/粉红色）
+    返回：{"ok":true,"msg":"..."}；后台异步执行，进度用 /api/upload/batch-invert-result 轮询。
+    """
+    cat, _ctx, cat_err = _upload_cat_guard()
+    if cat_err:
+        return cat_err
+    dx = request.args.get("dx", "")
+    mode = request.args.get("mode", "black")
+    if not dx:
+        return jsonify({"ok": False, "msg": "缺少 dx 参数"}), 400
+    port = _CHECK_REM_PORT_FOR_CAT.get(cat, 8766)
+    if not _port_ready("127.0.0.1", port, timeout=2):
+        _check_rem_ensure(cat, port)
+        if not _port_ready("127.0.0.1", port, timeout=5):
+            return jsonify({"ok": False, "msg": f"去背服务({cat}@{port})未就绪"}), 503
+    try:
+        url = f"http://127.0.0.1:{port}/batch-invert-rem?dx={urllib.parse.quote(dx)}&mode={urllib.parse.quote(mode)}"
+        with urlopen(url, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return jsonify(data)
+    except URLError as e:
+        return jsonify({"ok": False, "msg": f"转发去背服务失败: {e.reason}"}), 502
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"转发异常: {e}"}), 502
+
+
+@app.route('/api/upload/batch-invert-result')
+def api_upload_batch_invert_result():
+    """批量反相结果查询：转发 check_rem /batch-invert-result。
+
+    返回：{"done":bool, "ok":bool, "msg":str, "results":[...]}；
+    done=false 表示仍在执行中（前端轮询直到 done=true）。
+    """
+    cat, _ctx, cat_err = _upload_cat_guard()
+    if cat_err:
+        return cat_err
+    port = _CHECK_REM_PORT_FOR_CAT.get(cat, 8766)
+    try:
+        with urlopen(f"http://127.0.0.1:{port}/batch-invert-result", timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return jsonify(data)
+    except URLError as e:
+        return jsonify({"ok": False, "msg": f"转发去背服务失败: {e.reason}"}), 502
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"转发异常: {e}"}), 502
+
+
+@app.route('/api/upload/resticker')
+def api_upload_resticker():
+    """重新贴图（原图重贴，不反相）：
+    - color 非空：只重新贴图指定颜色组（WB 上款页每组颜色第一张「🔄」按钮用）
+    - color 为空：整款全部重新贴图（WB 上款页封面缩略图「🖼️ 全部重贴」按钮用，
+      走 check_rem /ps-sticker 完整流水线：平铺图 + BW 合成 + 模特图）
+
+    参数：dx=款号、color=色名（可选：白/黑/蜜瓜橙/浅黄色/明黄色/蓝绿色/宝蓝色/孔雀蓝/草绿色/粉红色）
+    转发 check_rem /ps-sticker?dx=&color=，同步等待完成（单色一般 10~60s，整款全量含模特图可达数分钟）。
+    """
+    cat, _ctx, cat_err = _upload_cat_guard()
+    if cat_err:
+        return cat_err
+    dx = request.args.get("dx", "")
+    color = request.args.get("color", "")
+    if not dx:
+        return jsonify({"ok": False, "msg": "缺少 dx 参数"}), 400
+    port = _CHECK_REM_PORT_FOR_CAT.get(cat, 8766)
+    if not _port_ready("127.0.0.1", port, timeout=2):
+        _check_rem_ensure(cat, port)
+        if not _port_ready("127.0.0.1", port, timeout=5):
+            return jsonify({"ok": False, "msg": f"去背服务({cat}@{port})未就绪"}), 503
+    try:
+        url = f"http://127.0.0.1:{port}/ps-sticker?dx={urllib.parse.quote(dx)}"
+        if color:
+            url += f"&color={urllib.parse.quote(color)}"
+        with urlopen(url, timeout=900) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return jsonify(data)
+    except URLError as e:
+        return jsonify({"ok": False, "msg": f"转发去背服务失败: {e.reason}"}), 502
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"转发异常: {e}"}), 502
+
+
+@app.route('/api/upload/invert-rem')
+def api_upload_invert_rem():
+    """单张反相（按面精细化）：只反相指定面那张源图 + 只重贴该颜色组，不影响另一面。
+
+    参数：dx=款号、file=源去背图（如 W_cut.png / B_cut.png / BW_cut.png）、mode=色名
+    转发 check_rem /invert-rem?dx=&file=&mode=（入异步队列）。
+    配套 /api/upload/invert-queue-status 轮询进度。
+    """
+    cat, _ctx, cat_err = _upload_cat_guard()
+    if cat_err:
+        return cat_err
+    dx = request.args.get("dx", "")
+    file = request.args.get("file", "")
+    mode = request.args.get("mode", "black")
+    if not dx or not file:
+        return jsonify({"ok": False, "msg": "缺少 dx/file 参数"}), 400
+    port = _CHECK_REM_PORT_FOR_CAT.get(cat, 8766)
+    if not _port_ready("127.0.0.1", port, timeout=2):
+        _check_rem_ensure(cat, port)
+        if not _port_ready("127.0.0.1", port, timeout=5):
+            return jsonify({"ok": False, "msg": f"去背服务({cat}@{port})未就绪"}), 503
+    try:
+        url = f"http://127.0.0.1:{port}/invert-rem?dx={urllib.parse.quote(dx)}&file={urllib.parse.quote(file)}&mode={urllib.parse.quote(mode)}"
+        with urlopen(url, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return jsonify(data)
+    except URLError as e:
+        return jsonify({"ok": False, "msg": f"转发去背服务失败: {e.reason}"}), 502
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"转发异常: {e}"}), 502
+
+
+@app.route('/api/upload/invert-queue-status')
+def api_upload_invert_queue_status():
+    """单张反相队列状态查询（前端轮询）：done=true 即可刷新。"""
+    cat, _ctx, cat_err = _upload_cat_guard()
+    if cat_err:
+        return cat_err
+    port = _CHECK_REM_PORT_FOR_CAT.get(cat, 8766)
+    try:
+        with urlopen(f"http://127.0.0.1:{port}/invert-queue-status", timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return jsonify(data)
+    except URLError as e:
+        return jsonify({"ok": False, "msg": f"转发去背服务失败: {e.reason}"}), 502
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"转发异常: {e}"}), 502
+
+
+@app.route('/api/upload/invert-only')
+def api_upload_invert_only():
+    """只反相不重贴（WB 上款按面单张反相用）：入异步队列，反相后不再跑整款贴图。
+
+    参数：dx=款号、file=源去背图（含款号前缀，如 HX0164BW_W_cut.png）、mode=色名
+    配套 /api/upload/invert-queue-status 轮询；反相完成后由前端调 /api/upload/resticker-file 重贴单图。
+    """
+    cat, _ctx, cat_err = _upload_cat_guard()
+    if cat_err:
+        return cat_err
+    dx = request.args.get("dx", "")
+    file = request.args.get("file", "")
+    mode = request.args.get("mode", "black")
+    if not dx or not file:
+        return jsonify({"ok": False, "msg": "缺少 dx/file 参数"}), 400
+    port = _CHECK_REM_PORT_FOR_CAT.get(cat, 8766)
+    if not _port_ready("127.0.0.1", port, timeout=2):
+        _check_rem_ensure(cat, port)
+        if not _port_ready("127.0.0.1", port, timeout=5):
+            return jsonify({"ok": False, "msg": f"去背服务({cat}@{port})未就绪"}), 503
+    try:
+        url = f"http://127.0.0.1:{port}/invert-only?dx={urllib.parse.quote(dx)}&file={urllib.parse.quote(file)}&mode={urllib.parse.quote(mode)}"
+        with urlopen(url, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return jsonify(data)
+    except URLError as e:
+        return jsonify({"ok": False, "msg": f"转发去背服务失败: {e.reason}"}), 502
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"转发异常: {e}"}), 502
+
+
+@app.route('/api/upload/resticker-file')
+def api_upload_resticker_file():
+    """单文件重贴：只覆盖指定 03_UPLOAD 成品图，不影响同款其他图（按面精细化）。
+
+    参数：dx=款号、file=03_UPLOAD 成品名（如 HX0164BW_W蜜瓜橙T.jpg）
+    转发 check_rem /resticker?dx=&file=，同步等待（单图 5~30s）。
+    """
+    cat, _ctx, cat_err = _upload_cat_guard()
+    if cat_err:
+        return cat_err
+    dx = request.args.get("dx", "")
+    file = request.args.get("file", "")
+    if not dx or not file:
+        return jsonify({"ok": False, "msg": "缺少 dx/file 参数"}), 400
+    port = _CHECK_REM_PORT_FOR_CAT.get(cat, 8766)
+    if not _port_ready("127.0.0.1", port, timeout=2):
+        _check_rem_ensure(cat, port)
+        if not _port_ready("127.0.0.1", port, timeout=5):
+            return jsonify({"ok": False, "msg": f"去背服务({cat}@{port})未就绪"}), 503
+    try:
+        url = f"http://127.0.0.1:{port}/resticker?dx={urllib.parse.quote(dx)}&file={urllib.parse.quote(file)}"
+        with urlopen(url, timeout=120) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return jsonify(data)
+    except URLError as e:
+        return jsonify({"ok": False, "msg": f"转发去背服务失败: {e.reason}"}), 502
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"转发异常: {e}"}), 502
 
 
 # ============================================================================
