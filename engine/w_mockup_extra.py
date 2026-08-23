@@ -1,5 +1,19 @@
 # -*- coding: utf-8 -*-
-"""单面贴图新流程 v2.6.3（模特图+平铺图贴图）：02_REM_BG 里只有 W 或只有 B 时，用 white_t_mockup 胚衣出图。
+"""单面贴图新流程 v2.6.4（模特图+平铺图贴图）：02_REM_BG 里只有 W 或只有 B 时，用 white_t_mockup 胚衣出图。
+
+变更 v2.6.4（2026-08-23，HX0164BW 黑B 模特图不用专用 cut）：
+  - _resolve_cut 修复两个问题：
+    ① BW 款拆开命名（HX0164BW_B_cut.png / _W_cut.png）的专用 cut 是 {dx}_黑B_cut.png /
+       {dx}_白W_cut.png 等，原逻辑只找 {dx}_黑BW_cut.png（单 BW cut 款命名），拆开命名款
+       找不到 → 模特图退回通用 cut，反黑/反白专用图丢失（平铺图经 ps 链 process_dx_folder
+       已用专用图，两边不一致）。现兼容三种命名：{dx}_{color}BW_cut.png →
+       {dx}_{color}{role}_cut.png → {dx}_{color}WB_cut.png。
+    ② only_color 只允许 白/黑，中文色（蜜瓜橙等 8 色，色级反相全量重贴）被拒
+       （"不支持的 only_color"）。现放宽为 wb_naming.COLOR_NAMES 全部 10 色；
+       同时 _resolve_cut 不再限 白/黑，中文色专用 cut（{dx}_蜜瓜橙B_cut.png 等）也会被选中。
+  - 验证：HX0164BW B 黑 → 黑B_cut、W 白 → 白W_cut、B 蜜瓜橙 → 无专用 cut 回退通用 B_cut；
+    HX0117BW（单 BW cut）B 黑无专用 cut → 通用 BW_cut、W 蜜瓜橙 → 蜜瓜橙BW_cut；
+    HX0001W（单面）W 黑 → 黑W_cut；全量 B 面黑用专用、白/英文色用通用，路由全部正确。
 
 变更 v2.6.3（BW 款 W 面模特用 bw 五参，用户 2026-08-19）：
   - BW 款 W 面**模特图**改用 bw 块五参（②双面款正面，印花贴胸口小图），与平铺一致；
@@ -265,27 +279,36 @@ def plan_single_side_jobs(
     try:
         if role not in ("W", "B"):
             return [], [f"不支持的单面角色: {role}"]
-        if only_color not in (None, "白", "黑"):
+        # only_color 支持全部 10 色（白/黑 + 8 卫衣中文色，色级反相全量重贴用）
+        if only_color is not None and only_color not in naming.COLOR_NAMES:
             return [], [f"不支持的 only_color: {only_color}"]
         rem_dir = Path(base_dir) / dx / "02_REM_BG"
         up_dir = Path(base_dir) / dx / "03_UPLOAD"
         cut = Path(cut_path) if cut_path is not None else rem_dir / f"{dx}_{role}_cut.png"
         if not cut.exists():
             return [], [f"缺少 {cut.name}"]
-        # 黑/白专用 cut 优先（反黑/反白生成）：黑T 用 {dx}_黑{role}_cut.png、白T 用
-        # {dx}_白{role}_cut.png、其余颜色（英文色）用通用 cut；与 T恤 反黑/反白同款路由。
+        # 专用 cut 优先（反黑/反白/反<中文色>生成）：黑T 用 {dx}_黑{role}_cut.png、白T 用
+        # {dx}_白{role}_cut.png、中文色用 {dx}_蜜瓜橙{role}_cut.png 等；与 T恤 反黑/反白同款路由。
         # 调用方已显式传入专用 cut（only_color 模式）时保持原样不再覆盖。
         _cut_is_spec = "黑" in cut.name or "白" in cut.name
 
         def _resolve_cut(color: str) -> Path:
-            if not _cut_is_spec and color in ("白", "黑"):
-                # BW 款黑白专用 cut 是 {dx}_黑BW_cut.png / _白BW_cut.png（单面款才是 _黑{role}）
+            if not _cut_is_spec:
+                # BW 款兼容两种命名：单 BW cut 款 {dx}_黑BW_cut.png / 拆开命名款
+                # {dx}_黑B_cut.png / {dx}_黑W_cut.png（HX0164BW 是拆开命名，只有 _黑B_cut，
+                # 原逻辑只找 _黑BW_cut 找不到 → 模特图退回通用 cut，专用图丢失）。
+                # 中文色同样支持（蜜瓜橙B_cut 等），不再只限 白/黑。
                 if dx.endswith("BW") or dx.endswith("WB"):
-                    spec = rem_dir / f"{dx}_{color}BW_cut.png"
+                    for cand in (f"{dx}_{color}BW_cut.png",
+                                 f"{dx}_{color}{role}_cut.png",
+                                 f"{dx}_{color}WB_cut.png"):
+                        spec = rem_dir / cand
+                        if spec.exists():
+                            return spec
                 else:
                     spec = rem_dir / f"{dx}_{color}{role}_cut.png"
-                if spec.exists():
-                    return spec
+                    if spec.exists():
+                        return spec
             return cut
 
         if not W_MOCKUP_PY.exists():
@@ -426,13 +449,15 @@ def plan_single_side_jobs(
         return [], [f"{role} 模特图贴图计划异常: {e}"]
 
 
-def run_mockup_jobs(jobs: list[dict], max_workers: int = 3, on_progress=None) -> list[tuple[dict, bool, str]]:
+def run_mockup_jobs(jobs: list[dict], max_workers: int = 3, on_progress=None, should_stop=None) -> list[tuple[dict, bool, str]]:
     """把贴图任务切成 max_workers 份，起等量个 ``white_t_mockup --batch`` 常驻进程并行执行。
 
     每个 worker 单进程顺序跑完自己那份（解释器启动/import/胚衣素材缓存只付一次，
     替代旧版"每张图一个进程"）；返回 [(job, ok, err), ...]，顺序与 jobs 对齐。
     on_progress(done, total)：每完成一张回调（逐行读 worker stdout 的 ``[batch i/N]`` 行），
     供页面刷新进度状态（避免前端 30 秒无更新误判完成）。
+    should_stop() 返回 True 时（前端「停止贴图」）：杀光 worker 进程树，
+    未完成的 job 标记为"已手动停止"。
     """
     import os
     import re as _re
@@ -440,6 +465,7 @@ def run_mockup_jobs(jobs: list[dict], max_workers: int = 3, on_progress=None) ->
     import subprocess
     import tempfile
     import threading
+    import time
 
     if not jobs:
         return []
@@ -500,11 +526,26 @@ def run_mockup_jobs(jobs: list[dict], max_workers: int = 3, on_progress=None) ->
         t = threading.Thread(target=_read_worker, args=(i, jf, p), daemon=True)
         t.start()
         threads.append(t)
+    # 等待全部 worker 结束；期间轮询停止旗标，收到停止就杀光 worker 进程树
+    stopped = False
+    while any(t.is_alive() for t in threads):
+        if should_stop and should_stop():
+            stopped = True
+            print("[batch] 收到停止指令，正在终止 worker 进程...", flush=True)
+            for i, jf, p in procs:
+                try:
+                    subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"],
+                                   capture_output=True, timeout=10)
+                except Exception:
+                    pass
+            break
+        time.sleep(0.3)
     for t in threads:
-        t.join()
+        t.join(timeout=30)
     shutil.rmtree(tmpdir, ignore_errors=True)
     _progress()  # 收尾刷新一次
-    return [(job, *by_tag.get(job["tag"], (False, "无结果"))) for job in jobs]
+    fallback = (False, "已手动停止") if stopped else (False, "无结果")
+    return [(job, *by_tag.get(job["tag"], fallback)) for job in jobs]
 
 
 def generate_single_side_mockup(

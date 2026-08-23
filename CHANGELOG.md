@@ -1,5 +1,14 @@
 # Y2 一体化控制系统 — 更新日志
 
+## engine/w_mockup_extra v2.6.4 (2026-08-23) — 模特图专用 cut 路由修复（BW 拆开命名 + 中文色）
+
+- **问题（用户报告 HX0164BW 黑B）**：点重新贴图后平铺图用了 `黑B_cut` 专用图、模特图却用通用 `B_cut`——BW 款**拆开命名**（`HX0164BW_B_cut.png`/`_W_cut.png`）的专用 cut 是 `{dx}_黑B_cut.png` 等，`plan_single_side_jobs._resolve_cut` 原逻辑只找 `{dx}_黑BW_cut.png`（单 BW cut 款命名）→ 找不到 → 模特图退回通用 cut，反黑/反白专用图丢失（平铺图经 ps 链 process_dx_folder 已用专用图，两边不一致）。
+- **修复**：
+  ① `_resolve_cut` 兼容三种命名：`{dx}_{color}BW_cut.png` → `{dx}_{color}{role}_cut.png` → `{dx}_{color}WB_cut.png`（拆开命名款命中中间项）。
+  ② `only_color` 校验从只允许 白/黑 放宽为 `wb_naming.COLOR_NAMES` 全 10 色——中文色（蜜瓜橙等 8 色）色级反相全量重贴不再报"不支持的 only_color"；`_resolve_cut` 同步不再限 白/黑，中文色专用 cut（`{dx}_蜜瓜橙B_cut.png` 等）也会被选中。
+- **验证**：HX0164BW B黑→黑B_cut、W白→白W_cut、B蜜瓜橙→无专用 cut 回退通用；HX0117BW（单 BW cut）B黑无专用→通用 BW_cut、W蜜瓜橙→蜜瓜橙BW_cut；HX0001W（单面）W黑→黑W_cut；全量 B 面黑用专用、白/英文色用通用——路由全部正确。
+- ⚠️ 生效：check_rem 进程内 import w_mockup_extra，需重启 8766/8767。双副本（04_OS / ZCodeProject）字节一致。
+
 ## upload.html v2.5.7 (2026-08-23) — 贴图/反相进行中暂停 4s 自动刷新（修"整页刷新好几次"）
 
 - **问题**：`autoRefreshTick` 每 4s 轮询 `/api/upload/projects`，指纹含每个文件 mtime；贴图/反相期间文件持续变化（平铺→BW→模特逐张写），每次轮询指纹都不同 → `rerenderKeepState()` 整卡重建 + toast「检测到贴图更新」，观感像"整页刷新好几次"（整款重贴 35s 约刷 8 次）。
