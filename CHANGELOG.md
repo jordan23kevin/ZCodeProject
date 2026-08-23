@@ -1,5 +1,12 @@
 # Y2 一体化控制系统 — 更新日志
 
+## upload.html v2.5.8e (2026-08-24) — 悬停放大预览刷新修复 + h1 版本号同步
+
+- **问题**：v2.5.8d 后展开区/审图都刷成新图了，但"鼠标放在缩略图上的悬停放大图"还是旧图。
+- **根因**：悬停放大 `bindPreview` 从 `.up-thumb` 的 `data-src` 属性取图（指向 `/api/upload/original` 原图端点、带旧 t），`refreshDxImages` 只更新了 `<img src>`（thumb 端点），没更新 `data-src` → 悬停预览仍加载旧 mtime 原图。
+- **修复**：`refreshDxImages` 更新 img src 时同步 `cell.setAttribute('data-src', original?...&t=新t)`（`img.closest('.up-thumb')`）。
+- **顺带**：页面 h1 大标题版本号之前一直硬编码 v2.5.5（只改过 `<title>`），用户看到"还是 v2.5.5"即此；本次起 h1 与 title 同步为 v2.5.8e。
+
 ## upload.html v2.5.8d (2026-08-24) — 展开图流不刷新的修复：refreshDxImages 选择器覆盖 gband
 
 - **问题**：用户反馈 v2.5.8c 后"审图页面刷新成新图了，但展开页面还是旧图"。

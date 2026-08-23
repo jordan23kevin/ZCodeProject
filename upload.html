@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.8d</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.8e</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -110,7 +110,7 @@
 </style>
 </head>
 <body>
-<h1>WB 上款 <span class="v">v2.5.5</span></h1>
+<h1>WB 上款 <span class="v">v2.5.8e</span></h1>
 <div class="toolbar">
   <select id="dateSel" onchange="switchDate(this.value)">
     <option value="">全部日期</option>
@@ -444,16 +444,22 @@ function pollInvertQueue(){
       // 反相完成 → 推该面成品 file → 逐个 resticker 单图重贴
       var dx=_invertCtx.dx, side=_invertCtx.side, color=_invertCtx.color;
       var restickerFiles=[];
-      // 平铺：{dx}_{side}{color}T.jpg（如果 03_UPLOAD 已有）
-      var flatName=dx+'_'+side+color+'T.jpg';
-      if(fileExistsInUpload(dx,flatName)) restickerFiles.push(flatName);
-      // 模特：{dx}_{color}{side}.jpg
-      var modelName=dx+'_'+color+side+'.jpg';
-      if(fileExistsInUpload(dx,modelName)) restickerFiles.push(modelName);
-      // BW 合成：{dx}_{color}BW.jpg（仅 side=BW 时）
+      // 用 DX_FILES 里真实存在的 03_UPLOAD 清单筛选（避免盲调不存在的文件）
+      var dxFiles=(DX_FILES[dx]||[]).map(function(f){return f.name;});
+      function _hasUp(n){return dxFiles.indexOf(n)>=0;}
       if(side==='BW'){
-        var bwName=dx+'_'+color+'BW.jpg';
-        if(fileExistsInUpload(dx,bwName)) restickerFiles.push(bwName);
+        // BW 款 B/W 共用同一张源图：反相一次 → 该颜色全部成品都要重贴
+        // 顺序：平铺 B/W 在前（BW 合成依赖平铺图），再模特 B/W，最后 BW 合成
+        [dx+'_B'+color+'T.jpg', dx+'_W'+color+'T.jpg',
+         dx+'_'+color+'B.jpg', dx+'_'+color+'W.jpg',
+         dx+'_'+color+'BW.jpg'].forEach(function(n){if(_hasUp(n))restickerFiles.push(n);});
+      }else{
+        // 平铺：{dx}_{side}{color}T.jpg
+        var flatName=dx+'_'+side+color+'T.jpg';
+        if(_hasUp(flatName))restickerFiles.push(flatName);
+        // 模特：{dx}_{color}{side}.jpg
+        var modelName=dx+'_'+color+side+'.jpg';
+        if(_hasUp(modelName))restickerFiles.push(modelName);
       }
       if(restickerFiles.length===0){
         // 该面没有任何 03_UPLOAD 成品图（首次反相新色），无产物可重贴，提示用户
@@ -477,12 +483,6 @@ function restickerChain(dx, files, idx){
       restickerChain(dx, files, idx+1);
     })
     .catch(function(e){showToast('❌ '+f+': '+e,4000);restickerChain(dx, files, idx+1);});
-}
-function fileExistsInUpload(dx, name){
-  // 通过 /api/upload/original 是否返回 404 来判断（轻量：HEAD 不支持，探测缩略图或原图）
-  // 简单做法：直接假设该面平铺图存在（B+W 双源款都有），如果调用 resticker 找不到文件会报错
-  // 这里返回 true 即可（找不到 resticker 会返回错误，已兜底）
-  return true;
 }
 function restickerColor(dx,color){
   // 重新贴图（原图重贴，不反相）：只重贴同色那一组
@@ -530,6 +530,10 @@ function refreshDxImages(dx){
       if(!(fn in mtimes))return;
       var t=mtimes[fn];
       img.setAttribute('src', withCat('/api/upload/thumb?dx='+encodeURIComponent(dx)+'&file='+encodeURIComponent(fn)+'&t='+t));
+      // v2.5.8e：悬停放大预览的 data-src（指向 original 原图端点）同步换新 t，
+      // 否则鼠标悬停缩略图还是加载旧 mtime 的原图（bindPreview 从 data-src 取）
+      var cell=img.closest('.up-thumb');
+      if(cell)cell.setAttribute('data-src', withCat('/api/upload/original?dx='+encodeURIComponent(dx)+'&file='+encodeURIComponent(fn)+'&t='+t));
       changed++;
     });
     if(changed>0)showToast('🔄 已刷新 '+changed+' 张变化图片');
