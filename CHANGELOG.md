@@ -1,5 +1,12 @@
 # Y2 一体化控制系统 — 更新日志
 
+## upload.html v2.5.7 (2026-08-23) — 贴图/反相进行中暂停 4s 自动刷新（修"整页刷新好几次"）
+
+- **问题**：`autoRefreshTick` 每 4s 轮询 `/api/upload/projects`，指纹含每个文件 mtime；贴图/反相期间文件持续变化（平铺→BW→模特逐张写），每次轮询指纹都不同 → `rerenderKeepState()` 整卡重建 + toast「检测到贴图更新」，观感像"整页刷新好几次"（整款重贴 35s 约刷 8 次）。
+- **修复**：新增 `_restickerBusy` 标记——🎨 `restickerAll` / 🔄 `restickerColor` / ⚡ `runInvert`（含 `pollInvertQueue`→`restickerChain` 反相链）三个贴图入口置 true，请求结束/失败/链完成复位 false；`autoRefreshTick` 开头 `if(_restickerBusy)return`。
+- 贴图完成后各入口原有 `loadProjects()` 仍会刷新一次（并更新 `_lastFp` 指纹），效果不变、无漏刷新。
+- 验证：JS 语法 OK；busy 置位 3 处、复位 10 处、守卫 1 处。
+
 ## bridge v2.7.1 / upload.html v2.5.6 (2026-08-23) — WB 上款页封面缩略图「🎨 整款全部重贴」
 
 - **upload.html**：款号下方封面缩略图（card-cover）右上角新增橙色圆形 🎨 按钮 = 整款全部重新贴图（原图重贴，不反相）——所有颜色/面走完整流水线（平铺图 + BW 合成 + 模特图），替代原先只能按色组/单图重贴的局限。新增 `restickerAll(dx)` 确认后同步等待后端返回再刷新。

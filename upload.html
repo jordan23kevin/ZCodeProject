@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.6</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.7</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -272,6 +272,10 @@ function loadProgress(){
 // ── 自动刷新：每 4s 轮询，贴图数据（文件名/数量/mtime/在线状态）变了就重渲染 ──
 // 配合图片 URL 的源图 mtime 缓存戳，反黑/反白重贴图后无需 F5 即可看到新图。
 var _lastFp="";
+// v2.5.6 贴图进行中标记：🎨/🔄/⚡ 请求未返回前，暂停 4s 自动刷新（贴图期间文件 mtime 持续变化，
+// 会导致 autoRefreshTick 每 4 秒触发一次整卡重建，观感像"整页刷新好几次"）。
+// 贴图完成后各入口自行 loadProjects() 刷新一次，效果不变。
+var _restickerBusy=false;
 function _projectsFp(ps){
   return ps.map(function(p){
     return p.dx+":"+(p.online_listed?1:0)+":"+p.files.map(function(f){return f.name+"@"+f.mtime;}).join(",");
@@ -304,6 +308,7 @@ function applyLocalDelete(dx,names){
   rerenderKeepState();
 }
 function autoRefreshTick(){
+  if(_restickerBusy)return;   // 贴图/反相进行中不自动刷新，避免整卡反复重建
   fetch(withCat('/api/upload/projects'),{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
     if(!d||d.ok===false)return;
     var ps=d.projects||[];
@@ -394,17 +399,18 @@ function runInvert(dx,side,mode){
   // 按面单张反相：只反相该面那张源 cut + 只重贴该面成品图（不影响另一面）
   if(!side||!mode){showToast('❌ 未能识别面/颜色',3000);return;}
   var file=dx+'_'+side+'_cut.png';  // HX0164BW_W_cut.png（带款号前缀）
+  _restickerBusy=true;   // 反相→重贴链结束前暂停 4s 自动刷新
   showToast('已提交反'+mode+'（'+side+'面）：'+dx+'，请稍候…');
   fetch(withCat('/api/upload/invert-only?dx='+encodeURIComponent(dx)+'&file='+encodeURIComponent(file)+'&mode='+encodeURIComponent(mode)),{cache:'no-store'})
     .then(function(r){return r.json();})
     .then(function(d){
-      if(!d.ok){showToast('❌ '+d.msg,4000);return;}
+      if(!d.ok){_restickerBusy=false;showToast('❌ '+d.msg,4000);return;}
       if(_invertPolling)return;
       _invertPolling=true;
       _invertCtx={dx:dx,side:side,color:mode};
       pollInvertQueue();
     })
-    .catch(function(e){showToast('❌ 启动失败: '+e,4000);});
+    .catch(function(e){_restickerBusy=false;showToast('❌ 启动失败: '+e,4000);});
 }
 var _invertCtx={};
 function pollInvertQueue(){
@@ -414,7 +420,7 @@ function pollInvertQueue(){
       if(d.last_result===null){setTimeout(pollInvertQueue,1500);return;}
       _invertPolling=false;
       var r=d.last_result;
-      if(!r||!r.ok){showToast('❌ '+(r?r.msg:'反相失败'),4000);return;}
+      if(!r||!r.ok){_restickerBusy=false;showToast('❌ '+(r?r.msg:'反相失败'),4000);return;}
       // 反相完成 → 推该面成品 file → 逐个 resticker 单图重贴
       var dx=_invertCtx.dx, side=_invertCtx.side, color=_invertCtx.color;
       var restickerFiles=[];
@@ -431,6 +437,7 @@ function pollInvertQueue(){
       }
       if(restickerFiles.length===0){
         // 该面没有任何 03_UPLOAD 成品图（首次反相新色），无产物可重贴，提示用户
+        _restickerBusy=false;
         showToast('✅ 已生成 '+color+'色'+side+'面变体；但 03_UPLOAD 里没有该面成品图，需先正常上款一次',6000);
         loadProjects();
         return;
@@ -441,7 +448,7 @@ function pollInvertQueue(){
     .catch(function(){setTimeout(pollInvertQueue,3000);});
 }
 function restickerChain(dx, files, idx){
-  if(idx>=files.length){showToast('✅ 重贴完成',3000);loadProjects();return;}
+  if(idx>=files.length){_restickerBusy=false;showToast('✅ 重贴完成',3000);loadProjects();return;}
   var f=files[idx];
   showToast('重贴 '+(idx+1)+'/'+files.length+': '+f);
   fetch(withCat('/api/upload/resticker-file?dx='+encodeURIComponent(dx)+'&file='+encodeURIComponent(f)),{cache:'no-store'})
@@ -462,28 +469,32 @@ function restickerColor(dx,color){
   // 重新贴图（原图重贴，不反相）：只重贴同色那一组
   if(!color){showToast('❌ 未能识别该图颜色',3000);return;}
   if(!confirm('重新贴图 '+dx+' 的「'+color+'」色组？\n用原图重贴，不反相。'))return;
+  _restickerBusy=true;   // 贴图期间暂停 4s 自动刷新
   showToast('正在重新贴图 '+color+' 色组：'+dx+'…');
   fetch(withCat('/api/upload/resticker?dx='+encodeURIComponent(dx)+'&color='+encodeURIComponent(color)),{cache:'no-store'})
     .then(function(r){return r.json();})
     .then(function(d){
+      _restickerBusy=false;
       showToast((d.ok?('✅ '):'❌ ')+(d.msg||'完成'),5000);
       loadProjects();
     })
-    .catch(function(e){showToast('❌ 重贴失败: '+e,4000);loadProjects();});
+    .catch(function(e){_restickerBusy=false;showToast('❌ 重贴失败: '+e,4000);loadProjects();});
 }
 
 // 整款全部重新贴图（封面缩略图 🎨 按钮）：走 /ps-sticker 完整流水线（平铺图 + BW 合成 + 模特图），
 // 所有颜色/面全部重贴；耗时长（模特图走 white_t_mockup 推理），等后端同步返回后刷新。
 function restickerAll(dx){
   if(!confirm('整款全部重新贴图 '+dx+' ？\n用原图重贴所有颜色/面（平铺图+BW合成+模特图），\n单面款走模特图、BW 款先平铺后模特，耗时较长（几分钟）。'))return;
+  _restickerBusy=true;   // 贴图期间暂停 4s 自动刷新
   showToast('正在整款重贴 '+dx+'（耗时较长，请耐心等待）…');
   fetch(withCat('/api/upload/resticker?dx='+encodeURIComponent(dx)),{cache:'no-store'})
     .then(function(r){return r.json();})
     .then(function(d){
+      _restickerBusy=false;
       showToast((d.ok?('✅ '):'❌ ')+(d.msg||'完成'),7000);
       loadProjects();
     })
-    .catch(function(e){showToast('❌ 整款重贴失败: '+e,4000);loadProjects();});
+    .catch(function(e){_restickerBusy=false;showToast('❌ 整款重贴失败: '+e,4000);loadProjects();});
 }
 
 // v2.5.0 颜色圆点配色（卫衣 10 色 + T恤 BW/B/W + 其他）
