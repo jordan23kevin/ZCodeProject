@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 from pathlib import Path
 
 from . import __version__
@@ -39,6 +41,14 @@ def _build_parser() -> argparse.ArgumentParser:
 """,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument(
+        "--batch",
+        default=None,
+        metavar="JOBS.json",
+        help='批量模式：{"jobs":[{"tag":"...","argv":["...单张模式的全部参数..."]}]}，'
+             "单进程顺序执行全部任务（胚衣素材走缓存），结果写入 JOBS.json.result.json；"
+             "任一失败以退出码 1 结束",
+    )
     parser.add_argument("design", nargs="?", help="输入贴图（透明底 PNG）")
     parser.add_argument("output", nargs="?", help="输出 JPG 路径")
     parser.add_argument(
@@ -241,6 +251,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="黑T 直贴：不分析褶皱、不改任何颜色/明暗，仅按五参定位原色 Normal 贴在黑T上"
              "（保留手部遮挡 occluder；设计图须为已反相黑衫版 _黑*_cut.png）",
     )
+    parser.add_argument(
+        "--plain",
+        action="store_true",
+        help="通用直贴（--black-t-plain 的任意衫色版）：不分析褶皱/阴影/布料明暗，"
+             "仅按五参定位原色 Normal 贴 + 遮罩分层（occluder/抽绳/帽子），"
+             "衫色由 --shirt-color 指定（白→white、黑→black，缺省模板推断）。"
+             "用户 2026-08-23：模特贴图不需要褶皱/阴影分析，只看五参 + 遮罩。",
+    )
     # ---- 黑T PS 风格：Difference 提取大褶皱 → 软 Mask → 仅大褶皱区局部融合 ----
     parser.add_argument(
         "--bt-ps-wrinkle-sigma",
@@ -311,12 +329,66 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="顶层遮挡物 PNG（如 *_occluder.png）：贴图会被遮挡物盖住，模拟真实前后景关系",
     )
+    # ---- 抽绳分层（卫衣抽绳）：原胚衣真实绳子像素盖到最顶层，压住印花 ----
+    parser.add_argument(
+        "--drawstring-mask",
+        default=None,
+        help="抽绳遮罩 PNG（白=绳子）：贴图最后把原胚衣绳子像素盖到最顶层，"
+             "实现「绳子→印花→卫衣」分层。不传则自动探测同目录 <胚衣名>_drawstring_mask.png",
+    )
+    # ---- 手动 PS 遮罩分层（卫衣帽子等）：原胚衣真实像素盖到最顶层，压住印花 ----
+    parser.add_argument(
+        "--manual-mask",
+        default=None,
+        help="手动 PS 遮罩 PNG（白=遮挡区域，如卫衣帽子）：贴图最后把原胚衣该区域像素"
+             "盖到最顶层，实现「帽子→印花→卫衣」分层。不传则自动探测同目录 <胚衣名>_manual.png",
+    )
     return parser
 
 
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+    if args.batch:
+        _run_batch(args.batch)
+        return
+    _run_single(args, parser)
+
+
+def _run_batch(batch_path: str) -> None:
+    """批量模式：单进程顺序跑完 jobs，逐 job 复用单张逻辑，胚衣素材走 core 缓存。"""
+    from . import core as _core
+    _core.IMG_CACHE_ENABLED = True
+
+    jobs = json.loads(Path(batch_path).read_text(encoding="utf-8")).get("jobs", [])
+    parser = _build_parser()
+    results = []
+    ok_count = 0
+    for i, job in enumerate(jobs, 1):
+        tag = job.get("tag") or f"job{i}"
+        try:
+            jargs = parser.parse_args(job.get("argv", []))
+            _run_single(jargs, parser)
+            ok, err = True, ""
+            ok_count += 1
+        except SystemExit:
+            ok, err = False, "参数错误"
+        except Exception as e:  # 单张失败不阻塞整批
+            ok, err = False, str(e)
+        results.append({"tag": tag, "ok": ok, "error": err})
+        line = f"[batch {i}/{len(jobs)}] {'OK' if ok else 'FAIL'} {tag}"
+        if err:
+            line += f": {err}"
+        print(line, flush=True)
+    Path(str(batch_path) + ".result.json").write_text(
+        json.dumps(results, ensure_ascii=False), encoding="utf-8")
+    print(f"[batch] 完成 {ok_count}/{len(jobs)}", flush=True)
+    if ok_count < len(jobs):
+        sys.exit(1)
+
+
+def _run_single(args, parser) -> None:
+    """单张模式主体（原 main 的逻辑，参数已解析）。"""
 
     if args.list_presets:
         print("已配置的模板预设：")
@@ -470,10 +542,21 @@ def main() -> None:
                 blur_radius=args.blur,
             )
             mode_tag = " [BlackT PS]"
-        elif args.black_t_plain:
-            # 黑T 直贴：不分析褶皱、不改动任何颜色/明暗，仅按五参定位原色 Normal 贴。
+        elif args.black_t_plain or args.plain:
+            # 直贴：不分析褶皱、不改动任何颜色/明暗，仅按五参定位原色 Normal 贴。
             # 禁用 tpl_dir（不加载 disp/occlusion/shadow/highlight，关闭全部布料分析），
             # 仅保留手部遮挡 occluder（遮挡物本身，不改色）。
+            # --plain 为通用直贴（--black-t-plain 的任意衫色版）：衫色取 --shirt-color
+            # 或按模板推断（白→white、黑→black），与 --preserve-color 的推断逻辑一致。
+            if args.plain:
+                if shirt_color is None and template_path:
+                    p = str(template_path).lower()
+                    if "white" in p or "白" in p:
+                        shirt_color = "white"
+                    elif "black" in p or "黑" in p:
+                        shirt_color = "black"
+            else:
+                shirt_color = "black"
             result = apply_mockup_transform(
                 design_path=args.design,
                 output_path=args.output,
@@ -485,14 +568,16 @@ def main() -> None:
                 effective_center_x=center,
                 blend_mode=None,
                 quality=quality,
-                shirt_color="black",
+                shirt_color=shirt_color,
                 prepare_method="unpremultiply",
                 realism=False,
                 tpl_dir=None,
                 disp_strength=0.0,
                 occluder=args.occluder,
+                drawstring_mask=args.drawstring_mask,
+                manual_mask=args.manual_mask,
             )
-            mode_tag = " [BlackT Plain]"
+            mode_tag = " [Plain]" if args.plain else " [BlackT Plain]"
         else:
             result = apply_mockup_transform(
                 design_path=args.design,
@@ -524,6 +609,8 @@ def main() -> None:
                 occlusion_min_visibility=args.occlusion_min_vis,
                 fabric_shading=not args.no_fabric_shading,
                 shading_blur=args.shading_blur,
+                drawstring_mask=args.drawstring_mask,
+                manual_mask=args.manual_mask,
             )
             mode_tag = " [保色]" if args.preserve_color else ""
         print(
