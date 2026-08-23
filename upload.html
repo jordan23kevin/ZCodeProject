@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.7</title>
+<title>WB 上款 — 03_UPLOAD 批量上传 v2.5.8</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#1a1a1a;color:#eee;padding:22px}
@@ -437,9 +437,8 @@ function pollInvertQueue(){
       }
       if(restickerFiles.length===0){
         // 该面没有任何 03_UPLOAD 成品图（首次反相新色），无产物可重贴，提示用户
-        _restickerBusy=false;
         showToast('✅ 已生成 '+color+'色'+side+'面变体；但 03_UPLOAD 里没有该面成品图，需先正常上款一次',6000);
-        loadProjects();
+        refreshDxImages(dx).then(function(){_restickerBusy=false;});
         return;
       }
       showToast('✅ 反相完成，正在重贴该面 '+restickerFiles.length+' 张图…');
@@ -448,7 +447,7 @@ function pollInvertQueue(){
     .catch(function(){setTimeout(pollInvertQueue,3000);});
 }
 function restickerChain(dx, files, idx){
-  if(idx>=files.length){_restickerBusy=false;showToast('✅ 重贴完成',3000);loadProjects();return;}
+  if(idx>=files.length){showToast('✅ 重贴完成',3000);refreshDxImages(dx).then(function(){_restickerBusy=false;});return;}
   var f=files[idx];
   showToast('重贴 '+(idx+1)+'/'+files.length+': '+f);
   fetch(withCat('/api/upload/resticker-file?dx='+encodeURIComponent(dx)+'&file='+encodeURIComponent(f)),{cache:'no-store'})
@@ -474,11 +473,48 @@ function restickerColor(dx,color){
   fetch(withCat('/api/upload/resticker?dx='+encodeURIComponent(dx)+'&color='+encodeURIComponent(color)),{cache:'no-store'})
     .then(function(r){return r.json();})
     .then(function(d){
-      _restickerBusy=false;
       showToast((d.ok?('✅ '):'❌ ')+(d.msg||'完成'),5000);
-      loadProjects();
+      // v2.5.8 只刷新该款变化图片；等局部刷新完成再释放 busy，避免 4s 轮询抢跑整卡重建
+      refreshDxImages(dx).then(function(){_restickerBusy=false;});
     })
-    .catch(function(e){_restickerBusy=false;showToast('❌ 重贴失败: '+e,4000);loadProjects();});
+    .catch(function(e){showToast('❌ 重贴失败: '+e,4000);refreshDxImages(dx).then(function(){_restickerBusy=false;});});
+}
+
+// v2.5.8 贴图完成后局部刷新：只更新该款 mtime 变化的图片 URL（不整页重建卡片）。
+// 图片 src 带源图 mtime 缓存戳（&t=），重贴后 mtime 变 → 换 URL 浏览器自动加载新图；
+// 文件名集合变化（新增/删除）才回退整卡重建（保状态）。
+function refreshDxImages(dx){
+  return fetch(withCat('/api/upload/projects'),{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
+    if(!d||!d.projects)return;
+    var np=null;
+    d.projects.forEach(function(p){if(p.dx===dx)np=p;});
+    if(!np)return;
+    var old=DX_FILES[dx]||[];
+    var nf=np.files||[];
+    // 文件名集合变了 → 整卡重建（新增/删除文件）
+    var namesChanged = old.length!==nf.length;
+    if(!namesChanged){
+      for(var i=0;i<old.length;i++){if(old[i].name!==nf[i].name){namesChanged=true;break;}}
+    }
+    if(namesChanged){ loadProjects(); return; }
+    // 只更新 mtime 变化的 img src
+    var mtimes={}; nf.forEach(function(f){mtimes[f.name]=f.mtime;});
+    var changed=0;
+    document.querySelectorAll('#card-'+dx+' img[data-file]').forEach(function(img){
+      var fn=decodeURIComponent(img.getAttribute('data-file'));
+      if(!(fn in mtimes))return;
+      var t=mtimes[fn];
+      // src 已含该 t= 则跳过（未变化）
+      if(img.getAttribute('src').indexOf('&t='+t)>=0 || img.getAttribute('src').indexOf('?t='+t)>=0)return;
+      img.setAttribute('src', withCat('/api/upload/thumb?dx='+encodeURIComponent(dx)+'&file='+encodeURIComponent(fn)+'&t='+t));
+      changed++;
+    });
+    // 同步指纹 + DX_FILES 缓存，避免 4s 自动刷新再整卡重建
+    allProjects=d.projects;
+    _lastFp=_projectsFp(allProjects);
+    DX_FILES[dx]=nf;
+    if(changed>0)showToast('🔄 已刷新 '+changed+' 张变化图片');
+  }).catch(function(){});
 }
 
 // 整款全部重新贴图（封面缩略图 🎨 按钮）：走 /ps-sticker 完整流水线（平铺图 + BW 合成 + 模特图），
@@ -490,11 +526,10 @@ function restickerAll(dx){
   fetch(withCat('/api/upload/resticker?dx='+encodeURIComponent(dx)),{cache:'no-store'})
     .then(function(r){return r.json();})
     .then(function(d){
-      _restickerBusy=false;
       showToast((d.ok?('✅ '):'❌ ')+(d.msg||'完成'),7000);
-      loadProjects();
+      refreshDxImages(dx).then(function(){_restickerBusy=false;});
     })
-    .catch(function(e){_restickerBusy=false;showToast('❌ 整款重贴失败: '+e,4000);loadProjects();});
+    .catch(function(e){showToast('❌ 整款重贴失败: '+e,4000);refreshDxImages(dx).then(function(){_restickerBusy=false;});});
 }
 
 // v2.5.0 颜色圆点配色（卫衣 10 色 + T恤 BW/B/W + 其他）
@@ -549,7 +584,7 @@ function buildCard(p){
         +'<button class="del-overlay" onclick="event.stopPropagation();delUploadImg(this,\''+p.dx+'\',\''+safeFile+'\')" title="删除成品图">×</button>'
         +invertHtml
         +restickerHtml
-        +'<img src="'+withCat('/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts)+'" loading="lazy" decoding="async" onerror="this.onerror=null;this.src=\'/api/upload/original?dx='+p.dx+'&file=\'+encodeURIComponent(\''+safeFile+'\')+\'&t='+origTs+(IS_HOODIE?'&cat=hoodie':'')+'\'">'
+        +'<img data-file="'+encodeURIComponent(f.name)+'" src="'+withCat('/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(f.name)+'&t='+ts)+'" loading="lazy" decoding="async" onerror="this.onerror=null;this.src=\'/api/upload/original?dx='+p.dx+'&file=\'+encodeURIComponent(\''+safeFile+'\')+\'&t='+origTs+(IS_HOODIE?'&cat=hoodie':'')+'\'">'
         +'</div>'
         +'<div class="up-label" title="'+f.name+'">'+upLabel(f.name,p.dx)+'</div>'
         +'</div>');
@@ -576,7 +611,7 @@ function buildCard(p){
     var cts=cover.mtime;  // 同上：用源图 mtime 保证重贴图后 URL 必变
     var coverIdx=files.indexOf(cover);
     coverHtml='<div class="card-cover" onclick="openReviewer(\''+p.dx+'\','+coverIdx+')" title="点击进入审图模式">'
-      +'<img src="'+withCat('/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(cover.name)+'&t='+cts)+'" loading="lazy" decoding="async">'
+      +'<img data-file="'+encodeURIComponent(cover.name)+'" src="'+withCat('/api/upload/thumb?dx='+p.dx+'&file='+encodeURIComponent(cover.name)+'&t='+cts)+'" loading="lazy" decoding="async">'
       +'<span class="cover-count">'+files.length+' 张</span>'
       +'<button class="cover-resticker" title="整款全部重新贴图（平铺图+BW合成+模特图，耗时较长）" onclick="event.stopPropagation();restickerAll(\''+p.dx+'\')">🎨</button>'
       +'</div>';

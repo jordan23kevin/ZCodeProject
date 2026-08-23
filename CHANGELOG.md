@@ -1,5 +1,17 @@
 # Y2 一体化控制系统 — 更新日志
 
+## upload.html v2.5.8 (2026-08-24) — 重贴/反相完成后只刷新变化图片，不再整页重建
+
+- **需求**：重新贴图后 WB 上款不要整页刷新，只刷新有变化的图片。
+- **改动**：
+  - 新增 `refreshDxImages(dx)`：重贴/反相完成后拉最新 `/api/upload/projects`，按 `img[data-file]` 匹配该款每张图，**只把 mtime 变化的 `<img src>` 换成新缓存戳 URL**（浏览器自动加载新图）——不重建卡片、不滚动跳位、其他款不动。
+  - 文件名集合变化（新增/删除文件）才回退整卡重建（保状态）；正常同名重贴只刷 img。
+  - 🎨 `restickerAll` / 🔄 `restickerColor` / ⚡ `runInvert`→`pollInvertQueue`→`restickerChain` 三个贴图入口完成路径从 `loadProjects()` 改为 `refreshDxImages(dx)`。
+  - `_restickerBusy` 释放时序后移：等局部刷新完成再置 false，避免 4s 自动刷新抢跑整卡重建。
+  - 缩略图 img / 封面 img 加 `data-file` 属性（文件名），供局部刷新定位。
+- 保留：手动「🔄 刷新」、在线刷新轮询、页面初始化仍走全量 `loadProjects()`（本就该全量）。
+- 验证：JS 语法 OK；`refreshDxImages` 调用点 7 处覆盖全部贴图完成路径。
+
 ## engine/w_mockup_extra v2.6.4 (2026-08-23) — 模特图专用 cut 路由修复（BW 拆开命名 + 中文色）
 
 - **问题（用户报告 HX0164BW 黑B）**：点重新贴图后平铺图用了 `黑B_cut` 专用图、模特图却用通用 `B_cut`——BW 款**拆开命名**（`HX0164BW_B_cut.png`/`_W_cut.png`）的专用 cut 是 `{dx}_黑B_cut.png` 等，`plan_single_side_jobs._resolve_cut` 原逻辑只找 `{dx}_黑BW_cut.png`（单 BW cut 款命名）→ 找不到 → 模特图退回通用 cut，反黑/反白专用图丢失（平铺图经 ps 链 process_dx_folder 已用专用图，两边不一致）。

@@ -402,12 +402,18 @@ def plan_single_side_jobs(
                 "--effective-center-x", str(meta["effective_center_x"]),
             ]
             is_flat = naming.is_flat_stem(stem)
-            if (not is_flat) and color == "黑":
-                # ★ 黑T 直贴模式（用户 2026-07-15 最终敲定）：
-                # 不分析褶皱、不改动任何颜色/明暗，仅按五参定位原色 Normal 贴 + 手部遮挡。
-                # 对应 white_t_mockup 的 --black-t-plain（关闭 tpl_dir/disp/occlusion/
-                # fabric_shading/shadow/highlight 全部布料分析，只保留手部 occluder）。
-                argv += ["--black-t-plain"]
+            if not is_flat:
+                # ★ 模特图统一直贴（用户 2026-08-23）：不分析褶皱/阴影/布料明暗，
+                # 仅按五参定位原色 Normal 贴 + 遮罩分层（occluder/抽绳/帽子），
+                # 对应 white_t_mockup --plain（--black-t-plain 的任意衫色版）。
+                # 黑T 以前走 --black-t-plain，白T/英文色走保色+位移管线——
+                # 现在统一直贴：模特图不需要褶皱/阴影，只看五参 + 遮罩。
+                argv += ["--plain"]
+                if color == "黑":
+                    argv += ["--shirt-color", "black"]
+                elif color == "白":
+                    argv += ["--shirt-color", "white"]
+                # 英文色（蜜瓜橙等）：--plain 内按模板推断衫色，找不到则 None（unpremultiply 去预乘即可）
                 if embryo["occluder"]:
                     argv += ["--occluder", embryo["occluder"]]
             else:

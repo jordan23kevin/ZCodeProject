@@ -1294,6 +1294,29 @@ def invert_design(design):
     return Image.fromarray(out.astype(np.uint8), "RGBA")
 
 
+# ── 反相目标色（黑/白 + 素材库 8 色；mode 兼容旧版 black/white）────────────────────────────
+_INVERT_COLORS = ("黑", "白", "蜜瓜橙", "浅黄色", "蓝绿色", "宝蓝色",
+                  "孔雀蓝", "明黄色", "草绿色", "粉红色")
+
+
+def _invert_prefix(mode):
+    """反相 mode → 目标色名前缀：black→黑、white→白、其它→中文色名原样（生成 _<色名>X_cut.png 与 only_color 用）。"""
+    if mode == "black":
+        return "黑"
+    if mode == "white":
+        return "白"
+    return mode
+
+
+def _invert_mode_ok(mode):
+    return mode in ("black", "white") or mode in _INVERT_COLORS
+
+
+def _invert_skip_markers():
+    """已生成过的专用变体前缀（_黑/_白/_蜜瓜橙/...），批量反相时从源图排除，避免对变体再反相。"""
+    return tuple("_" + c for c in _INVERT_COLORS)
+
+
 # ── 反相异步队列（单张反黑/反白自动排队，避免页面刷新打断后续请求）────────────────────────────
 _INVERT_QUEUE = queue.Queue()
 _INVERT_STATUS = {
@@ -1306,8 +1329,12 @@ _INVERT_STATUS_LOCK = threading.Lock()
 _INVERT_WORKER_STARTED = False
 
 
-def _process_invert_task(dx, file, mode):
-    """执行单个反相任务：生成变体去背图，再跑完整贴图流水线。返回 (ok, msg)。"""
+def _process_invert_task(dx, file, mode, do_resticker=True):
+    """执行单个反相任务：生成变体去背图（+ 可选：跑贴图流水线）。返回 (ok, msg)。
+
+    do_resticker=False 时只反相不重贴（WB 上款页面按面单张反相用，前端自行调 /resticker 重贴单图）。
+    do_resticker=True（默认）时反相后跑整款该色贴图（AI 去背 贴图 OS 反黑/反白按钮原行为）。
+    """
     src = BASE / dx / "02_REM_BG" / file
     if not src.exists():
         return False, f"{file} 不存在"
@@ -1316,13 +1343,13 @@ def _process_invert_task(dx, file, mode):
     suffix = stem[len(dx)+1:] if stem.startswith(dx + "_") else ""
     if not suffix:
         return False, "无法解析文件名后缀"
-    prefix = "黑" if mode == "black" else "白"
+    prefix = _invert_prefix(mode)
     dest_name = f"{dx}_{prefix}{suffix}_cut.png"
     dest = BASE / dx / "02_REM_BG" / dest_name
 
     img = Image.open(src).convert("RGBA")
     inv = invert_design(img)
-    role = f"黑{suffix}" if mode == "black" else f"白{suffix}"
+    role = f"{prefix}{suffix}"
     inv.save(dest)
 
     # 注册变体元数据
@@ -1347,11 +1374,13 @@ def _process_invert_task(dx, file, mode):
         except Exception:
             pass
 
-    # 反相后重跑该款完整贴图+BW合成流水线（反黑只贴黑、反白只贴白）
-    only_color = "黑" if mode == "black" else "白"
-    results = Handler._run_sticker_task([dx], only_color=only_color)
-    ok, msg = results[0][1], results[0][2]
-    return ok, f"已生成 {dest_name}，{msg}"
+    # 反相后重跑该款完整贴图+BW合成流水线（反黑只贴黑、反白只贴白、反<色>只贴该色）
+    if do_resticker:
+        only_color = prefix
+        results = Handler._run_sticker_task([dx], only_color=only_color)
+        ok, msg = results[0][1], results[0][2]
+        return ok, f"已生成 {dest_name}，{msg}"
+    return True, f"已生成 {dest_name}（按面重贴由前端触发）"
 
 
 def _invert_worker():
@@ -1364,7 +1393,8 @@ def _invert_worker():
         dx = task["dx"]
         file = task["file"]
         mode = task["mode"]
-        label = "反黑" if mode == "black" else "反白"
+        do_resticker = task.get("do_resticker", True)
+        label = f"反{_invert_prefix(mode)}"
         try:
             with _INVERT_STATUS_LOCK:
                 _INVERT_STATUS["running"] = True
@@ -1372,7 +1402,7 @@ def _invert_worker():
                 _INVERT_STATUS["current"] = f"{dx}/{file}({label})"
                 _INVERT_STATUS["last_result"] = None
             _set_ps_status(True, label, dx, "排队任务", f"处理 {file}")
-            ok, msg = _process_invert_task(dx, file, mode)
+            ok, msg = _process_invert_task(dx, file, mode, do_resticker=do_resticker)
             with _INVERT_STATUS_LOCK:
                 _INVERT_STATUS["last_result"] = {"ok": ok, "msg": msg}
         except Exception as e:
@@ -1399,11 +1429,16 @@ def _start_invert_worker():
 def batch_invert_rem(dx_list, mode="black"):
     """批量反相：对选中 DX 的所有非黑版/非白版 _cut.png 反相生成黑版或白版专用图，
     然后自动跑完整平铺图贴图流水线（黑T/白T专用 → 通用贴图 → BW 合成）。
-    mode: 'black' 生成 _黑* 白色剪影；'white' 生成 _白* 黑色剪影。
+    mode: 'black' 生成 _黑* 白色剪影；'white' 生成 _白* 黑色剪影；中文色名（如 蜜瓜橙）生成 _蜜瓜橙* 变体。
     所有需要贴图的款会一次性交给 _run_sticker_task，PS 全程只开一次。
     dx_list: [dx, ...]
     返回: [{dx, files:[{src,dest}], sticker_ok, sticker_msg, ok, msg}, ...]
     """
+    if not _invert_mode_ok(mode):
+        return [{"dx": dx, "files": [], "sticker_ok": False,
+                 "sticker_msg": "", "ok": False,
+                 "msg": f"{dx}: mode 必须是 black/white 或色名（{_INVERT_COLORS}）"} for dx in dx_list]
+    prefix = _invert_prefix(mode)
     results = []
     sticker_queue = []
     sticker_index = {}
@@ -1417,8 +1452,7 @@ def batch_invert_rem(dx_list, mode="black"):
 
         files = []
         errors = []
-        prefix = "黑" if mode == "black" else "白"
-        skip_markers = ("_黑", "_白")
+        skip_markers = _invert_skip_markers()
         for f in sorted(rem_dir.iterdir()):
             name = f.name
             if not name.lower().endswith("_cut.png"):
@@ -1436,7 +1470,7 @@ def batch_invert_rem(dx_list, mode="black"):
                 img = Image.open(f).convert("RGBA")
                 # 统一智能反相，仅处理非透明像素；黑衫靠反相本身显色，不再垫白墨
                 inv = invert_design(img)
-                role = f"黑{suffix}" if mode == "black" else f"白{suffix}"
+                role = f"{prefix}{suffix}"
                 inv.save(dest)
                 files.append({"src": name, "dest": dest_name})
                 # 注册变体元数据
@@ -1477,7 +1511,7 @@ def batch_invert_rem(dx_list, mode="black"):
         sticker_queue.append(dx)
 
     if sticker_queue:
-        only_color = "黑" if mode == "black" else "白"  # 反黑只贴黑、反白只贴白（其余颜色不重贴）
+        only_color = prefix  # 反黑只贴黑、反白只贴白、反<色>只贴该色（其余颜色不重贴）
         sticker_results = Handler._run_sticker_task(sticker_queue, only_color=only_color)
         sticker_map = {dx: (ok, msg) for dx, ok, msg in sticker_results}
         for dx in sticker_queue:
@@ -1754,6 +1788,8 @@ class Handler(BaseHTTPRequestHandler):
             self._resticker(dx, file)
         elif path == "/invert-rem":
             self._invert_rem(dx, file)
+        elif path == "/invert-only":
+            self._invert_only(dx, file)
         elif path == "/invert-queue-status":
             self._invert_queue_status()
         elif path == "/batch-invert-rem":
@@ -2996,7 +3032,11 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         # 批量贴图默认跳过黑T专用贴图（避免处理已有的黑版文件），单款贴图保留黑T
         qs = parse_qs(urlparse(self.path).query) if '?' in self.path else {}
         skip_black = len(dx_list) > 1 or qs.get("skip_black", [""])[0] == "1"
-        results = Handler._run_sticker_task(dx_list, skip_black=skip_black)
+        # color 可选：只重新贴图该颜色组（WB 上款页「🔄 重新贴图」用，原图重贴不反相）
+        color = qs.get("color", [""])[0]
+        if color and color not in wb_naming.COLOR_NAMES:
+            self._send_json({"ok": False, "msg": f"color 必须是色名（{wb_naming.COLOR_NAMES}）"}); return
+        results = Handler._run_sticker_task(dx_list, skip_black=skip_black, only_color=color or None)
         ok_all = all(r[1] for r in results)
         msgs = "; ".join(f"{r[0]}: {r[2]}" for r in results)
         self._send_json({"ok": ok_all, "msg": msgs})
@@ -3173,16 +3213,18 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             return
 
         # 平铺图 / 模特图：先定位源去背图
-        prefix = "黑" if color == "黑" else "白" if color == "白" else None
+        # 专用 cut 支持全部 10 色（反黑/反白/反<中文色>生成）：{dx}_{color}{side}_cut.png
+        # （如 黑W_cut / 白B_cut / 明黄色W_cut）。v2.6.4 修 ps 链 process_dx_folder 时
+        # 已支持中文色；这里 _resticker（⚡反相后单图重贴）必须同样支持，否则
+        # HX0164BW 明黄色W 反相后重贴会退回通用 W_cut，要再点一次🔄才用专用图。
         candidates = []
-        if prefix:
-            candidates.append(f"{dx}_{prefix}{side}_cut.png")
+        if color in wb_naming.COLOR_NAMES:
+            candidates.append(f"{dx}_{color}{side}_cut.png")
         candidates.append(f"{dx}_{side}_cut.png")
         if dx.endswith("BW") or dx.endswith("WB"):
-            # BW 款黑白专用 cut 文件名是 {dx}_黑BW_cut.png / _白BW_cut.png（反黑/反白生成），
-            # 优先于通用 BW_cut（否则黑白重贴会退回通用图，丢反黑/反白效果）
-            if prefix:
-                candidates.append(f"{dx}_{prefix}BW_cut.png")
+            # BW 款专用 cut：{dx}_{color}BW_cut.png（黑白如 黑BW_cut、中文色如 明黄色BW_cut）
+            if color in wb_naming.COLOR_NAMES:
+                candidates.append(f"{dx}_{color}BW_cut.png")
             # 双面款只有单张 BW 合成 cut（正背面共用）时，B 面重贴也用它
             # （与 ps 链 process_dx_folder 对 BW_cut 的处理一致：同一张 cut 贴 W 和 B）
             candidates.append(f"{dx}_BW_cut.png")
@@ -3309,17 +3351,17 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 
         qs = parse_qs(self.path.split('?', 1)[1]) if '?' in self.path else {}
         mode = qs.get("mode", ["black"])[0].lower()
-        if mode not in ("black", "white"):
-            self._send_json({"ok": False, "msg": "mode 必须是 black 或 white"}); return
+        if not _invert_mode_ok(mode):
+            self._send_json({"ok": False, "msg": f"mode 必须是 black/white 或色名（{_INVERT_COLORS}）"}); return
+        prefix = _invert_prefix(mode)
 
         # 已是对应专用图则无需再反
-        if mode == "black" and "_黑" in file:
-            self._send_json({"ok": False, "msg": "已是黑版专用图，无需反黑"}); return
-        if mode == "white" and "_白" in file:
-            self._send_json({"ok": False, "msg": "已是白版专用图，无需反白"}); return
-        # 从另一版专用图再反没有意义（剪影再反还是剪影），也跳过
-        if (mode == "black" and "_白" in file) or (mode == "white" and "_黑" in file):
-            self._send_json({"ok": False, "msg": "请从原始 B/W/BW 去背图执行反相"}); return
+        if f"_{prefix}" in file:
+            self._send_json({"ok": False, "msg": f"已是{prefix}版专用图，无需反{prefix}"}); return
+        # 从其它版专用图再反没有意义（剪影再反还是剪影），也跳过
+        for c in _INVERT_COLORS:
+            if c != prefix and f"_{c}" in file:
+                self._send_json({"ok": False, "msg": "请从原始 B/W/BW 去背图执行反相"}); return
 
         src = BASE / dx / "02_REM_BG" / file
         if not src.exists():
@@ -3330,9 +3372,36 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         _INVERT_QUEUE.put({"dx": dx, "file": file, "mode": mode})
         with _INVERT_STATUS_LOCK:
             _INVERT_STATUS["queue_len"] = _INVERT_QUEUE.qsize()
-        label = "反黑" if mode == "black" else "反白"
+        label = f"反{prefix}"
         self._send_json({"ok": True, "queued": True,
                          "msg": f"已加入{label}队列，等待后台处理 {file}"})
+
+    # 只反相不重贴（WB 上款按面单张反相用，前端反相完成后自行调 /resticker 重贴单图）
+    def _invert_only(self, dx, file):
+        from urllib.parse import parse_qs
+        if not _ID_RE.match(dx) or "/" in file or "\\" in file:
+            self._send_json({"ok": False, "msg": "参数非法"}); return
+        if not file.lower().endswith("_cut.png"):
+            self._send_json({"ok": False, "msg": "仅支持 _cut.png 去背图"}); return
+        qs = parse_qs(self.path.split('?', 1)[1]) if '?' in self.path else {}
+        mode = qs.get("mode", ["black"])[0].lower()
+        if not _invert_mode_ok(mode):
+            self._send_json({"ok": False, "msg": f"mode 必须是 black/white 或色名（{_INVERT_COLORS}）"}); return
+        prefix = _invert_prefix(mode)
+        if f"_{prefix}" in file:
+            self._send_json({"ok": False, "msg": f"已是{prefix}版专用图，无需反{prefix}"}); return
+        for c in _INVERT_COLORS:
+            if c != prefix and f"_{c}" in file:
+                self._send_json({"ok": False, "msg": "请从原始 B/W/BW 去背图执行反相"}); return
+        src = BASE / dx / "02_REM_BG" / file
+        if not src.exists():
+            self._send_json({"ok": False, "msg": f"{file} 不存在"}); return
+        _start_invert_worker()
+        _INVERT_QUEUE.put({"dx": dx, "file": file, "mode": mode, "do_resticker": False})
+        with _INVERT_STATUS_LOCK:
+            _INVERT_STATUS["queue_len"] = _INVERT_QUEUE.qsize()
+        self._send_json({"ok": True, "queued": True,
+                         "msg": f"已加入反{prefix}队列（仅反相不重贴），等待后台处理 {file}"})
 
     # 反相队列状态查询（前端轮询）
     def _invert_queue_status(self):
@@ -3346,8 +3415,8 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         qs = parse_qs(self.path.split('?', 1)[1]) if '?' in self.path else {}
         dx_str = qs.get("dx", [""])[0]
         mode = qs.get("mode", ["black"])[0].lower()
-        if mode not in ("black", "white"):
-            self._send_json({"ok": False, "msg": "mode 必须是 black 或 white"}); return
+        if not _invert_mode_ok(mode):
+            self._send_json({"ok": False, "msg": f"mode 必须是 black/white 或色名（{_INVERT_COLORS}）"}); return
         if not dx_str:
             self._send_json({"ok": False, "msg": "缺少 dx 参数"}); return
         dx_list = [d.strip() for d in dx_str.split(",") if d.strip()]
@@ -3358,7 +3427,7 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
         if lock.exists():
             self._send_json({"ok": False, "msg": "已有批量反相任务在运行，请等其完成"}); return
 
-        label = "批量反黑" if mode == "black" else "批量反白"
+        label = f"批量反{_invert_prefix(mode)}"
 
         def _run():
             try:
