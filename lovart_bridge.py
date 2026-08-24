@@ -1717,7 +1717,15 @@ def _scan_upload_projects(projects_dir: Path = None, prefix: str = "DX", thumb_d
         if not files:
             continue
         dx_date = _dx_dir_date(d)
-        projects.append({"dx": dx, "date": dx_date, "files": files})
+        # BW 共用源图判定：02_REM_BG 只有 {dx}_BW_cut.png、没有独立 B/W cut
+        # → B/W 两面成品贴的是同一张图，反相只能对 BW_cut 做一次（前端据此只放每色一个 ⚡）
+        rem_dir = d / "02_REM_BG"
+        bw_shared = False
+        if rem_dir.is_dir():
+            has_bw_cut = (rem_dir / f"{dx}_BW_cut.png").exists()
+            has_split_cut = (rem_dir / f"{dx}_B_cut.png").exists() or (rem_dir / f"{dx}_W_cut.png").exists()
+            bw_shared = has_bw_cut and not has_split_cut
+        projects.append({"dx": dx, "date": dx_date, "files": files, "bw_shared": bw_shared})
     return projects
 
 
@@ -4797,7 +4805,10 @@ def api_pricing_reprice():
         label += f" 页{pages}"
     resp, code = _start_pricing_script(
         "reprice", args, label,
-        extra_env={"HENGJIA_FLOOR_OVERRIDE": str(override_path)},
+        extra_env={
+            "HENGJIA_FLOOR_OVERRIDE": str(override_path),
+            "HENGJIA_FLOOR_OVERRIDE_HX": str(override_path),
+        },
     )
     return jsonify(resp), code
 
@@ -7822,14 +7833,22 @@ def _sync_log_reader(proc):
 
 @app.route('/api/activity/sync-products', methods=['POST'])
 def api_activity_sync_products():
-    """启动商品信息同步（报活动前置：自动开 Edge → 等『好了』→ 抓最新商品信息，可指定页范围）。"""
+    """启动商品信息同步。mode=full → 全量抓取重建 SQLite 基底（约 43 页×100，1~1.5 小时）；
+    默认 incremental → 抓指定页（1-5 页）合并进基底。两者都需在 Edge 确认上新页后点『好了』。"""
     data = request.get_json(silent=True) or {}
+    mode = str(data.get("mode") or "incremental").strip() or "incremental"
     start_pg = data.get("start")
     end_pg = data.get("end")
     pages = str(data.get("pages") or "").strip() or "1-5"
 
-    if start_pg is not None and end_pg is not None:
-        pages = f"{int(start_pg)}-{int(end_pg)}"
+    if mode == "full":
+        args = ["--mode", "full"]
+        label = "商品信息全量同步（重建基底）"
+    else:
+        if start_pg is not None and end_pg is not None:
+            pages = f"{int(start_pg)}-{int(end_pg)}"
+        args = ["--pages", pages]
+        label = f"商品信息增量同步 (页 {pages})"
 
     with sync_lock:
         if sync_task.get("status") == "running" and sync_task.get("proc") and sync_task["proc"].poll() is None:
@@ -7837,7 +7856,7 @@ def api_activity_sync_products():
         sync_task["status"] = "running"
         sync_task["started_at"] = datetime.now().isoformat()
         sync_task["completed_at"] = None
-        sync_task["log"] = [f"[{datetime.now().strftime('%H:%M:%S')}] 启动: 商品信息同步 (页 {pages})"]
+        sync_task["log"] = [f"[{datetime.now().strftime('%H:%M:%S')}] 启动: {label}"]
         sync_task["log_index"] = 0
 
     if not os.path.exists(ACTIVITY_SYNC_SCRIPT):
@@ -7858,7 +7877,7 @@ def api_activity_sync_products():
     env.setdefault("PYTHONIOENCODING", "utf-8")
     try:
         proc = subprocess.Popen(
-            [get_python(), ACTIVITY_SYNC_SCRIPT, "--pages", pages],
+            [get_python(), ACTIVITY_SYNC_SCRIPT] + args,
             cwd=ACTIVITY_DIR,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -7876,7 +7895,9 @@ def api_activity_sync_products():
     with sync_lock:
         sync_task["proc"] = proc
     threading.Thread(target=_sync_log_reader, args=(proc,), daemon=True).start()
-    return jsonify({"success": True, "message": f"已启动商品信息同步（{pages} 页），请在 Edge 确认上新页面后点『好了』"})
+    if mode == "full":
+        return jsonify({"success": True, "message": f"已启动{label}（约 1~1.5 小时），请在 Edge 确认上新页面后点『好了』"})
+    return jsonify({"success": True, "message": f"已启动{label}，请在 Edge 确认上新页面后点『好了』"})
 
 
 @app.route('/api/activity/sync-signal', methods=['POST'])
@@ -7922,6 +7943,36 @@ def api_activity_sync_status():
             "log": logs,
             "result": result,
         })
+
+
+@app.route('/api/activity/sync-stop', methods=['POST'])
+def api_activity_sync_stop():
+    """停止当前商品信息同步脚本（仅终止 sync_task 管理的子进程 PID，不误杀其它脚本）。"""
+    with sync_lock:
+        proc = sync_task.get("proc")
+        if not proc or proc.poll() is not None:
+            # 没有运行中的同步进程：清理状态
+            sync_task["status"] = "idle"
+            sync_task["proc"] = None
+            sync_task["completed_at"] = datetime.now().isoformat()
+            return jsonify({"success": True, "message": "当前没有运行中的商品信息同步任务"})
+        pid = proc.pid
+        # 先标记 stopped，防止 _sync_log_reader 收尾时把状态覆盖回 completed/error
+        sync_task["status"] = "stopped"
+        sync_task["log"] = sync_task.get("log", []) + [
+            f"[{datetime.now().strftime('%H:%M:%S')}] 用户点击停止，终止同步脚本 PID {pid}"]
+    try:
+        # 精准杀该 PID 的进程树（taskkill /T /F），不匹配其它脚本
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=10)
+    except Exception as e:
+        with sync_lock:
+            sync_task["status"] = "error"
+            sync_task["completed_at"] = datetime.now().isoformat()
+        return jsonify({"success": False, "message": f"停止同步脚本失败: {e}"}), 500
+    with sync_lock:
+        sync_task["completed_at"] = datetime.now().isoformat()
+        sync_task["proc"] = None
+    return jsonify({"success": True, "message": f"已停止商品信息同步（PID {pid}）"})
 
 
 @app.route('/api/activity/sync-download')
