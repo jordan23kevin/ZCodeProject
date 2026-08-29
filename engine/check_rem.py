@@ -157,7 +157,7 @@
 
 端口 8766（T恤，避开 01_CHECK 的 8765）；卫衣实例用 8767。多实例各自扫描自己品类根下的 DX*/HX* 款。
 """
-__version__ = "2.7.5"
+__version__ = "2.7.6"
 VERSION = __version__
 import os, re, json, time, hashlib, ctypes, subprocess, sys, shutil, requests, io, threading, queue, argparse, numpy as np
 from pathlib import Path
@@ -252,6 +252,15 @@ MEITU_CONFIG = Path(r"E:\Claude code\WB去背\去背变清晰\config.json")
 MEITU_TRACK  = WB_ROOT / ".meitu_track.json"
 TEMP_REMBG   = WB_ROOT / "_temp_rembg"          # 暂存根
 CONFIG_BACKUP = MEITU_CONFIG.with_suffix(".json.bak_checkrem")  # 备份
+
+# 颜色键控脚本去背（与美图去背并存，供「脚本去背」按钮使用）
+# 用 append 而非 insert，避免该目录里的同名模块遮蔽本引擎目录的模块。
+sys.path.append(r"C:\Users\Administrator\ZCodeProject\engine")
+try:
+    import color_key_rembg as _ck_rembg
+except Exception as _ck_err:
+    _ck_rembg = None
+    print(f"  [WARN] color_key_rembg 加载失败（脚本去背不可用）: {_ck_err}", flush=True)
 
 # 去背任务强制重跑：跟踪当前运行中的任务，供 _force_stop_rembg 精准终止。
 # token 用于区分新旧任务的锁，防止旧任务收尾清理时误删新任务刚写入的锁。
@@ -1175,6 +1184,83 @@ def batch_rembg(dx_files):
     return results
 
 
+# ── 脚本批量去背（颜色键控，与美图去背并存）─────────────
+def batch_script_rembg(dx_files):
+    """脚本批量去背：本地颜色键控（color_key_rembg），不弹美图、不占屏幕，约 0.1s/张。
+    dx_files: [(dx, ai_file), ...]；返回 [(dx, ai_file, ok, msg), ...]。
+    产出与美图去背完全一致：02_REM_BG/{stem}_cut.png → wb_meta 注册 → Bridge 血缘
+    → ESRGAN 放大。旧 _cut.png 进回收站（失败自动还原）。"""
+    if _ck_rembg is None:
+        return [(dx, f, False, "color_key_rembg 模块不可用") for dx, f in dx_files]
+    results = []
+    total = len(dx_files)
+    upscaler = MEITU_SCRIPT.parent / "upscale_worker.py"
+    for i, (dx, ai_file) in enumerate(dx_files):
+        ai_path = BASE / dx / "01_AI" / ai_file
+        rem_dir = BASE / dx / "02_REM_BG"
+        stem = os.path.splitext(ai_file)[0]
+        cut_name = f"{stem}_cut.png"
+        _set_ps_status(True, "脚本去背", dx, f"{i + 1}/{total}", ai_file)
+        print(f"  [脚本去背] ({i + 1}/{total}) {dx}/{ai_file}", flush=True)
+        if not ai_path.exists():
+            results.append((dx, ai_file, False, f"{dx}/{ai_file} 不存在"))
+            continue
+        ai_meta = _meta_for(ai_path)
+        ai_uid = ai_meta.get("uid")
+        group_id = ai_meta.get("group_id") or ""
+        role = ai_meta.get("role") or _role_from_name(ai_file, dx)
+        # 备份旧 cut（失败还原用）
+        backup_dir = TEMP_REMBG / "_script_backup" / dx
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        old_cut = rem_dir / cut_name
+        had_old = old_cut.exists()
+        if had_old:
+            shutil.copy2(str(old_cut), str(backup_dir / cut_name))
+            send_to_recycle_bin(str(old_cut))
+        rem_dir.mkdir(parents=True, exist_ok=True)
+        dest = rem_dir / cut_name
+        try:
+            info, err = _ck_rembg.color_key_remove(str(ai_path), str(dest))
+        except Exception as e:
+            info, err = None, f"{type(e).__name__}: {e}"
+        if err or not dest.exists() or dest.stat().st_size <= 30_000:
+            _restore_one_backup(cut_name, backup_dir, rem_dir)
+            results.append((dx, ai_file, False,
+                f"{dx}/{ai_file} 脚本去背失败: {err or '未产出'}" + ("（已还原旧图）" if had_old else "")))
+            continue
+        # 注册去背输出元数据
+        if wb_meta is not None:
+            try:
+                wb_meta.register_rembg(dest, uid=ai_uid or _new_uid(dest),
+                                       group_id=group_id, role=role,
+                                       parent_uid=ai_uid or "", ai_file=ai_file)
+            except Exception as e:
+                print(f"  [脚本去背] 元数据注册失败 {dest}: {e}", flush=True)
+        # Bridge 血缘
+        try:
+            requests.post("http://127.0.0.1:8765/api/lineage/register",
+                json={"child_path": str(dest), "parent_path": str(ai_path),
+                      "stage": "rembg", "uid": ai_uid, "group_id": group_id, "role": role},
+                timeout=1)
+        except Exception:
+            pass
+        # ESRGAN 放大到 2048（与美图批量一致，同步跑确保产出即成品）
+        if upscaler.exists():
+            try:
+                subprocess.run([sys.executable, str(upscaler), str(dest)],
+                               capture_output=True, timeout=120)
+            except Exception as e:
+                print(f"  [脚本去背] ESRGAN 放大跳过: {e}", flush=True)
+        fg = info.get("fg_ratio") if info else "?"
+        print(f"  [脚本去背] OK bg={info['bg_color'] if info else '?'} fg={fg}% → {cut_name}", flush=True)
+        results.append((dx, ai_file, True,
+            f"{dx}/{ai_file} 脚本去背完成 → {cut_name}（前景 {fg}%）"))
+    shutil.rmtree(str(TEMP_REMBG / "_script_backup"), ignore_errors=True)
+    if _PS_STATUS.get("task") == "脚本去背":
+        _clear_ps_status()
+    return results
+
+
 # ── 暗部/亮部智能显色（替代旧版纯白/纯黑剪影）────────────────────────
 def enhance_dark_print_for_black_shirt(design, shirt="black",
         dark_boost=0.55, protect_threshold=140, min_brightness=20,
@@ -1757,6 +1843,8 @@ class Handler(BaseHTTPRequestHandler):
             self._rembg(dx, file)
         elif path == "/batch-rembg":
             self._batch_rembg()
+        elif path == "/batch-script-rembg":
+            self._batch_script_rembg()
         elif path == "/api/check-rembg-lock":
             self._check_rembg_lock()
         elif path == "/batch-result":
@@ -2256,11 +2344,12 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
 	    <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)" style="width:18px;height:18px;accent-color:#4CAF50;vertical-align:middle;"> 全选
 	  </label>
 	  <button onclick="batchRembg()" id="batchBtn" style="cursor:pointer;background:#ff9800;color:#fff;border:none;border-radius:4px;font-weight:bold;margin-left:0;" disabled>⚡ 批量去背 (0)</button>
+	  <button onclick="batchScriptRembg()" id="batchScriptRembgBtn" title="脚本去背：颜色键控本地处理（不弹美图、不占屏幕，约0.1s/张），覆盖已有去背图（旧图进回收站）" style="cursor:pointer;background:#00695c;color:#fff;border:none;border-radius:4px;font-weight:bold;margin-left:0;" disabled>🎨 脚本去背 (0)</button>
 	  <button onclick="batchSticker()" id="batchStickerBtn" title="批量贴图：单面款走模特图贴图，其它走平铺图贴图+BW合成，不处理黑版文件，不反相" style="cursor:pointer;background:#7b1fa2;color:#fff;border:none;border-radius:4px;font-weight:bold;margin-left:0;" disabled>📎 批量贴图 (0)</button>
 	  <button onclick="batchInvertRem('black')" id="batchInvertBtn" title="批量反黑：对选中款的所有B/W/BW去背图生成黑版专用图，并自动平铺图贴图+BW合成" style="cursor:pointer;background:#311b92;color:#fff;border:none;border-radius:4px;font-weight:bold;margin-left:0;" disabled>🌑 批量反黑 (0)</button>
 	  <button onclick="batchInvertRem('white')" id="batchInvertWhiteBtn" title="批量反白：对选中款的所有B/W/BW去背图生成白版专用图，并自动平铺图贴图+BW合成" style="cursor:pointer;background:#9575cd;color:#000;border:none;border-radius:4px;font-weight:bold;margin-left:0;" disabled>☀ 批量反白 (0)</button>
   <span class="tb-sep"></span>
-	  <button onclick="copyMissing()" title="复制当前日期缺图款号（缺AI图/缺去背）" style="background:#e91e63;margin-left:0;">📋 复制缺图款号</button>
+	  <button onclick="copyMissing()" title="复制当前日期缺去背图的款号（缺AI图不复制）" style="background:#e91e63;margin-left:0;">📋 复制缺图款号</button>
 	  <button onclick="copyNoSticker()" title="复制当前日期所有未生成成品的款号" style="background:#7b1fa2;margin-left:0;">📋 复制缺贴图</button>
   </div>
 	</div>
@@ -2557,6 +2646,80 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             self._send_json({"ok": True, "msg": f"已终止旧任务，批量去背重新启动，共 {len(dx_files)} 张"})
         else:
             self._send_json({"ok": True, "msg": f"批量去背已启动，共 {len(dx_files)} 张"})
+
+    # 脚本批量去背（颜色键控，不弹美图）——与批量去背共用锁与结果文件机制
+    def _batch_script_rembg(self):
+        qs = parse_qs(self.path.split('?', 1)[1]) if '?' in self.path else {}
+        dx_str = qs.get("dx", [""])[0]
+        dx_list = [d.strip() for d in dx_str.split(",") if d.strip()]
+        if not dx_list:
+            self._send_json({"ok": False, "msg": "缺少 dx 参数"}); return
+        if _ck_rembg is None:
+            self._send_json({"ok": False, "msg": "color_key_rembg 模块未加载，脚本去背不可用"}); return
+
+        # 对每个 DX，找所有 AI 生成图（与批量去背同一规则：有 BW 只处理 BW）
+        dx_files = []
+        for dx in dx_list:
+            ai_dir = BASE / dx / "01_AI"
+            if not ai_dir.is_dir():
+                continue
+            files = [f.name for f in sorted(ai_dir.iterdir())
+                     if f.is_file() and is_generated_ai(f.name, dx)]
+            if any("_BW" in name for name in files):
+                files = [name for name in files if "_BW" in name]
+            dx_files.extend((dx, name) for name in files)
+
+        if not dx_files:
+            self._send_json({"ok": False, "msg": "没有找到需要去背的图"}); return
+
+        TEMP_REMBG.mkdir(parents=True, exist_ok=True)
+        lock = TEMP_REMBG / ".rembg_lock"
+        forced = lock.exists()
+        if forced:
+            _force_stop_rembg()
+            # 清掉旧结果文件，避免旧任务的残留结果被 /batch-result 误当成新结果
+            try:
+                _old_result = TEMP_REMBG / "_batch_result.json"
+                if _old_result.exists():
+                    _old_result.unlink()
+            except Exception:
+                pass
+        token = _uuid.uuid4().hex
+        # 同步写锁：确保前端轮询 /batch-result 时立即能看到"进行中"，无竞态窗口
+        lock.write_text(f"batch\t{token}", encoding="utf-8")
+        def _run():
+            try:
+                results = batch_script_rembg(dx_files)
+                ok_count = sum(1 for r in results if r[2])
+                fail_count = len(results) - ok_count
+                msg = f"完成 {ok_count}/{len(results)}"
+                if fail_count:
+                    msg += f", {fail_count}个失败"
+                result_file = TEMP_REMBG / "_batch_result.json"
+                with open(result_file, 'w', encoding='utf-8') as f:
+                    json.dump({"ok": True, "msg": msg, "results": [
+                        {"dx": r[0], "ai_file": r[1], "ok": r[2], "msg": r[3]} for r in results
+                    ]}, f, ensure_ascii=False)
+            finally:
+                # 仅当锁还是本任务的（token 匹配）才删除，避免误删后续新任务的锁
+                try:
+                    if lock.exists() and token in lock.read_text(encoding="utf-8"):
+                        lock.unlink()
+                except Exception:
+                    pass
+                with _REMBG_STATE_LOCK:
+                    if _REMBG_STATE.get("token") == token:
+                        _REMBG_STATE["token"] = None
+                        _REMBG_STATE["thread"] = None
+        t = threading.Thread(target=_run, daemon=True)
+        with _REMBG_STATE_LOCK:
+            _REMBG_STATE["token"] = token
+            _REMBG_STATE["thread"] = t
+        t.start()
+        if forced:
+            self._send_json({"ok": True, "msg": f"已终止旧任务，脚本去背重新启动，共 {len(dx_files)} 张"})
+        else:
+            self._send_json({"ok": True, "msg": f"脚本去背已启动，共 {len(dx_files)} 张（本地处理，不弹美图）"})
 
     # 批量去背结果查询
     def _batch_result(self):
@@ -3394,6 +3557,14 @@ h1 .v {{ font-size:14px; color:#666; font-weight:normal; }}
             if c != prefix and f"_{c}" in file:
                 self._send_json({"ok": False, "msg": "请从原始 B/W/BW 去背图执行反相"}); return
         src = BASE / dx / "02_REM_BG" / file
+        if not src.exists():
+            # BW 共用款兜底：前端/旧调用传来 {dx}_B/W_cut.png，但该款只有 {dx}_BW_cut.png
+            m = re.match(rf"^{re.escape(dx)}_(B|W)_cut\.png$", file)
+            if m:
+                alt = BASE / dx / "02_REM_BG" / f"{dx}_BW_cut.png"
+                if alt.exists():
+                    file = f"{dx}_BW_cut.png"
+                    src = alt
         if not src.exists():
             self._send_json({"ok": False, "msg": f"{file} 不存在"}); return
         _start_invert_worker()

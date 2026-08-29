@@ -20,6 +20,8 @@ function updateBatchBtn(){
   var btn=document.getElementById('batchBtn');
   btn.disabled=n===0;
   btn.textContent='⚡ 批量去背 ('+n+')';
+  var ckbtn=document.getElementById('batchScriptRembgBtn');
+  if(ckbtn){ckbtn.disabled=n===0; ckbtn.textContent='🎨 脚本去背 ('+n+')';}
   var sbtn=document.getElementById('batchStickerBtn');
   if(sbtn){sbtn.disabled=n===0; sbtn.textContent='📎 批量贴图 ('+n+')';}
   var ibtn=document.getElementById('batchInvertBtn');
@@ -61,6 +63,40 @@ function batchRembg(){
     },2000);
   });
 }
+function batchScriptRembg(){
+  var checked=document.querySelectorAll('.dx-check:checked');
+  if(!checked.length){showToast('请先勾选需要去背的款');return;}
+  if(!confirm('脚本去背 '+checked.length+' 个款？颜色键控本地处理，不弹美图、不占屏幕。\n已有去背图将被覆盖（旧图进回收站）。\n若已有去背任务正在运行，将被强制中断。'))return;
+  var dxList=[];
+  checked.forEach(function(cb){dxList.push(cb.getAttribute('data-dx'));});
+  var btn=document.getElementById('batchScriptRembgBtn');
+  btn.disabled=true;btn.textContent='⏳ 启动中…';
+  showToast('⏳ 启动脚本去背，共 '+dxList.length+' 款…');
+  fetch('/batch-script-rembg?dx='+dxList.join(',')).then(function(r){return r.json();}).then(function(d){
+    if(!d.ok){showToast('❌ '+d.msg);btn.textContent='🎨 脚本去背 (0)';btn.disabled=false;return;}
+    showToast(d.msg);
+    var pollTimer=setInterval(function(){
+      fetch('/batch-result').then(function(r){return r.json();}).then(function(res){
+        if(!res.done){showToast(res.msg);return;}
+        clearInterval(pollTimer);
+        var okN=0,failN=0;
+        if(res.results){
+          for(var i=0;i<res.results.length;i++){
+            if(res.results[i].ok) okN++; else failN++;
+          }
+        }
+        btn.textContent='🎨 脚本去背 (0)';
+        btn.disabled=false;
+        if(failN){
+          showToast('✅ 脚本去背完成 '+okN+'/'+res.results.length+'，'+failN+' 个失败，刷新页面查看');
+        }else{
+          showToast('✅ 脚本去背完成！共 '+res.results.length+' 张');
+        }
+        setTimeout(function(){location.reload();},3000);
+      });
+    },2000);
+  });
+}
 function openFolder(dx,which){
   var x=new XMLHttpRequest();
   x.open('GET','/open?dx='+dx+'&which='+which,true);
@@ -68,13 +104,14 @@ function openFolder(dx,which){
 }
 function copyDx(dx){navigator.clipboard.writeText(dx).then(()=>{showToast('已复制 '+dx);}).catch(()=>{showToast('复制失败，请手动复制');});}
 function copyMissing(){
+  // 只复制「缺去背图」的款号；缺AI图不算（AI图可在生成中，去背图缺失才需要补）
   var cards=document.querySelectorAll('.card');
   var miss=[];
   cards.forEach(function(c){
-    if(c.innerHTML.indexOf('⚠ 缺')>=0) miss.push(c.getAttribute('data-dx'));
+    if(c.innerHTML.indexOf('⚠ 缺去背')>=0) miss.push(c.getAttribute('data-dx'));
   });
-  if(!miss.length){showToast('当前页面没有缺图款'); return;}
-  navigator.clipboard.writeText(miss.join(',')).then(()=>{showToast('已复制 '+miss.length+' 个缺图款: '+miss.join(','));}).catch(()=>{showToast('复制失败');});
+  if(!miss.length){showToast('当前页面没有缺去背的款'); return;}
+  navigator.clipboard.writeText(miss.join(',')).then(()=>{showToast('已复制 '+miss.length+' 个缺去背款: '+miss.join(','));}).catch(()=>{showToast('复制失败');});
 }
 function renameStemOptions(dx,stem,btn){
   // 用传进来的 dx 去掉前缀，能正确处理带 BW/B/W 后缀的款号（如 DX0694BW_B）
@@ -122,8 +159,16 @@ function renameStemOptions(dx,stem,btn){
   setTimeout(function(){ document.addEventListener('click', close); }, 0);
 }
 function delImg(dx,which,file,cellId){
-  if(!confirm('删除 '+dx+'/'+which+'/'+file+' ？（送回收站，可撤销）'))return;
-  fetch('/del?dx='+dx+'&which='+which+'&file='+encodeURIComponent(file)).then(r=>r.json()).then(d=>{showToast(d.msg);if(d.ok)document.getElementById(cellId).classList.add('deleted');});
+  var tip = which==='up'
+    ? '删除 '+dx+'/'+file+' ？\n同款「同颜色」的所有贴图（平铺/模特/BW合成）会一起删除（送回收站，可撤销）'
+    : '删除 '+dx+'/'+which+'/'+file+' ？（送回收站，可撤销）';
+  if(!confirm(tip))return;
+  fetch('/del?dx='+dx+'&which='+which+'&file='+encodeURIComponent(file)).then(r=>r.json()).then(d=>{
+    showToast(d.msg);
+    if(!d.ok)return;
+    if(d.deleted && d.deleted.length>1){ setTimeout(function(){location.reload();},900); return; }
+    document.getElementById(cellId).classList.add('deleted');
+  });
 }
 function resticker(dx,file,cellId){
   if(!confirm('重新贴图 '+dx+'/'+file+' ？\n仅重新生成这一张，不影响同款其他贴图。'))return;
@@ -397,6 +442,19 @@ function resolveGroupIdByStem(dx, stem){
     return null;
   });
 }
+// 停止当前贴图任务
+function stopSticker(){
+  var btn=document.getElementById('psStopBtn');
+  if(btn){btn.disabled=true;btn.textContent='⏳ 停止中…';}
+  fetch('/ps-sticker-stop').then(function(r){return r.json();}).then(function(d){
+    // 状态条由 pollPsStatus 轮询自动恢复；按钮稍后复位
+    setTimeout(function(){
+      if(btn){btn.disabled=false;btn.textContent='⏹ 停止贴图';}
+    },3000);
+  }).catch(function(){
+    if(btn){btn.disabled=false;btn.textContent='⏹ 停止贴图';}
+  });
+}
 // 轮询 PS / 后台任务状态并更新页面摘要
 function pollPsStatus(){
   var el=document.getElementById('psStatus');
@@ -646,10 +704,11 @@ function revDelete(stayGrid){
   var f=list[revState.idx];
   if(!f)return;
   var dx=revState.dx;
-  if(!confirm('删除 '+dx+'/up/'+f.n+' ？（送回收站，可撤销）'))return;
+  if(!confirm('删除 '+dx+'/up/'+f.n+' ？\n同款「同颜色」的所有贴图会一起删除（送回收站，可撤销）'))return;
   fetch('/del?dx='+dx+'&which=up&file='+encodeURIComponent(f.n)).then(function(r){return r.json();}).then(function(d){
     showToast(d.msg);
     if(d.ok){
+      if(d.deleted && d.deleted.length>1){ setTimeout(function(){location.reload();},900); return; }
       f._deleted=true;
       var item=document.getElementById('up-'+dx+'-'+f.n);
       if(item)item.classList.add('deleted');
