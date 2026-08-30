@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PETDESK · 换猫重绘工作台</title>
+<style>
+:root{
+  --bg:#FAFAF8; --card:#FFFFFF; --ink:#14141A; --ink2:#55555E; --ink3:#9B9BA3;
+  --line:#E4E2DA; --line2:#EFEEE7;
+  --accent:#5541EA; --accent-soft:#EFEDFD; --accent-deep:#3F2FBC;
+  --gold:#FCCF00; --gold-soft:#FFF7D6;
+  --danger:#E5484D; --ok:#1F9D61;
+  --term:#15151D; --term-line:#26262F;
+  --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+  --r-s:6px; --r-m:10px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{font-size:13px}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+::selection{background:var(--accent);color:#fff}
+button{font-family:inherit;cursor:pointer}
+input,select,textarea{font-family:inherit;font-size:13px;color:var(--ink)}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent)}
+
+/* ── 顶栏 ─────────────────────────── */
+header{height:50px;flex:none;display:flex;align-items:center;gap:16px;padding:0 18px;
+  background:var(--card);border-bottom:1px solid var(--line);z-index:10}
+.brand{display:flex;align-items:baseline;gap:9px}
+.brand b{font-size:15px;letter-spacing:.04em;font-weight:800}
+.brand b i{font-style:normal;color:var(--accent)}
+.brand span{color:var(--ink3);font-size:12px}
+.hd-flow{display:flex;align-items:center;gap:6px;color:var(--ink3);font-size:11.5px;margin-left:8px}
+.hd-flow b{color:var(--ink2);font-weight:600}
+.hd-flow em{font-style:normal;color:var(--line);margin:0 2px}
+.hd-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.ratio-switch{display:flex;border:1px solid var(--line);border-radius:99px;overflow:hidden}
+.ratio-switch button{border:0;background:transparent;padding:5px 14px;font-size:12px;color:var(--ink2);font-weight:600}
+.ratio-switch button.on{background:var(--ink);color:#fff}
+.api-btn{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);
+  border-radius:99px;padding:5px 13px;font-size:11.5px;font-weight:600;color:var(--ink2);text-decoration:none}
+.api-btn:hover{border-color:var(--accent);color:var(--accent)}
+.api-dot{width:7px;height:7px;border-radius:50%;background:#C9C9CF}
+.api-dot.ok{background:var(--ok);box-shadow:0 0 0 3px rgba(31,157,97,.15)}
+.ver{font-family:var(--mono);font-size:10.5px;color:var(--ink3)}
+
+/* ── 主两栏 ───────────────────────── */
+main{flex:1;display:flex;min-height:0}
+main > section.col{flex:none;width:400px}
+main > section.col:last-of-type{flex:1;min-width:400px;width:auto}
+.col-drag{flex:none;width:5px;cursor:col-resize;border-left:1px solid var(--line);background:transparent;transition:background .15s}
+.col-drag:hover,.col-drag.on{background:var(--accent-soft)}
+.col{overflow-y:auto;padding:16px 16px 40px;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.col::-webkit-scrollbar{width:6px}
+.col::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+.col-h{display:flex;align-items:baseline;gap:8px;margin-bottom:12px}
+.col-h h2{font-size:12px;font-weight:800;letter-spacing:.14em}
+.col-h .step{font-family:var(--mono);font-size:10px;color:var(--accent);background:var(--accent-soft);
+  border-radius:4px;padding:1px 6px;font-weight:700}
+.col-h small{color:var(--ink3);font-size:11px;margin-left:auto}
+
+.sec{margin-bottom:20px}
+.sec-t{font-size:11px;font-weight:700;color:var(--ink2);letter-spacing:.1em;margin-bottom:8px;
+  display:flex;align-items:center;gap:6px}
+.sec-t::after{content:"";flex:1;height:1px;background:var(--line2)}
+.sec-t .opt{font-size:10px;color:var(--ink3);font-weight:400;letter-spacing:0}
+.req{color:var(--danger);font-weight:800}
+
+/* ── 上传槽位 ─────────────────────── */
+.slot-main{position:relative;border:1.5px dashed var(--accent);border-radius:var(--r-m);
+  background:var(--accent-soft);aspect-ratio:1/1;max-height:236px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:6px;cursor:pointer;transition:.15s;overflow:hidden}
+.slot-main:hover{background:#E6E2FC}
+.slot-main .badge{position:absolute;top:8px;left:8px;background:var(--accent);color:#fff;
+  font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;letter-spacing:.05em;z-index:2}
+.slot-main .ic{font-size:26px;line-height:1}
+.slot-main p{font-size:11.5px;color:var(--accent-deep);font-weight:600}
+.slot-main small{font-size:10.5px;color:var(--ink3);text-align:center;padding:0 18px}
+.slot-main img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#fff}
+.slot-logo{position:relative;border:1.5px dashed var(--line);border-radius:var(--r-s);height:58px;
+  background:var(--card);display:flex;align-items:center;gap:10px;padding:0 12px;cursor:pointer;
+  transition:.15s;overflow:hidden;color:var(--ink3)}
+.slot-logo:hover{border-color:var(--accent);color:var(--accent)}
+.slot-logo .lg-ic{font-size:18px;flex:none}
+.slot-logo p{font-size:11.5px;font-weight:600;color:var(--ink2)}
+.slot-logo small{font-size:10px;color:var(--ink3);display:block}
+.slot-logo img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#fff;padding:6px}
+.slot-ref{position:relative;border:1.5px dashed var(--line);border-radius:var(--r-s);aspect-ratio:1/1;
+  background:var(--card);display:flex;align-items:center;justify-content:center;cursor:pointer;
+  transition:.15s;overflow:hidden;color:var(--ink3);font-size:16px}
+.slot-ref:hover{border-color:var(--accent);color:var(--accent)}
+.slot-ref.filled{border-style:solid;border-color:var(--line)}
+.slot-ref img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.slot-ref .idx{position:absolute;top:3px;left:5px;font-family:var(--mono);font-size:9px;
+  color:#fff;background:rgba(20,20,26,.55);border-radius:3px;padding:0 4px;z-index:2}
+.slot-ref .del{position:absolute;top:2px;right:2px;z-index:3}
+.slot-ref .crop-btn{position:absolute;bottom:2px;right:2px;z-index:3;border:0;border-radius:4px;
+  background:rgba(20,20,26,.65);color:#fff;font-size:9px;padding:1px 6px;font-weight:600}
+.slot-ref .crop-btn:hover{background:var(--accent)}
+.slot-main .del{position:absolute;top:8px;right:8px;z-index:3}
+.slot-main .crop-btn{position:absolute;top:8px;right:32px;z-index:3;border:0;border-radius:4px;
+  background:rgba(20,20,26,.65);color:#fff;font-size:10px;padding:2px 8px;font-weight:600}
+.slot-main .crop-btn:hover{background:var(--accent)}
+/* 裁剪弹窗 */
+.modal-mask{position:fixed;inset:0;background:rgba(20,20,26,.55);display:none;align-items:center;
+  justify-content:center;z-index:60;backdrop-filter:blur(2px)}
+.modal-mask.show{display:flex}
+.modal{background:var(--card);border-radius:14px;width:600px;max-width:94vw;padding:18px 20px;
+  box-shadow:0 18px 60px rgba(20,20,26,.25)}
+.modal h3{font-size:14px;font-weight:800;margin-bottom:4px}
+.modal .m-sub{font-size:11px;color:var(--ink3);margin-bottom:12px}
+.crop-wrap{height:420px;background:#15151D;border-radius:var(--r-s);overflow:hidden}
+.crop-wrap img{display:block;max-width:100%}
+.modal .m-acts{display:flex;gap:8px;margin-top:12px}
+.modal .m-acts .btn-main{flex:1;margin:0;padding:10px;font-size:12.5px}
+.modal .m-acts .btn-ghost{flex:none}
+.slot-logo .del{position:absolute;top:6px;right:6px;z-index:3}
+.ref-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(66px,1fr));gap:8px;margin-top:8px}
+.del{width:18px;height:18px;border:0;border-radius:50%;background:rgba(20,20,26,.65);color:#fff;
+  font-size:10px;line-height:1;display:flex;align-items:center;justify-content:center}
+.del:hover{background:var(--danger)}
+.hint{font-size:10.5px;color:var(--ink3);margin-top:6px;line-height:1.5}
+.hint b{color:var(--ink2)}
+.auto-note{background:var(--accent-soft);border:1px solid #DDD6FA;border-radius:var(--r-m);
+  padding:12px 14px;font-size:11.5px;color:var(--accent-deep);line-height:1.7;margin-top:14px}
+.auto-note b{color:var(--accent-deep)}
+.auto-note .row{display:flex;gap:8px;align-items:baseline}
+.auto-note .row::before{content:"▸";color:var(--accent);flex:none}
+
+/* ── 生成按钮 / 输出区 ────────────── */
+.btn-main{width:100%;border:0;border-radius:var(--r-m);background:var(--accent);color:#fff;
+  font-size:14px;font-weight:800;padding:12px;letter-spacing:.12em;transition:.15s;margin:6px 0 4px}
+.btn-main:hover{background:var(--accent-deep);transform:translateY(-1px)}
+.btn-main:active{transform:translateY(0)}
+.btn-main.busy{background:var(--ink3);pointer-events:none;animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.65}}
+.btn-ghost{border:1px solid var(--line);background:var(--card);border-radius:var(--r-s);
+  padding:6px 12px;font-size:11.5px;font-weight:600;color:var(--ink2)}
+.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+.term-card{background:var(--term);border-radius:var(--r-m);overflow:hidden;margin-bottom:12px}
+.term-h{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--term-line)}
+.term-h .dots{display:flex;gap:4px}
+.term-h .dots i{width:8px;height:8px;border-radius:50%;background:#3A3A46}
+.term-h .dots i:first-child{background:var(--accent)}
+.term-h span{font-family:var(--mono);font-size:10.5px;color:#8B8B99;letter-spacing:.05em}
+.term-h button{margin-left:auto;border:1px solid #3A3A46;background:transparent;color:#C9C9D4;
+  border-radius:4px;font-size:10.5px;padding:2.5px 10px;font-family:var(--mono)}
+.term-h button:hover{border-color:var(--accent);color:#fff;background:var(--accent)}
+.term-b{padding:11px 13px;font-family:var(--mono);font-size:11.5px;line-height:1.75;color:#D9D9E2;
+  white-space:pre-wrap;word-break:break-word;min-height:60px}
+.term-b[contenteditable]{cursor:text}
+.term-b[contenteditable]:focus{outline:1.5px solid var(--accent);outline-offset:-1px}
+/* Lovart 出图 */
+.lovart-box{margin-top:4px;border:1px dashed var(--accent);border-radius:var(--r-m);padding:10px 12px;background:var(--accent-soft)}
+.lovart-box .btn-main{margin:2px 0 6px}
+.lovart-box .lv-status{font-size:11px;color:var(--ink2);min-height:14px}
+.lv-img{margin-top:8px}
+.lv-img img{width:100%;border-radius:var(--r-s);border:1px solid var(--line);display:block}
+.lv-wait{border:1.5px dashed var(--line);border-radius:var(--r-s);padding:26px 16px;text-align:center;
+  color:var(--ink3);font-size:11.5px;background:var(--card)}
+.lv-acts{display:flex;gap:8px;margin-top:6px}
+.lv-acts a{flex:1;text-align:center;border:1px solid var(--line);border-radius:var(--r-s);background:var(--card);
+  padding:6px 0;font-size:11.5px;font-weight:600;color:var(--ink2);text-decoration:none}
+.lv-acts a:hover{border-color:var(--accent);color:var(--accent)}
+.empty-out{border:1.5px dashed var(--line);border-radius:var(--r-m);padding:34px 20px;text-align:center;color:var(--ink3)}
+.empty-out .ic{font-size:24px;margin-bottom:6px}
+.empty-out p{font-size:11.5px}
+
+#toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);
+  color:#fff;font-size:12px;font-weight:600;padding:8px 18px;border-radius:99px;opacity:0;pointer-events:none;
+  transition:.25s;z-index:99}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#zoomView{position:fixed;z-index:98;pointer-events:none;display:none;background:#fff;
+  border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 40px rgba(20,20,26,.28);padding:6px}
+#zoomView img{width:400px;height:400px;object-fit:contain;border-radius:8px;display:block;background:var(--accent-soft)}
+body.dragging::after{content:"松开鼠标，图片加入对应槽位";position:fixed;inset:0;z-index:90;
+  background:rgba(85,65,234,.08);border:3px dashed var(--accent);display:flex;align-items:center;justify-content:center;
+  font-size:16px;font-weight:800;color:var(--accent);pointer-events:none}
+footer{flex:none;height:26px;display:flex;align-items:center;padding:0 18px;border-top:1px solid var(--line);
+  background:var(--card);font-family:var(--mono);font-size:10px;color:var(--ink3);gap:14px}
+footer b{color:var(--accent);font-weight:700}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><b>PET<i>DESK</i></b><span>换猫重绘 · 实拍图换新场景</span></div>
+  <div class="hd-flow"><b>① 传猫模特</b><em>→</em><b>② 传参考图</b><em>→</em><b>③ 一键重绘</b></div>
+  <div class="hd-right">
+    <div class="ratio-switch">
+      <button onclick="location.href='index.html'">🖼️ 主图工作台</button>
+      <button class="on">🐈 换猫重绘</button>
+    </div>
+    <span class="api-btn" style="cursor:default"><span class="api-dot" id="apiDot"></span><span id="apiBtnTxt">本地服务器检测中</span></span>
+    <span class="ver">v0.6 · 2026-08</span>
+  </div>
+</header>
+
+<main>
+  <!-- ═══ 左栏：素材 ═══ -->
+  <section class="col">
+    <div class="col-h"><span class="step">STEP 1</span><h2>传图</h2><small>猫模特 + 参考图</small></div>
+
+    <div class="sec">
+      <div class="sec-t">猫模特图 <span class="req">*</span></div>
+      <div class="slot-main" id="slotCat">
+        <span class="badge">必传</span>
+        <div class="ic">🐈</div>
+        <p>点击上传猫模特图</p>
+        <small>你的猫的照片，建议清晰正面/侧身照，将替换参考图里的猫</small>
+      </div>
+      <div class="hint">这只猫会成为新画面的主角，<b>品种、毛色、花纹以这张图为准</b>；上传后点图上「✂ 裁剪」可框选猫咪主体（HEIC 自动转 JPG，保持原分辨率）</div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">店铺 LOGO <span class="opt">选填</span></div>
+      <div class="slot-logo" id="slotLogo">
+        <div class="lg-ic">🏷️</div>
+        <div><p>点击上传 LOGO</p><small>店铺水印 Logo（非品牌标），小比例自然融入画面角落</small></div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">参考场景图 <span class="req">*</span> <span class="opt">1–5 张，可拖拽/多选</span></div>
+      <div class="ref-grid" id="refGrid"></div>
+      <div class="hint"><b>第 1 张 = 场景模板</b>（复刻它的场景/构图/猫动作，只换猫）；<b>第 2 张起 = 商品细节补充</b>（同一商品的角度/特写，防止 AI 想象商品的样子）。无论几张都只出 1 张</div>
+    </div>
+
+    <div class="auto-note">
+      <div class="row"><b>换猫</b>：只换猫的身份（品种/毛色/花纹/五官以猫模特图为准），猫的姿势、表情、眼神、动作完全照搬第 1 张参考图</div>
+      <div class="row"><b>保商品</b>：商品款式包装食品与参考图一致，多张参考图互相补全商品细节，AI 看不到的部分禁止想象</div>
+      <div class="row"><b>LOGO</b>：作为高级视觉水印加入画面角落，小比例、避开猫咪与商品</div>
+    </div>
+  </section>
+  <div class="col-drag"></div>
+
+  <!-- ═══ 右栏：生成与输出 ═══ -->
+  <section class="col">
+    <div class="col-h"><span class="step">STEP 2</span><h2>生成</h2><small>只出 1 张</small></div>
+
+    <div class="sec">
+      <div class="sec-t">重绘提示词 <span class="opt">可直接编辑，出图以此为准</span></div>
+      <div class="term-card">
+        <div class="term-h"><div class="dots"><i></i><i></i><i></i></div><span>recat_prompt</span>
+          <button id="btnCopyPrompt">复制</button></div>
+        <div class="term-b" id="outPrompt" contenteditable="true" spellcheck="false"></div>
+      </div>
+    </div>
+
+    <div class="lovart-box">
+      <button class="btn-main" id="btnGen">🐈 换猫重绘 · Lovart 一键出图</button>
+      <div class="lv-status" id="lvStatus">传好猫模特图和参考图后即可生成（无论几张参考图，只出 1 张）</div>
+      <div id="lvPreview"></div>
+    </div>
+  </section>
+</main>
+
+<div id="zoomView"><img alt=""></div>
+<div id="toast"></div>
+<div class="modal-mask" id="cropMask">
+  <div class="modal">
+    <h3 id="cropTitle">裁剪猫模特图</h3>
+    <div class="m-sub" id="cropSub">框选猫咪主体（拖动框选 / 拖角缩放），出图身份以裁剪后为准</div>
+    <div class="crop-wrap"><img id="cropImg" alt=""></div>
+    <div class="m-acts">
+      <button class="btn-main" id="cropOk">✂ 确认裁剪</button>
+      <button class="btn-ghost" id="cropCancel">取消</button>
+    </div>
+  </div>
+</div>
+<input type="file" id="fileCat" accept="image/*" hidden>
+<input type="file" id="fileLogo" accept="image/*" hidden>
+<input type="file" id="fileRef" accept="image/*" multiple hidden>
+
+<footer><b>PETDESK</b><span>换猫重绘 v0.6 · 多图补充细节·只出1张</span><span id="ftMsg"></span></footer>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const MAX_REFS = 5;
+
+const S = { cat:null, logo:null, refs:[], ratio:'ref' };  // 图 = {url(dataURL), name}
+
+/* ── toast / 日志 ── */
+let toastTimer = null;
+function toast(msg){
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.classList.remove('show'), 2200);
+}
+function slog(msg){
+  try{ fetch('/api/log', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({msg:'[recat] '+msg})}); }catch(e){}
+}
+
+/* ── 服务器连通检测 ── */
+fetch('/api/ping').then(r=>r.json()).then(j=>{
+  if(j && j.ok){ $('apiDot').classList.add('ok'); $('apiBtnTxt').textContent = '本地服务器正常（v'+j.ver+'）'; }
+  else $('apiBtnTxt').textContent = '服务器异常';
+}).catch(()=>{ $('apiBtnTxt').textContent = '未连接本地服务器（请用桌面图标打开）'; });
+
+/* ── 比例固定 1:1 ── */
+S.ratio = '1:1';
+
+/* ── 读文件为 dataURL / 压缩 ── */
+const IMG_EXT = /\.(jpe?g|png|webp|gif|bmp|jfif|avif|heic|heif)$/i;
+function isHeic(file){
+  return /image\/hei[cf]/i.test(file.type||'') || /\.(heic|heif)$/i.test(file.name);
+}
+let heicLibP = null;
+function loadHeicLib(){
+  if(window.heic2any) return Promise.resolve();
+  if(heicLibP) return heicLibP;
+  heicLibP = new Promise((res, rej)=>{
+    const cdns = [
+      'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js',
+      'https://unpkg.com/heic2any@0.0.4/dist/heic2any.min.js'
+    ];
+    const tryNext = i => {
+      if(i >= cdns.length) return rej(new Error('HEIC 解码库加载失败（需联网，请检查网络/代理后重试）'));
+      const s = document.createElement('script');
+      s.src = cdns[i];
+      s.onload = res;
+      s.onerror = ()=>{ s.remove(); tryNext(i+1); };
+      document.head.appendChild(s);
+    };
+    tryNext(0);
+  });
+  return heicLibP;
+}
+function blobToDataURL(blob){
+  return new Promise((res, rej)=>{
+    const fr = new FileReader();
+    fr.onload = ()=>res(fr.result);
+    fr.onerror = ()=>rej(new Error('文件读取失败'));
+    fr.readAsDataURL(blob);
+  });
+}
+function readImg(file){
+  return new Promise((res, rej)=>{
+    if(!file) return rej(new Error('没有选到文件'));
+    // 有的图（微信导出等）MIME 为空，按扩展名兜底
+    if(!file.type.startsWith('image/') && !IMG_EXT.test(file.name))
+      return rej(new Error(`不是图片文件：${file.name}（type=${file.type||'空'}）`));
+    // HEIC/HEIF（iPhone 默认格式）：先试浏览器 heic2any，失败自动转服务端 pillow-heif
+    if(isHeic(file)){
+      toast('HEIC 转 JPG 中，请稍候…');
+      const outName = file.name.replace(/\.(heic|heif)$/i,'.jpg');
+      const viaBrowser = ()=>loadHeicLib()
+        .then(()=>heic2any({blob:file, toType:'image/jpeg', quality:0.95}))
+        .then(out=>blobToDataURL(Array.isArray(out) ? out[0] : out));
+      const viaServer = async ()=>{
+        const dataUrl = await blobToDataURL(file);
+        const r = await fetch('/api/heic2jpg', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({data:dataUrl})});
+        const j = await r.json();
+        if(!r.ok || !j.ok) throw new Error(j.error || ('HTTP '+r.status));
+        return j.data;
+      };
+      return viaBrowser()
+        .catch(err=>{
+          slog('浏览器 HEIC 解码失败，转服务端：' + (err && err.message || err));
+          toast('浏览器解码失败，改用服务器转换…');
+          return viaServer();
+        })
+        .then(url=>res({url, name:outName}))
+        .catch(err=>rej(err instanceof Error ? err : new Error('HEIC 转换失败')));
+    }
+    const fr = new FileReader();
+    fr.onload = ()=>res({url:fr.result, name:file.name});
+    fr.onerror = ()=>rej(new Error('文件读取失败：'+file.name));
+    fr.readAsDataURL(file);
+  });
+}
+function upFail(where, err){
+  console.error('[recat]', where, err);
+  slog(`上传失败(${where})：` + (err && err.message || err));
+  toast('上传失败：' + (err && err.message || '未知错误'));
+}
+function compressImage(dataUrl, max=640){
+  return new Promise(res=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const scale = Math.min(1, max/Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width*scale); c.height = Math.round(img.height*scale);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      res(c.toDataURL('image/jpeg', 0.8));
+    };
+    img.onerror = ()=>res(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+/* ── 猫模特槽 ── */
+const slotCat = $('slotCat');
+slotCat.onclick = e => { if(e.target.classList.contains('del')) return; $('fileCat').click(); };
+$('fileCat').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if(!f) return;
+  try{ S.cat = await readImg(f); }
+  catch(err){ upFail('猫模特', err); return; }
+  renderCat(); refreshPrompt(); toast('猫模特图已上传');
+};
+function renderCat(){
+  slotCat.querySelectorAll('img,.del,.crop-btn').forEach(n=>n.remove());
+  if(!S.cat) return;
+  const img = document.createElement('img'); img.src = S.cat.url; slotCat.appendChild(img);
+  const crop = document.createElement('button'); crop.className = 'crop-btn'; crop.textContent = '✂ 裁剪';
+  crop.onclick = e => { e.stopPropagation(); openCrop('cat'); };
+  slotCat.appendChild(crop);
+  const del = document.createElement('button'); del.className = 'del'; del.textContent = '×';
+  del.onclick = e => { e.stopPropagation(); S.cat = null; renderCat(); refreshPrompt(); };
+  slotCat.appendChild(del);
+  bindZoom(img);
+}
+
+/* ── 图片裁剪（Cropper.js 懒加载，CDN 双源；target='cat' 或参考图下标）── */
+let cropper = null, cropperLibP = null, cropTarget = 'cat';
+function loadCropper(){
+  if(window.Cropper) return Promise.resolve();
+  if(cropperLibP) return cropperLibP;
+  cropperLibP = new Promise((res, rej)=>{
+    const cdns = [
+      ['https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css','https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js'],
+      ['https://unpkg.com/cropperjs@1.6.2/dist/cropper.min.css','https://unpkg.com/cropperjs@1.6.2/dist/cropper.min.js']
+    ];
+    const tryNext = i => {
+      if(i >= cdns.length) return rej(new Error('裁剪组件加载失败（需联网，请检查网络/代理）'));
+      const [css, js] = cdns[i];
+      const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = css; document.head.appendChild(l);
+      const s = document.createElement('script'); s.src = js;
+      s.onload = res;
+      s.onerror = ()=>{ s.remove(); l.remove(); tryNext(i+1); };
+      document.head.appendChild(s);
+    };
+    tryNext(0);
+  });
+  return cropperLibP;
+}
+function openCrop(target){
+  cropTarget = target;
+  const src = target === 'cat' ? S.cat : S.refs[target];
+  if(!src) return;
+  loadCropper().then(()=>{
+    $('cropTitle').textContent = target === 'cat' ? '裁剪猫模特图' : `裁剪参考图 R${target+1}`;
+    $('cropSub').textContent = target === 'cat'
+      ? '框选猫咪主体（拖动框选 / 拖角缩放），出图身份以裁剪后为准'
+      : '框选要复刻的画面区域（拖动框选 / 拖角缩放），生成以裁剪后为准';
+    const img = $('cropImg');
+    img.src = src.url;
+    $('cropMask').classList.add('show');
+    if(cropper){ cropper.destroy(); cropper = null; }
+    cropper = new Cropper(img, {viewMode:1, autoCropArea:0.9, background:false});
+  }).catch(e=>toast(e.message));
+}
+function closeCrop(){
+  $('cropMask').classList.remove('show');
+  if(cropper){ cropper.destroy(); cropper = null; }
+}
+$('cropOk').onclick = ()=>{
+  if(!cropper) return closeCrop();
+  const c = cropper.getCroppedCanvas({imageSmoothingQuality:'high'});
+  if(c){
+    const url = c.toDataURL('image/jpeg', 0.95);
+    if(cropTarget === 'cat'){
+      S.cat = {url, name:(S.cat.name||'cat').replace(/\.\w+$/,'') + '_crop.jpg'};
+      renderCat();
+    } else {
+      S.refs[cropTarget] = {url, name:(S.refs[cropTarget].name||'ref').replace(/\.\w+$/,'') + '_crop.jpg'};
+      renderRefs();
+    }
+    refreshPrompt(); toast('已裁剪');
+  }
+  closeCrop();
+};
+$('cropCancel').onclick = closeCrop;
+$('cropMask').addEventListener('click', e=>{ if(e.target === $('cropMask')) closeCrop(); });
+
+/* ── LOGO 槽 ── */
+const slotLogo = $('slotLogo');
+slotLogo.onclick = e => { if(e.target.classList.contains('del')) return; $('fileLogo').click(); };
+$('fileLogo').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if(!f) return;
+  try{ S.logo = await readImg(f); }
+  catch(err){ upFail('LOGO', err); return; }
+  renderLogo(); refreshPrompt(); toast('LOGO 已上传');
+};
+function renderLogo(){
+  slotLogo.querySelectorAll('img,.del').forEach(n=>n.remove());
+  if(!S.logo) return;
+  const img = document.createElement('img'); img.src = S.logo.url; slotLogo.appendChild(img);
+  const del = document.createElement('button'); del.className = 'del'; del.textContent = '×';
+  del.onclick = e => { e.stopPropagation(); S.logo = null; renderLogo(); refreshPrompt(); };
+  slotLogo.appendChild(del);
+  bindZoom(img);
+}
+
+/* ── 参考图槽（1-5 张，多选/拖拽）── */
+const refGrid = $('refGrid');
+function renderRefs(){
+  refGrid.innerHTML = '';
+  S.refs.forEach((r, i)=>{
+    const d = document.createElement('div'); d.className = 'slot-ref filled';
+    const img = document.createElement('img'); img.src = r.url; d.appendChild(img);
+    const idx = document.createElement('span'); idx.className = 'idx'; idx.textContent = 'R'+(i+1); d.appendChild(idx);
+    const del = document.createElement('button'); del.className = 'del'; del.textContent = '×';
+    del.onclick = e => { e.stopPropagation(); S.refs.splice(i,1); renderRefs(); refreshPrompt(); };
+    d.appendChild(del);
+    const crop = document.createElement('button'); crop.className = 'crop-btn'; crop.textContent = '✂';
+    crop.onclick = e => { e.stopPropagation(); openCrop(i); };
+    d.appendChild(crop);
+    bindZoom(img);
+    refGrid.appendChild(d);
+  });
+  if(S.refs.length < MAX_REFS){
+    const add = document.createElement('div'); add.className = 'slot-ref'; add.textContent = '+';
+    add.onclick = ()=>$('fileRef').click();
+    refGrid.appendChild(add);
+  }
+}
+$('fileRef').onchange = async e => {
+  const files = [...e.target.files]; e.target.value = '';
+  await addRefs(files);
+};
+async function addRefs(files){
+  let added = 0;
+  for(const f of files){
+    if(S.refs.length >= MAX_REFS) break;
+    try{ S.refs.push(await readImg(f)); added++; }
+    catch(err){ upFail('参考图', err); }
+  }
+  if(added){ renderRefs(); refreshPrompt(); toast('已添加 '+added+' 张参考图'); }
+  if(S.refs.length >= MAX_REFS) toast('参考图已满（最多 '+MAX_REFS+' 张）');
+}
+renderRefs();
+
+/* ── 整窗口拖拽上传：无猫→入猫槽，否则入参考图 ── */
+let dragDepth = 0;
+window.addEventListener('dragenter', e => { e.preventDefault(); if(++dragDepth===1) document.body.classList.add('dragging'); });
+window.addEventListener('dragleave', e => { e.preventDefault(); if(--dragDepth<=0){ dragDepth=0; document.body.classList.remove('dragging'); } });
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', async e => {
+  e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
+  const files = [...(e.dataTransfer?.files||[])].filter(f=>f.type.startsWith('image/') || IMG_EXT.test(f.name));
+  if(!files.length){ toast('拖入的不是图片文件'); return; }
+  if(!S.cat){
+    try{ S.cat = await readImg(files.shift()); renderCat(); toast('拖入：猫模特图'); }
+    catch(err){ upFail('猫模特', err); }
+  }
+  if(files.length) await addRefs(files);
+});
+
+/* ── 悬停放大预览 ── */
+const zoomView = $('zoomView'), zoomImg = zoomView.querySelector('img');
+function bindZoom(img){
+  img.addEventListener('mouseenter', ()=>{ zoomImg.src = img.src; zoomView.style.display = 'block'; });
+  img.addEventListener('mousemove', e=>{
+    const w = 412, h = 412;
+    let x = e.clientX + 18, y = e.clientY + 18;
+    if(x + w > innerWidth) x = e.clientX - w - 10;
+    if(y + h > innerHeight) y = e.clientY - h - 10;
+    zoomView.style.left = x+'px'; zoomView.style.top = y+'px';
+  });
+  img.addEventListener('mouseleave', ()=>{ zoomView.style.display = 'none'; });
+}
+
+/* ── 栏宽拖拽（存 localStorage petdesk_recat_cols）── */
+document.querySelectorAll('.col-drag').forEach(bar=>{
+  bar.addEventListener('mousedown', e=>{
+    e.preventDefault(); bar.classList.add('on');
+    const col = bar.previousElementSibling, startX = e.clientX, startW = col.offsetWidth;
+    const move = ev => { const w = Math.max(220, startW + ev.clientX - startX); col.style.width = w+'px'; saveCols(); };
+    const up = ()=>{ bar.classList.remove('on'); removeEventListener('mousemove', move); removeEventListener('mouseup', up); };
+    addEventListener('mousemove', move); addEventListener('mouseup', up);
+  });
+});
+function saveCols(){
+  localStorage.setItem('petdesk_recat_cols', JSON.stringify([document.querySelector('main > section.col').style.width]));
+}
+(function loadCols(){
+  try{
+    const w = JSON.parse(localStorage.getItem('petdesk_recat_cols')||'null');
+    if(w && w[0]) document.querySelector('main > section.col').style.width = w[0];
+  }catch{}
+})();
+
+/* ═══ 重绘提示词（v0.6 · 第1张参考图=场景模板，其余=商品细节补充；只出 1 张） ═══ */
+let promptEdited = false;  // 用户手动编辑过后不再自动覆盖
+$('outPrompt').addEventListener('input', ()=>{ promptEdited = true; });
+
+function buildPrompt(){
+  // 附件顺序：1=猫模特，(2=LOGO)，然后参考图（第1张=场景模板，其余=商品细节补充）
+  const refStart = S.logo ? 3 : 2;
+  const refEnd = refStart + S.refs.length - 1;
+  const multi = S.refs.length > 1;
+
+  const parts = [];
+  parts.push(`你是一名顶级宠物商业摄影师和AI图像重构专家。
+
+你的任务：
+把【Image ${refStart} 主参考图】里的猫，替换成【Image 1】里的这只猫——像同一台相机、同类型场景、同一布光下，换了这只猫重新拍了一遍。商品、构图、光影与主参考图保持一致；背景要有自然且看得出的变化；参考图中的首饰、水印、后期文字一律去除。只生成一张最终图片。
+
+====================
+图片输入规则
+====================
+
+【Image 1：猫咪身份参考图】
+
+这是唯一的猫咪身份来源，拥有最高优先级。
+
+必须保持这是同一只猫：
+
+- 保留真实毛色
+- 保留毛发颜色分布
+- 保留脸部结构
+- 保留眼睛颜色和眼神特点
+- 保留鼻子、嘴巴、耳朵特征
+- 保留身体比例
+- 保留毛发长度和质感
+- 保留这只猫独特的辨识特征
+
+禁止：
+- 生成另一只类似的猫
+- 改变猫咪品种
+- 美化成其他猫
+- 改变核心外貌特征
+
+原则：
+
+身份锁定 Image 1，动作表情锁定参考图。`);
+
+  if(S.logo) parts.push(`====================
+【Image 2：店铺水印Logo】
+====================
+
+这是店铺水印Logo，必须出现在最终画面中。
+
+它不是商品品牌Logo。
+
+禁止：
+- 省略或不画Logo
+- 放到商品包装上
+- 印刷到产品上
+- 制作成标签
+- 改变Logo设计
+- 修改文字内容
+
+Logo只作为图片中的高级视觉水印。
+
+【Logo 保真 — 最高优先级】
+- Logo 的图形、颜色、文字、长宽比例必须与 Image 2 完全一致，1:1 原样还原
+- 禁止重新绘制、简化、改色、加特效、改字体、改排版
+
+要求：
+
+- 保持Logo原始比例与设计
+- 保持清晰可识别
+- 小比例、低存在感
+- 自动选择最佳角落位置
+- 避开猫咪主体
+- 避开商品与重要视觉元素
+- 自然融合，像高端宠物摄影作品中的品牌署名，不像后期贴上去`);
+
+  parts.push(`====================
+【Image ${refStart}${multi ? `-${refEnd}` : ''}：参考图】
+====================
+
+${multi ? `共 ${S.refs.length} 张参考图，角色不同，严禁混淆：
+- Image ${refStart} = 主参考图：最终画面的唯一画面模板（场景、构图、光影、猫的动作表情都以它为准）
+- Image ${refStart + 1}-${refEnd} = 商品细节补充图：同一个商品的不同角度/细节特写，仅用于补全商品信息
+
+` : ''}画面模板以主参考图为准，除以下说明外全部照搬：
+
+【必须保持一致】
+- 商品：款式、颜色、包装、包装上的文字与主参考图完全一致，禁止换成别的款式、禁止重新设计商品、禁止改变商品颜色（例如黑色罐头必须还是黑色罐头）
+- 商品信息边界：商品的一切可见细节只能来自附件图片中明确出现的信息${multi ? '（主参考图看不清的部分，用商品细节补充图补全）' : ''}；附件中看不到、看不清的部分，禁止凭空想象、虚构商品的样子——宁可简化，不得编造，以免生成错误的商品
+- 食品本体：画面中出现的食物（猫粮颗粒、罐头内容物、零食、冻干等）的形状、颜色、质地、分量、摆放状态必须与参考图一致，禁止改变食物的样子、禁止美化成别的形态
+- 构图与机位：与主参考图基本一致
+- 光线方向、色调氛围、景深效果：与主参考图一致
+- 猫的姿势与动作：坐姿/趴姿/站姿、身体角度完全按照主参考图里的猫
+- 猫的表情与面部动作：眼神、视线方向、面部动作（例如舔嘴唇、吐舌头、眯眼等）完全按照主参考图里的猫
+
+【必须去除 — 硬性要求】
+- 首饰：参考图中人物或画面里出现的戒指、项链、耳环、手链、手表等一切首饰配饰，一律不得出现在最终画面中
+- 水印与标记：参考图上的任何水印、防盗图标记、店铺名、他人 Logo、文字角标、二维码、时间戳，一律不得保留（唯一例外是 Image 2 的店铺水印 Logo，按要求重新融入画面）
+- 画面文字：参考图上的一切后期文字——标题、卖点文案、促销标签、字幕、弹幕、箭头标注、对话框文字，一律去除，最终画面不得出现任何后期添加的文字（例外：商品包装上印刷的文字属于商品本身，必须与参考图保持一致；Image 2 水印 Logo 内的文字保持原样）
+- 去除后该区域用符合场景的真实材质自然补全，禁止留下涂抹、模糊、修补痕迹
+
+【手部结构 — 特别警示】
+- 去除戒指等首饰后，手指必须是完整、自然、解剖结构正确的人手：五指数量正确、指节比例正常、指甲与皮肤纹理真实
+- 禁止出现：手指粘连/并指、多指/少指、手指扭曲变形、关节错位、皮肤出现戒指压痕或异物感、被去除首饰处皮肤材质异常
+- 手与猫、手与商品的接触必须真实自然，遮挡关系正确
+
+【背景 — 需要自然的变化（不要照搬）】
+- 场景类型与整体氛围保持参考图的方向，但最终画面的背景必须与参考图有看得出的差异
+- 变化方式：更换部分背景道具与陈设、调整道具的组合与摆放位置、机位/视角适度偏移、光影细节与明暗分布重新设计
+- 变化幅度：一眼能看出不是同一张图，但仍属于同类型、同氛围的场景
+- 所有变化必须符合真实物理与摄影逻辑，自然合理，禁止生硬替换、风格突变或换上不搭的场景元素
+
+【唯一允许明显改变的】
+- 猫的身份：品种、毛色、花纹、五官特征换成 Image 1 的猫
+- 因换猫带来的必要的毛发形态适配（长毛/短毛），动作与结构不变
+
+【参考图中没有猫时 — 猫咪自然置入】
+- 如果主参考图的画面里没有猫（或没有任何动物），则将 Image 1 的猫自然置入画面中
+- 置入要求：位置合理（商品旁、画面视觉焦点区等符合该场景逻辑的位置），姿势与场景透视匹配（坐姿/趴姿/站姿按场景平面自然选择），视线方向自然（看向商品或镜头）
+- 结合必须真实：猫与场景的透视比例正确、受场景光线照射方向一致、投影自然落在接触面上、与商品/道具的遮挡关系正确、毛发边缘与环境光自然融合
+- 禁止悬浮感、贴图感、比例失调、与场景光源矛盾
+
+不要生成参考图里的其他动物。
+画面中只能有 Image 1 的这只猫。`);
+
+  parts.push(`====================
+真实摄影要求
+====================
+
+最终图片必须像真实相机拍摄。
+
+要求：
+
+- photorealistic
+- professional pet photography
+- DSLR camera quality
+- realistic fur texture
+- realistic whiskers
+- realistic eyes reflection
+- natural lighting
+- physically correct shadows
+- realistic depth of field
+- natural perspective
+
+猫咪必须：
+
+- 与环境真实接触
+- 毛发受到环境光影响
+- 阴影自然存在
+- 边缘自然融合
+
+禁止：
+
+- AI生成感
+- 抠图感
+- 换猫感
+- 融合痕迹
+- 塑料毛发
+- 假眼睛
+- 卡通效果
+- 3D渲染感
+- 过度锐化
+- 水印贴纸感
+- 戒指、项链、耳环等首饰配饰残留
+- 手指粘连/并指/多指/少指、手指扭曲变形、关节错位、戒指压痕等手部异常
+- 参考图原有水印、店铺名、他人Logo、文字角标残留
+- 标题、卖点文案、促销标签、字幕等后期文字残留（商品包装印刷文字除外）
+- 去除区域的涂抹、模糊、修补痕迹
+
+====================
+最终生成目标
+====================
+
+生成一张真实宠物摄影照片：
+
+看起来像专业摄影师在参考图的同一场景中，用 Image 1 的这只猫重新拍摄了一遍。
+
+第一优先级：
+保持这只猫的真实身份（Image 1）。
+
+第二优先级：
+商品、构图、光影、猫的动作表情与参考图一致；背景有自然且看得出的差异；无首饰残留、无原图水印残留。
+
+第三优先级：
+保持真实高级摄影效果。
+
+Ultra realistic,
+photorealistic pet photography,
+premium natural lifestyle photography,
+8K realistic detail.`);
+
+  parts.push('只输出一张最终图片。画面比例 1:1 正方形，≥800×800像素。');
+  return parts.join('\n\n');
+}
+function refreshPrompt(){
+  if(promptEdited) return;  // 尊重手动编辑
+  $('outPrompt').textContent = (S.cat && S.refs.length) ? buildPrompt() : '';
+}
+$('btnCopyPrompt').onclick = ()=>{
+  const t = $('outPrompt').innerText.trim();
+  if(!t) return;
+  navigator.clipboard.writeText(t).then(()=>toast('提示词已复制'));
+};
+
+/* ═══ Lovart 一键出图（无论几张参考图，只生成 1 张；全部参考图随附补充商品细节） ═══ */
+let genBusy = false;
+$('btnGen').onclick = async ()=>{
+  if(genBusy) return;
+  if(!S.cat){ toast('请先上传猫模特图'); return; }
+  if(!S.refs.length){ toast('请至少上传 1 张参考场景图'); return; }
+  const prompt = $('outPrompt').innerText.trim();
+  if(!prompt){ toast('提示词为空'); return; }
+
+  const btn = $('btnGen'), st = $('lvStatus'), preview = $('lvPreview');
+  genBusy = true; btn.disabled = true; btn.classList.add('busy');
+  const t0 = Date.now();
+  btn.textContent = '🎨 Lovart 生成中… 0s（约 1-3 分钟）';
+  const timer = setInterval(()=>{ btn.textContent = `🎨 Lovart 生成中… ${Math.round((Date.now()-t0)/1000)}s（约 1-3 分钟）`; }, 1000);
+  preview.innerHTML = `<div class="lv-img" id="lvSlot0"><div class="lv-wait">⏳ 生成中…</div></div>`;
+  st.textContent = '生成中（期间请勿重复点击）…';
+
+  // 附件全部用原图，不压缩：猫模特 + (LOGO) + 全部参考图（第1张=场景模板，其余=商品细节补充）
+  const images = [{name:'cat.png', data:S.cat.url}];
+  if(S.logo) images.push({name:'logo.png', data:S.logo.url});
+  S.refs.forEach((r, i)=>images.push({name:'ref'+(i+1)+'.jpg', data:r.url}));
+  slog(`Lovart 换猫出图开始 | 1:1 logo=${!!S.logo} 参考图=${S.refs.length} 提示词=${prompt.length}字`);
+
+  const slot = $('lvSlot0');
+  try{
+    const r = await fetch('/api/lovart/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompt, images})});
+    const j = await r.json();
+    if(!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    const fname = `换猫重绘_${Date.now()}.png`;
+    slot.innerHTML = `<img src="${j.url}"><div class="lv-acts">` +
+      `<a href="${j.url}" target="_blank">打开原图</a><a href="${j.url}" download="${fname}">⬇ 下载 PNG</a></div>`;
+    bindZoom(slot.querySelector('img'));
+    slog('Lovart 成功：' + j.url + (j.tid ? ' tid=' + j.tid : ''));
+    st.textContent = '生成完成 ✓ 成品图已存 lovart_out/。不满意可直接再点一次重新生成';
+    toast('重绘完成 ✓');
+  }catch(e){
+    slot.innerHTML = `<div class="lv-wait" style="color:var(--danger)">✕ 生成失败：${String(e.message).slice(0,60)}</div>`;
+    slog('Lovart 失败：' + e.message);
+    st.textContent = '生成失败，请查看日志（petdesk.log），并确认 SSRDOG 代理已开启';
+    toast('Lovart 出图失败，详见日志');
+  }
+
+  clearInterval(timer);
+  genBusy = false; btn.disabled = false; btn.classList.remove('busy');
+  btn.textContent = '🐈 换猫重绘 · Lovart 一键出图';
+};
+</script>
+</body>
+</html>

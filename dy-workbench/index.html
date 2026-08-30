@@ -105,6 +105,7 @@ main > section.col:last-of-type{flex:1;min-width:400px;width:auto}
 .slot-ref .ing-tip{font-size:10px;color:var(--accent);font-weight:700;text-align:center;line-height:1.3;padding:2px}
 .slot-main .del{position:absolute;top:8px;right:8px;z-index:3}
 .slot-logo .del{position:absolute;top:6px;right:6px;z-index:3}
+.slot-pet{height:72px}
 .ref-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(66px,1fr));gap:8px;margin-top:8px}
 .del{width:18px;height:18px;border:0;border-radius:50%;background:rgba(20,20,26,.65);color:#fff;
   font-size:10px;line-height:1;display:flex;align-items:center;justify-content:center}
@@ -269,13 +270,14 @@ footer b{color:var(--accent);font-weight:700}
   <div class="brand"><b>PET<i>DESK</i></b><span>抖音宠物电商 · 主图提示词工作台</span></div>
   <div class="hd-flow"><b>① 传图</b><em>→</em><b>② 填品名</b><em>→</em><b>③ 一键生成</b></div>
   <div class="hd-right">
+    <div class="ratio-switch">
+      <button class="on">🖼️ 主图工作台</button>
+      <button onclick="location.href='recat.html'">🐈 换猫重绘</button>
+    </div>
     <button class="api-btn" id="histBtn">🕘 历史记录</button>
     <button class="api-btn" id="apiBtn"><span class="api-dot" id="apiDot"></span><span id="apiBtnTxt">视觉解析 API</span></button>
-    <div class="ratio-switch" id="ratioSwitch">
-      <button class="on" data-r="1:1">主图 1:1</button>
-      <button data-r="3:4">主图 3:4</button>
-    </div>
-    <span class="ver">v2.6 · 2026-08</span>
+    <span class="api-btn" style="cursor:default">主图 1:1</span>
+    <span class="ver">v2.19 · 2026-08</span>
   </div>
 </header>
 <div class="ver-warn" id="verWarn"></div>
@@ -283,7 +285,7 @@ footer b{color:var(--accent);font-weight:700}
 <main>
   <!-- ═══ 左栏：素材 ═══ -->
   <section class="col">
-    <div class="col-h"><span class="step">STEP 1</span><h2>传图</h2><small>1–9 张</small></div>
+    <div class="col-h"><span class="step">STEP 1</span><h2>传图</h2><small>1–10 张</small></div>
 
     <div class="sec">
       <div class="sec-t">产品白底图 <span class="req">*</span></div>
@@ -300,6 +302,14 @@ footer b{color:var(--accent);font-weight:700}
       <div class="slot-logo" id="slotLogo">
         <span class="lg-ic">✦</span>
         <div><p>上传品牌 LOGO（可选）</p><small>LOGO 将直接生成进画面</small></div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">宠物照片 <span class="opt">可选 · 上传后由它出镜</span></div>
+      <div class="slot-logo slot-pet" id="slotPet">
+        <span class="lg-ic">🐾</span>
+        <div><p>上传自家宠物照片（可选）</p><small>只锁定长相（品种 / 毛色 / 五官），姿势动作由 AI 按画面自由设计</small></div>
       </div>
     </div>
 
@@ -333,7 +343,7 @@ footer b{color:var(--accent);font-weight:700}
     <div class="sec">
       <div class="sec-t">剩下的交给 Lovart</div>
       <div class="auto-note">
-        <div class="row"><span><b>素材</b>：白底图锁定产品主体，信息图提供卖点与数据</span></div>
+        <div class="row"><span><b>素材</b>：白底图锁定产品主体，宠物照片（可选）锁定出镜长相，信息图提供卖点与数据</span></div>
         <div class="row"><span><b>创意</b>：版式构图 Lovart 自由发挥，冲 0.5 秒点击率</span></div>
         <div class="row"><span><b>管控</b>：数字卖点必须来自信息图，广告法违禁词禁止</span></div>
         <div class="row"><span><b>出图</b>：一次并行生成 3 张（不同 API Key），挑最好的一张</span></div>
@@ -370,7 +380,7 @@ footer b{color:var(--accent);font-weight:700}
 </main>
 
 <footer>
-  <span><b>PETDESK</b> v2.9</span>
+  <span><b>PETDESK</b> v2.19</span>
   <span>抖音主图规范：1:1 ≥ 800×800 · 3:4 ≥ 750×1000 · 首图无牛皮癣</span>
   <span style="margin-left:auto">参考图 AI 解析 · 类目片段库 v3 · localStorage 自动保存</span>
 </footer>
@@ -379,6 +389,7 @@ footer b{color:var(--accent);font-weight:700}
 <div id="zoomView"><img id="zoomViewImg" alt=""></div>
 <input type="file" id="fileMain" accept="image/*" hidden>
 <input type="file" id="fileLogo" accept="image/*" hidden>
+<input type="file" id="filePet" accept="image/*" hidden>
 <input type="file" id="fileRef" accept="image/*" multiple hidden>
 
 <!-- API 设置弹窗 -->
@@ -576,7 +587,7 @@ ${COMPLIANCE_TXT}
 
 /* ═══ 状态 ═══ */
 const S = {
-  ratio:'1:1', mainImg:null, logo:null, refs:[], strat:'scene',
+  ratio:'1:1', mainImg:null, logo:null, pet:null, refs:[], strat:'scene',
   anaMap:{},   // 图片签名 -> 解析结果
   out:null,
   api:{proto:'anthropic', endpoint:'', model:'', key:''}
@@ -634,12 +645,13 @@ function init(){
     toDataURL(f, url=>{ S.logo = url; paintLogoSlot(); toast('LOGO 已上传 ✓'); });
     e.target.value = '';
   });
-  $('ratioSwitch').addEventListener('click', e=>{
-    const b = e.target.closest('button'); if(!b) return;
-    S.ratio = b.dataset.r;
-    document.querySelectorAll('#ratioSwitch button').forEach(x=>x.classList.toggle('on', x===b));
-    save();
+  $('slotPet').addEventListener('click', e=>{ if(!e.target.closest('.del')) $('filePet').click(); });
+  $('filePet').addEventListener('change', e=>{
+    const f = e.target.files[0]; if(!f) return;
+    toDataURL(f, url=>{ S.pet = url; paintPetSlot(); refreshPromptB(); toast('宠物照片已上传 ✓ 主图将由它出镜'); });
+    e.target.value = '';
   });
+  // 主图规格固定 1:1（v2.19 起移除 3:4 切换）
   $('cpZhB').addEventListener('click', ()=>copyText(S.out && S.out.zhRawB,'提示词已复制'));
   // 提示词可编辑：编辑实时同步回 S.out，复制/Lovart 出图均使用编辑后内容
   $('zhBodyB').addEventListener('input', ()=>{ if(S.out) S.out.zhRawB = $('zhBodyB').innerText; });
@@ -725,6 +737,7 @@ document.addEventListener('click', e=>{
   if(del){ e.stopPropagation();
     if(del.closest('#slotMain')){ S.mainImg=null; paintMainSlot(); }
     else if(del.closest('#slotLogo')){ S.logo=null; paintLogoSlot(); }
+    else if(del.closest('#slotPet')){ S.pet=null; paintPetSlot(); refreshPromptB(); }
     else { S.refs.splice(+del.dataset.del, 1); renderRefGrid(); }
     return;
   }
@@ -764,7 +777,7 @@ window.addEventListener('drop', e=>{
 
 /* ═══ 悬停放大预览（白底图 / LOGO / 参考图） ═══ */
 document.addEventListener('mouseover', e=>{
-  const img = e.target.closest('#slotMain img, #slotLogo img, .slot-ref img');
+  const img = e.target.closest('#slotMain img, #slotLogo img, #slotPet img, .slot-ref img');
   if(!img) return;
   $('zoomViewImg').src = img.src;
   $('zoomView').style.display = 'block';
@@ -780,7 +793,7 @@ document.addEventListener('mousemove', e=>{
   z.style.top = Math.max(4, y) + 'px';
 });
 document.addEventListener('mouseout', e=>{
-  if(e.target.closest('#slotMain img, #slotLogo img, .slot-ref img')) $('zoomView').style.display = 'none';
+  if(e.target.closest('#slotMain img, #slotLogo img, #slotPet img, .slot-ref img')) $('zoomView').style.display = 'none';
 });
 
 /* ═══ 历史记录（localStorage 持久化，history.html 展示） ═══ */
@@ -809,6 +822,11 @@ function paintLogoSlot(){
   $('slotLogo').innerHTML = S.logo
     ? `<img src="${S.logo}"><button class="del" data-del="0">✕</button>`
     : `<span class="lg-ic">✦</span><div><p>上传品牌 LOGO（可选）</p><small>LOGO 将直接生成进画面</small></div>`;
+}
+function paintPetSlot(){
+  $('slotPet').innerHTML = S.pet
+    ? `<img src="${S.pet}"><button class="del" data-del="0">✕</button>`
+    : `<span class="lg-ic">🐾</span><div><p>上传自家宠物照片（可选）</p><small>只锁定长相（品种 / 毛色 / 五官），姿势动作由 AI 按画面自由设计</small></div>`;
 }
 function paintApiState(){
   const ok = !!(S.api.key && S.api.endpoint);
@@ -872,7 +890,7 @@ function compressImage(dataUrl, max=640){
   });
 }
 /* ── 统一 LLM 调用（Anthropic / OpenAI 双协议，代理优先） ── */
-const APP_VER = '2.18';
+const APP_VER = '2.19';
 /* 端点规范化：anthropic 协议（sk-kimi 编程 Key）只认 api.kimi.com/coding，
    其他任何主机（如误存的 moonshot 开放平台地址）一律重置 */
 function normalizeEndpoint(proto, endpoint){
@@ -1502,9 +1520,11 @@ function buildPlanB(isZh){
       '【合规红线（严格管控）】',
       COMPLIANCE_TXT,
       '',
-      '【画面质感】宠物只用纯种品种猫犬（英短/布偶/金渐层/柴犬/金毛/柯基等），禁橘猫田园猫串串；真实相机实拍质感，禁止AI感（完美均匀打光、塑料高光、磨皮发光、HDR油画感）。',
+      S.pet
+        ? '【画面质感 · 出镜宠物】画面中的宠物模特必须使用附件「出镜宠物照片」里那只宠物的样子：品种、毛色、花色分布、五官长相严格一致，一眼能认出是同一只——但只锁长相，不锁姿势：不要照搬照片里的姿势与角度，动作、姿态、表情由你根据画面内容自由设计（互动、进食、玩耍、陪伴等），让宠物自然融入场景。真实相机实拍质感，禁止AI感（完美均匀打光、塑料高光、磨皮发光、HDR油画感）。'
+        : '【画面质感】宠物只用纯种品种猫犬（英短/布偶/金渐层/柴犬/金毛/柯基等），禁橘猫田园猫串串；真实相机实拍质感，禁止AI感（完美均匀打光、塑料高光、磨皮发光、HDR油画感）。',
       '',
-      '【负面约束】产品变形、包装被重新设计、包装文字被篡改、虚构无来源的数据、广告法违禁词、文字乱码或错别字、宠物遮挡产品正面、水印、杂乱背景、AI感光影、塑料质感宠物。'
+      '【负面约束】产品变形、包装被重新设计、包装文字被篡改、虚构无来源的数据、广告法违禁词、文字乱码或错别字、宠物遮挡产品正面、水印、杂乱背景、AI感光影、塑料质感宠物' + (S.pet ? '、出镜宠物与附件宠物照片的长相不符、生硬照搬宠物照片原姿势' : '') + '。'
     ].join('\n');
   }
   return [
@@ -1519,9 +1539,11 @@ function buildPlanB(isZh){
     '',
     '[AD-LAW COMPLIANCE — STRICT] China Advertising Law: no absolute terms (best, No.1, first, only, 100%, unique), no unverifiable promises (absolute, permanent, zero-risk), no medical or therapeutic claims (cure, treat, heal), no false guarantees. Chinese on-image copy must obey the same rules.',
     '',
-    '[LOOK & FEEL] Use only purebred cats/dogs (British Shorthair, Ragdoll, Golden Shaded, Shiba Inu, Golden Retriever, Corgi, etc.), no orange tabbies or mixed breeds. Real-camera photographic look; no AI feel (no perfectly even lighting, plastic highlights, smoothed glowing skin or fur, HDR or painterly look).',
+    S.pet
+      ? '[LOOK & FEEL — PET MODEL] The pet in the image MUST be the exact same animal from the attached "pet photo": identical breed, coat color, pattern distribution and facial features, instantly recognizable as the same pet — but lock ONLY the appearance, NOT the pose: freely design the most natural pose, action and expression for the scene (interacting, eating, playing, accompanying), never stiffly copy the photo\'s original posture. Real-camera photographic look; no AI feel (no perfectly even lighting, plastic highlights, smoothed glowing skin or fur, HDR or painterly look).'
+      : '[LOOK & FEEL] Use only purebred cats/dogs (British Shorthair, Ragdoll, Golden Shaded, Shiba Inu, Golden Retriever, Corgi, etc.), no orange tabbies or mixed breeds. Real-camera photographic look; no AI feel (no perfectly even lighting, plastic highlights, smoothed glowing skin or fur, HDR or painterly look).',
     '',
-    '[NEGATIVE] distorted product, redesigned packaging, altered on-pack text, invented unsourced data, illegal ad claims, garbled or misspelled text, pet blocking the product front, watermark, cluttered background, AI-looking lighting, plastic-looking pets.'
+    '[NEGATIVE] distorted product, redesigned packaging, altered on-pack text, invented unsourced data, illegal ad claims, garbled or misspelled text, pet blocking the product front, watermark, cluttered background, AI-looking lighting, plastic-looking pets' + (S.pet ? ', pet whose appearance differs from the attached pet photo, stiff pose copied directly from the pet photo' : '') + '.'
   ].join('\n');
 }
 
@@ -1536,19 +1558,23 @@ async function lovartGen(){
   for(const u of S.refs){
     try{ refImgs.push(await compressImage(u)); }catch(e){ refImgs.push(u); }
   }
+  // 宠物照片（压缩后随附：锁长相，不锁姿势）
+  let petImg = null;
+  if(S.pet){ try{ petImg = await compressImage(S.pet); }catch(e){ petImg = S.pet; } }
   // 附件角色说明：多图时必须告诉模型每张图是什么，否则会把信息图包装当产品重新设计
-  const total = 1 + (S.logo ? 1 : 0) + refImgs.length;
-  const refStart = S.logo ? 3 : 2;
-  const refEnd = refStart + refImgs.length - 1;
+  const total = 1 + (S.logo ? 1 : 0) + (petImg ? 1 : 0) + refImgs.length;
   const roleLines = [`【附件说明（共${total}张图，角色不同，严禁混淆）】`,
      `第1张 = 商品图：生成画面中产品的唯一来源，包装的形状、颜色、图案、文字必须与第1张图完全一致，不变形、不重新设计。`];
-  if(S.logo) roleLines.push(`第2张 = 品牌LOGO：仅用于画面左上角的LOGO还原。`);
+  let rIdx = 2;
+  if(S.logo) roleLines.push(`第${rIdx++}张 = 品牌LOGO：仅用于画面左上角的LOGO还原。`);
+  if(petImg) roleLines.push(`第${rIdx++}张 = 出镜宠物照片：画面中宠物模特的【长相唯一标准】——品种、毛色、花色分布、五官特征必须与这张图一致，一眼能认出是同一只；但不要照搬这张照片的姿势与拍摄角度，动作、姿态、表情由你根据主图场景自由设计，自然生动。`);
   if(refImgs.length) roleLines.push(
-    `第${refStart}至${refEnd}张 = 本产品的信息图（卖点/细节/数据/场景图）：图上的卖点、数据与文案都可以提炼到画面上；但画面中的产品主体与包装仍以第1张商品图为唯一标准，如有冲突以第1张为准。`);
+    `第${rIdx}至${rIdx + refImgs.length - 1}张 = 本产品的信息图（卖点/细节/数据/场景图）：图上的卖点、数据与文案都可以提炼到画面上；但画面中的产品主体与包装仍以第1张商品图为唯一标准，如有冲突以第1张为准。`);
   const prompt = roleLines.join('\n') + '\n\n请严格按以下要求生成一张电商主图成品（只输出一张最终图片，不要输出多个方案）。' +
     (S.ratio==='1:1' ? '画面比例 1:1 正方形，≥800×800像素。' : '画面比例 3:4 竖版，≥750×1000像素。') + '\n\n' + raw;
   const images = [{name:'main.png', data:S.mainImg}];
   if(S.logo) images.push({name:'logo.png', data:S.logo});
+  if(petImg) images.push({name:'pet.jpg', data:petImg});
   refImgs.forEach((u, i) => images.push({name:'ref' + (i + 1) + '.jpg', data:u}));
 
   // 先建历史记录，3 张成品逐个挂上去
@@ -1563,7 +1589,7 @@ async function lovartGen(){
   const preview = $('lovartPreviewB');
   preview.innerHTML = [0,1,2].map(i=>`<div class="lv-img" id="lvSlot${i}"><div class="lv-wait">⏳ 第 ${i+1} 张生成中…</div></div>`).join('');
   st.textContent = '3 张并行生成中（各用不同 API Key，期间请勿重复点击）…';
-  slog(`lovart 出图×3 开始 | ratio=${S.ratio} logo=${!!S.logo} 信息图=${refImgs.length} 提示词=${prompt.length}字`);
+  slog(`lovart 出图×3 开始 | ratio=${S.ratio} logo=${!!S.logo} pet=${!!petImg} 信息图=${refImgs.length} 提示词=${prompt.length}字`);
 
   let done = 0, okCount = 0, savedAny = false;
   const prod = (prodName || '主图').replace(/[\\/:*?"<>|]/g, '_').slice(0, 40);
@@ -1649,18 +1675,17 @@ function openApiModal(){
 
 /* ═══ 持久化 ═══ */
 function save(){
-  const cfg = {ratio:S.ratio, api:S.api,
+  const cfg = {ratio:'1:1', api:S.api,
     f:{name:$('fName').value, brand:$('fBrand').value, price:$('fPrice').value}};
   try{ localStorage.setItem('petdesk2', JSON.stringify(cfg)); }catch(e){}
 }
 function applyCfg(cfg){
-  S.ratio = cfg.ratio||'1:1';
+  S.ratio = '1:1';  // 固定 1:1，忽略历史配置里的 3:4
   if(cfg.api){
     S.api = Object.assign({proto:'anthropic'}, cfg.api);
     S.api.endpoint = normalizeEndpoint(S.api.proto, S.api.endpoint);
     S.api.model = normalizeModel(S.api.proto, S.api.model);
   }
-  document.querySelectorAll('#ratioSwitch button').forEach(b=>b.classList.toggle('on', b.dataset.r===S.ratio));
   if(cfg.f){ $('fName').value=cfg.f.name||''; $('fBrand').value=cfg.f.brand||''; $('fPrice').value=cfg.f.price||''; }
   paintApiState();
 }

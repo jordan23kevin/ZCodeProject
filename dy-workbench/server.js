@@ -16,7 +16,7 @@ const host = argVal('--host', process.env.HOST || '127.0.0.1');
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.json': 'application/json' };
-const APP_VER = '2.18';
+const APP_VER = '2.19';
 
 function readBody(req) {
   return new Promise((res, rej) => {
@@ -205,9 +205,49 @@ async function handleLovartGenerate(req, res) {
   }
 }
 
+// ── HEIC → JPG 转换（换猫重绘页：浏览器 heic2any 失败时的服务端兜底）──
+const HEIC_PY = 'E:/Kimi Code/psd_env/Scripts/python.exe';
+const HEIC_SCRIPT = path.join(__dirname, 'heic2jpg.py');
+async function handleHeic(req, res) {
+  try {
+    const raw = await readBody(req);
+    if (raw.length > 60 * 1024 * 1024) { res.writeHead(413); return res.end('{"error":"payload too large"}'); }
+    const { data } = JSON.parse(raw.toString('utf8'));
+    const m = /^data:[\w\/+.-]*;base64,(.+)$/s.exec(String(data || ''));
+    if (!m) { res.writeHead(400); return res.end('{"error":"invalid dataURL"}'); }
+    if (!fs.existsSync(HEIC_PY)) { res.writeHead(500); return res.end(JSON.stringify({ error: '未找到 psd_env Python：' + HEIC_PY })); }
+    const t0 = Date.now();
+    const result = await new Promise(resolve => {
+      const proc = spawn(HEIC_PY, [HEIC_SCRIPT], { env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
+      const out = [], errB = [];
+      proc.stdout.on('data', d => out.push(d));
+      proc.stderr.on('data', d => errB.push(d));
+      const killer = setTimeout(() => { try { proc.kill(); } catch (e) {} }, 120000);
+      proc.on('close', code => { clearTimeout(killer); resolve({ code, out: Buffer.concat(out), err: Buffer.concat(errB).toString('utf8') }); });
+      proc.on('error', e => { clearTimeout(killer); resolve({ code: -1, err: String(e) }); });
+      proc.stdin.write(Buffer.from(m[1], 'base64'));
+      proc.stdin.end();
+    });
+    if (result.code === 0 && result.out.length) {
+      appLog(`heic | 转换成功 ${Date.now() - t0}ms ${Math.round(result.out.length / 1024)}KB`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, data: 'data:image/jpeg;base64,' + result.out.toString('base64') }));
+    }
+    const em = result.err.trim() || ('转换进程退出码 ' + result.code);
+    appLog('heic | 失败：' + em);
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: em }));
+  } catch (e) {
+    appLog('heic | 异常：' + String(e && e.message || e));
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: String(e && e.message || e) }));
+  }
+}
+
 http.createServer((req, res) => {
   if (req.method === 'POST' && req.url.split('?')[0] === '/api/vision') return handleVisionProxy(req, res);
   if (req.method === 'POST' && req.url.split('?')[0] === '/api/lovart/generate') return handleLovartGenerate(req, res);
+  if (req.method === 'POST' && req.url.split('?')[0] === '/api/heic2jpg') return handleHeic(req, res);
   if (req.method === 'POST' && req.url.split('?')[0] === '/api/log') return handleClientLog(req, res);
   if (req.method === 'GET' && req.url.split('?')[0] === '/api/config') return handleConfig(res);
   if (req.method === 'GET' && req.url.split('?')[0] === '/api/ping') {
