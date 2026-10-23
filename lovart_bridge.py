@@ -1,8 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.7.5
+Y2 Bridge Server v2.7.6
 =======================
+
+变更 v2.7.6（2026-10-23）：上款页/AI对比页 日期分类改 = max(文件夹建立时间, 款内最新生成内容时间)。
+  - 上款页 _scan_upload_projects：+ 款内最新 03_UPLOAD 贴图时间（今天贴的图归今天）；
+  - AI对比页 _scan_ai_review_projects：+ 款内最新 01_AI 生成图时间（同 check_rem v2.7.8 规则）。
+  修复：老款号复用/镜像款 ctime 是过去日期，今天生成的内容挂到旧日期分类。
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
@@ -2015,7 +2020,16 @@ def _scan_upload_projects(projects_dir: Path = None, prefix: str = "DX", thumb_d
             files.append({"name": fe.name, "mtime": src_mtime, "thumb_mtime": thumb_mtime})
         if not files:
             continue
-        dx_date = _dx_dir_date(Path(de.path))
+        # 2026-10-23（用户规则）：日期 = max(文件夹建立时间, 款内最新 03_UPLOAD 贴图时间)。
+        # 今天贴的图也要归到今天——老款号复用/镜像款 ctime 是过去日期，纯按 ctime 会挂错分类。
+        try:
+            _latest = Path(de.path).stat().st_ctime
+        except Exception:
+            _latest = 0
+        for _f in files:
+            if _f["mtime"] > _latest:
+                _latest = _f["mtime"]
+        dx_date = time.strftime("%y%m%d", time.localtime(_latest)) if _latest else _dx_dir_date(Path(de.path))
         # BW 共用源图判定：02_REM_BG 只有 {dx}_BW_cut.png、没有独立 B/W cut
         # → B/W 两面成品贴的是同一张图，反相只能对 BW_cut 做一次（前端据此只放每色一个 ⚡）
         rem_dir = os.path.join(de.path, "02_REM_BG")
@@ -2254,8 +2268,16 @@ def _scan_ai_review_projects(projects_dir: Path = None, prefix: str = "DX"):
             role_order.get(g["role"].upper(), 99)
         ))
 
-        # 日期统一取 DX 文件夹建立日期
-        dx_date = _dx_dir_date(d)
+        # 2026-10-23（用户规则，同 check_rem v2.7.8）：日期 = max(文件夹建立时间,
+        # 款内最新 AI 生成图时间)。今天生成的 AI 图也要归到今天。
+        try:
+            _latest = d.stat().st_ctime
+        except Exception:
+            _latest = 0
+        for _f in ai_files:
+            if file_mtimes.get(_f, 0) > _latest:
+                _latest = file_mtimes[_f]
+        dx_date = time.strftime("%y%m%d", time.localtime(_latest)) if _latest else _dx_dir_date(d)
 
         projects.append({
             "dx": dx,
