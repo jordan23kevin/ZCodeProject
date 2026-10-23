@@ -1,5 +1,348 @@
 # Y2 一体化控制系统 — 更新日志
 
+## lovart_bridge v2.7.5 (2026-10-23) — 镜像侧款号占用检查（RX0489W 事故修复）
+
+- **规则（用户定）**：目标款号文件夹里只要有一张别的图，镜像就不许把内容合并进去。
+- `_mirror_one_folder` 写入前调新增的 `_mirror_target_occupied`：01_AI/03_UPLOAD 镜像永不
+  写入、有文件即被生图/贴图流程占用；02_REM_BG 仅在文件夹已标记为本镜像资产
+  （source_map.mirrored_from 匹配）时视为自有内容。占用 → 放弃该号改分配全新空号并记日志。
+- 事故背景：生图管线占用中的款号被镜像塞入别的设计（RX0489W/RX0490W）。
+  配套生图侧修复：run_official_v53.py v6.7.1 `_alloc_reuse_dx` 同规则。
+- 生效：需重启 bridge（8765，重跑 lovart_bridge.bat）。
+
+
+## lovart_bridge 镜像 (2026-09-25) — 只有 B 面素材的卫衣款，镜像到 T恤后作正面（W）
+
+- **新规则**：卫衣去背素材若只有 B（背面）没有 W，镜像到 T恤后这批素材当作**正面**用，
+  新分配的 T恤款号带 **W 后缀**（`_mirror_one_folder`）。
+- 文件角色同步转换：`_B_cut.png`→`_W_cut.png`、`_黑B_cut.png`→`_黑W_cut.png`、
+  `_B2_cut.png`→`_W2_cut.png` 等（`_role_b2w`），source_map.json 的 sources 同步转换
+  并记录 `role_map: "B→W（源款只有背面素材，镜像后作正面）"`。
+- **存量不动**：已分配为 B 后缀的镜像款保持原角色不转换（款号已对外对应，不能变）；
+  卫衣原本就有 W+B 双面的款维持原镜像逻辑不变。
+- 生效：需重启 bridge（8765）后，新发生的镜像按新规则走。
+
+## peiyi_mask (2026-09-15, v1.7.3) — 纯黑衣服遮罩挖空修复（FASHN 黑衣误标回退）
+
+- **问题**：黑B3/黑B4/黑B6 等纯黑 T 恤背面，FASHN 语义分割把黑衣大面积误标成背景
+  （黑B4 背部中心 62.5% 标为背景；黑B6 阴影区整块空洞），管线无条件用 FASHN top
+  替换衣身遮罩 → 衣身中心挖空，印花被裁掉。
+- **修复**：FASHN top < 「人像−遮挡物−手臂」理论衣身的 85% 时判定黑衣误标，
+  退回理论衣身做 body_mask（纯色衣服无遮挡后背实测中心覆盖 23~28% → 78~98%）。
+  正常颜色衣服走原 FASHN 路径不变。
+- 每次生成遮罩走子进程，新逻辑即时生效（单张/批量/一键全部）。
+
+## lovart_bridge (2026-09-13) — Edge CDP 共用实例不再全杀用户浏览器
+
+- **问题**：点「刷新已上款」等需要 CDP 的功能时，若已有不带调试端口的 Edge 在跑，
+  `_ensure_edge_cdp` 会 `taskkill /IM msedge.exe /F` 把所有 Edge 杀掉再重开——
+  用户正在用的浏览器被强制关闭。
+- **根因**：旧规则"绝不出现两个 Edge"其实没必要——CDP 实例用独立 profile
+  （C:\edge-cdp-profile），与用户日常 Edge（默认 profile）天然并存。
+- **修复**：9222 不可达时直接用独立 profile 启动共用 Edge，不动用户浏览器；
+  仅当存在「带 CDP profile 但没开 9222」的残留实例时（同 profile 开不了两个），
+  按命令行匹配 PID 精准关闭那一个（`_cdp_profile_edge_pids`/`_kill_cdp_profile_edge`）。
+  `_kill_edge` 全杀函数保留但不再被调用。
+- **2026-09-14 追加**：
+  - `browser_kernel/EdgeService.kill()` 同样全杀 → 改为只杀本服务 profile
+    （run_9223）的实例（「刷新已上款」走的其实是这条路径，上一版没覆盖到）；
+  - EdgeService 启动后从"窗口置底"改为"置底+最小化到任务栏"（置底的窗口在
+    桌面无遮挡时仍可见，用户报"黑窗口弹出"）；show_for_user 需要时会自动还原；
+  - `/api/upload/refresh-online-listed` 启动子进程前先 `_ensure_edge_cdp` 把
+    共享 Edge(9222) 拉起来，EdgeService 复用它，9223 隔离实例基本不再出现。
+- 生效：下次 bridge 重启后（EdgeService 改动随子进程即时生效）。
+
+## 镜像 (2026-09-12) — 恢复 hoodie→wb 去背图镜像（AI 图不镜像）
+
+- **根因**：categories.json 里 hoodie 的 `mirror_to` 配置丢失（最后一次成功镜像
+  停在 2026-09-03），之后的去背图全部没再镜像到 T恤。已加回 `"mirror_to": ["wb"]`。
+- 镜像范围维持原设计：**只镜像 02_REM_BG 去背图，AI 原图不镜像**。
+  （当天曾短暂加过 01_AI 生成图镜像并回填 376 张，用户确认不需要后已回退
+  代码并清掉全部回填文件。）
+- 触发点不变：去背完成时 check_rem 调 `/api/mirror/rembg`，幂等。
+
+## peiyi 母版级联 (2026-09-11) — 子图记录 `_linked_from`，改母版5参自动级联所有关联色
+
+- **需求**：1 图 10 色的批次，只想改白色母版的 5 参，其余 9 色跟着一起改。
+- **记录**：自动同步（sync_sibling_meta）和手动关联（link-meta）写入子图
+  `.meta.json` 时都记 `_linked_from: "分类/母版stem"`（手动关联此前已有此约定，
+  本次自动同步补齐）。
+- **级联**：`POST /api/peiyi/meta` 保存后，若本图是母版（有子图指向它），
+  把已填的组（单面款顶层 / 双面款 bw）推给全部关联子图，响应带
+  `propagated` 明细；子图手动改参保存则自动脱离关联（`detached` 上报）。
+  只覆盖「关联子图」，未关联的图不受影响；普通同步仍只填空缺不覆盖。
+- **前端**：卡片 meta 区显示 `🔗 母版: xxx`（悬停有说明）；保存母版后日志
+  输出级联明细并刷新涉及分类。`_peiyi_read_meta` 透传 `_linked_from`。
+- 实测：`W Blue Green/ W26`（母版）重存 → 级联 `W黑/黑W26` ✓；子图手动保存
+  → detached 上报且链接移除 ✓。
+
+## peiyi share-meta (2026-09-11) — 同图共用贴图参数改异步 + 实时进度展示
+
+- **背景**：v1.7.2 加 SSIM 指标后全库扫描从秒级变成几分钟，原来同步等待的
+  HTTP 请求会让页面干等（且代理/浏览器可能中途断）。
+- **后端**：`POST /api/peiyi/share-meta` 改为启动子进程后立即返回
+  `{started:true}`；新增 `GET /api/peiyi/share-meta/status` 返回
+  `{running, progress, result}`。单飞锁跨子进程全程持有（watcher 线程释放），
+  重复启动返回 busy。进度文件 `_share_meta_progress.json`，结果文件不变。
+- **peiyi_mask.sync_sibling_meta** 新增 `progress_path`：指纹加载 / 匹配
+  （每5张）/ 校验复制（每3张）/ 完成 四个阶段落盘进度。
+- **前端**：工具栏下加进度行，每 2s 轮询，显示「匹配同图 x/487（已同步 N 张）」
+  →「校验并复制参数 x/487」；结束后按原样输出明细日志并刷新涉及分类。
+  保存 5 参后的 20s 自动同步走同一通道，静默模式下不出明细、进度行照常显示。
+- 端到端实测：启动→进度实时更新→完成，全程约 4 分钟；防错配闸拦下 51 对。
+
+## peiyi_mask (2026-09-11, v1.7.2) — 同图识别加「224px 灰度 SSIM」兜底，适配 AI 整图改色批次
+
+- **背景**：新一批素材是 AI 整图改色（背景/模特像素也整体偏移），老的两个
+  同图判定指标大面积失灵——edge_raw 失效（像素值全变）、geom 从 0.79 掉到
+  0.55~0.70 区间，落单 16 张。
+- **实验结论**：升指纹分辨率对 geom 反而有害（112→224px 真对 0.79→0.19，
+  梯度更碎、±1px 容差太紧）；有效的是换指标——灰度 SSIM 对颜色完全免疫。
+- **改动**（`peiyi_mask.py`）：
+  - 候选粗筛增加颜色无关通道：112px 边缘 Dice ≥ 0.15（`SIBLING_DICE_PREFILTER`），
+    原 raw ≥ 0.10 粗筛保留（AI 改色对 raw≈0.003，单靠它进不了确认关）；
+  - 确认关增加第三指标：224px 灰度 SSIM ≥ 0.52（`SIBLING_SSIM_MIN`，从原图
+    重采样，`_gray_ssim_fp`，`_group_sibling_map` 内懒加载缓存）。
+- **校准**（15 对，可疑对全部肉眼复核）：真对 ≥0.566，假对 ≤0.357，
+  「同模特同场景不同一张」陷阱对 0.438（正确拒绝）。
+- **效果**：全库 488 张回归，落单 16 → 3，且剩 3 张全部是确认过的不同照片
+  （陷阱对 W20/W19 + 独立拍摄的黑W1），无误配。
+- 安全闸不变：复制 5 参/抽绳遮罩前仍须源图 body_mask 在目标图上 ≥95% 贴合。
+
+## lovart 提示词 (2026-09-07) — 全部在用提示词加「儿童内容绝对禁令」
+
+- 6 个在用文件末尾统一追加 `⛔ ABSOLUTE CONTENT BAN — NO CHILDREN`：
+  卫衣主提示词 `POD AI VIRAL FACTORY v5 - Hoodie.md`、T恤主提示词
+  `POD AI VIRAL FACTORY v3.md`、×5 变体的 v4.1 V1–V4 四个文件。
+- 内容：不得出现任何儿童/婴儿/幼儿形象（含剪影、局部、幼态角色）、
+  儿童道具（奶嘴/奶瓶/玩具/蜡笔/游乐场）、儿童向文字；参考图里有的
+  也必须删除重设计；该规则优先级高于参考忠实度和一切其它指令。
+
+## peiyi.html + lovart_bridge (2026-09-07) — 卡片新增「🔗 关联同款5参」手动指定同源图
+
+- **需求**：W Light Yellow（明黄·正面）这类浅色换色对，自动同图识别可能整组漏掉；
+  用户希望能肉眼指定「这张 = 黑W19 那一件」，直接复制它的5参。
+- **实现**：`POST /api/peiyi/link-meta`——按文件名全库精确匹配源图
+  （忽略空白/扩展名/「（黑·正面）」展示后缀，支持「分类/文件名」消歧，
+  多张匹配返回候选清单），把源图的单面款+双面款bw组整份复制给目标
+  （手动指定=明确意图，覆盖对应组），并写 `_linked_from` 溯源字段。
+  前端每张卡片参数区下方新增「🔗 关联同款5参」小按钮，prompt 输入源图名即可。
+- **实测**：`W Light Yellow/ W18.jpg` ← `W黑/黑W19.jpg`，main+bw 两组写入成功。
+
+## drawstring_tool (2026-09-07) — 抽绳工具默认绳子宽度 22px → 10px
+
+- 滑块默认值与旁显数字改为 10；JS 本就实时读滑块值，无其它硬编码。
+
+## peiyi.html + lovart_bridge (2026-09-07) — 卫衣正面缺抽绳遮罩打「缺抽绳」红角标
+
+- **需求**：卫衣正面（W* 分类）里哪些图还没有抽绳遮罩，画廊上一眼要能看到；
+  T恤没有抽绳，不标。
+- **实现**：`/api/peiyi/list` 每项新增 `has_drawstring`（`_drawstring_mask.png`
+  是否存在）；前端 `buildThumb` 在 `hoodie` 品类且 W* 分类、无抽绳遮罩时，
+  在「待填」角标下方叠红色「缺抽绳」角标（.dsbadge，top:62px）。
+
+## peiyi_mask v1.7.1 (2026-09-07) — 同图识别加「边缘几何重合度」兜底，浅色换色不再漏
+
+- **问题**：蜜瓜橙 W19 ↔ 白W20 明明是同一张照片，贴图参数却没同步。根因：
+  edge_raw 指标要求边缘像素「颜色原值一致」，蜜瓜橙→白这类浅色换色，
+  衣身褶皱边缘两图都有但颜色不同，edge_raw 跌到 0.014（阈值 0.15），
+  根本进不了候选，下游贴合校验（实际 fit=0.9949）没机会跑。
+- **修正**：新增 `_edge_geom_score`（颜色无关：两图边缘像素集 ±1px 容差
+  互相命中的比例）与 `_same_photo` 组合判定——edge_raw 优先，失灵时
+  geom 兜底。校准：真对 geom ≥0.788 / 假对 ≤0.589，阈值取 0.70。
+  `find_image_siblings`（遮罩派生）与 `_group_sibling_map`（批量同步）
+  两条路径都接入。下游 verify_derived_body_mask 闸不变，双保险。
+- **实测**：重跑 sync_meta 补同步 11 张，W19（蜜瓜橙/孔雀蓝/稻草黄）
+  全部从白色兄弟图拿到 main+bw 参数（geom 0.79–0.90，校验全过）。
+
+## lovart_bridge (2026-09-07) — 遮罩队列并行化：默认 3 路（MASK_Q_WORKERS 可调）
+
+- **需求**：遮罩队列单 worker 顺序跑，每张约 78s，剩几十张要等近一小时。
+- **并行上限依据**：本机无 GPU 纯 CPU 推理，单个遮罩子进程峰值内存实测
+  约 4.2GB（torch+BiRefNet+FASHN），整机 31GB → 默认 3 路（≈13GB 预算），
+  每路约 4GB，不建议超 5；10 路（≈42GB）必然爆内存，不可行。
+- **改动**：`_mask_worker` 改为 MASK_Q_WORKERS 个 daemon 线程共享队列；
+  状态新增 `running` 列表（`current`=running[0] 兼容旧前端）；入队去重
+  覆盖 running+pending；`_run_mask_job` 日志/结果文件改随机标签隔离、
+  读完即删（原共享路径并行会互相覆盖）。前端进度条显示「N 路并行 +
+  在跑文件名」，ETA 按并行路数折算。
+
+## peiyi.html (2026-09-07) — 进度条接管后台队列：刷新/中途打开页面也能看到进度
+
+- **问题**：遮罩进度条只在「本页点击一键生成」时初始化；队列在后台跑时刷新或
+  新打开页面，`MASK_PROG.total=0`，进度条不显示，只能看日志。
+- **修正**：页面打开后的首次轮询若发现队列正在跑，自动接管——总数=剩余张数，
+  历史 done/failed 只标记不重放日志（顺带消除了打开页面时几十条「已生成」
+  日志刷屏）。从接管时刻起累计 已完成/失败/ETA。
+
+## peiyi_mask v1.7.0 (2026-09-07) — 同图换色共用「贴图5参」：填一个颜色，全色自动复制
+
+- **需求**：同一件卫衣拍了一组换色图（如 黑W20↔白W21），贴图5参（宽/高/旋转/
+  最高y/中心x，含双面款 bw 组）几何上完全相同，但每个颜色都要手填一遍。
+- **实现**：`peiyi_mask.sync_sibling_meta()` 复用同图识别基建（指纹缓存 +
+  `_group_sibling_map`），组内把已填参数复制给「该组还全空」的兄弟图——
+  **只填空缺，绝不覆盖已有值**；防错配与抽绳共用同一把闸：源图必须有
+  body_mask 且过 `verify_derived_body_mask`（≥95%），不过一律跳过记 skipped。
+  `_manual` 手画遮罩侧车补进 `SIBLING_EXCL_SUFFIXES`（不再当兄弟图候选）。
+- **入口**：`POST /api/peiyi/share-meta`（worker 子进程 `sync_meta`，单飞锁防并发）；
+  页面保存任一5参后 20 秒无新改动自动同步一次（silent），工具栏新增
+  「📐 同图共用贴图参数」手动按钮。同步成功的分类自动刷新（待填角标即时消失）。
+- **实测**（卫衣库）：首轮填充 87 张 + 次轮 19 张，57 个疑似错配被校验闸拦下
+  （贴合率 0.47–0.92 全拒）；`B16_manual` 等垃圾 meta 已清除。
+- **注意**：`/api/peiyi/share-meta` 为新路由，lovart_bridge 需重启生效
+  （建议等遮罩队列跑完再重启，重启会清空未跑完的遮罩队列）。
+
+## peiyi.html (2026-09-07) — 修遮罩轮询导致的页面闪烁
+
+- **问题**：遮罩队列有活时 `_maskPollTick` 每 3 秒把全部分类 `renderGallery` 一遍
+  （innerHTML 重建所有卡片），单开页面就 3 秒一闪；同时开两个标签页两份轮询
+  错开，看起来「一直在刷新」。
+- **修正**：只有「运行中/排队名单」真正变化（签名对比）才重绘按钮状态；
+  图片数据刷新仍只在有新完成/失败项时触发。
+
+## peiyi.html (2026-09-07) — 一键生成全部遮罩加进度条
+
+- **需求**：点「🎭 一键生成全部遮罩」后页面只有日志滚动，看不出总量/进度/预计剩余时间。
+- **实现**：纯前端，复用已有 3 秒轮询 `/api/peiyi/mask-queue` 的数据，不动后端。
+  工具栏下新增进度条（默认隐藏）：入队成功后显示「已完成 X/Z（%）｜失败 F｜
+  当前：[分类] 文件名｜预计剩余约 N 分钟」（ETA 按本批已完成张的平均用时 × 剩余数），
+  队列清空后定格在完成态。单张「生成遮罩」不影响进度条（total=0 不渲染）。
+
+## peiyi_mask v1.6.2 (2026-09-07) — 派生遮罩贴合校验：错配兄弟图一律回退完整生成
+
+- **问题**：v1.6.1 的「结构像素一致率 ≥0.15」仍防不住「同模特同姿势、同背景、
+  不同一张」的近照（如 W Grass Green/ W11 ↔ W黑/黑W12，姿势几乎一致但衣服版型
+  不同、一张有抽绳一张没有，112px 指纹 edge=0.19 误判同图）。错配遮罩复制过去
+   visibly 错位，且重新生成会再次命中同一错源，用户无法自愈。共 98 张派生遮罩。
+- **修正**：`derive_masks_from` 复制前新增 `verify_derived_body_mask()`——把源
+  body_mask 的内边界带（向内 4px 一圈）投到目标图上，要求带内 ≥95% 像素与目标
+  图衣服色度一致（LAB 中位数 ±30）。实测：真同图对 ≥0.99，错位对 ≤0.95。
+  验证不过 → 不写任何文件、返回失败，`_peiyi_worker` 自动回退完整模型生成
+  （结果带 `sibling_rejected` 标记）。`sync_sibling_drawstring_masks` 同样加闸。
+- **清理**：全库 98 张派生遮罩体检，39 张不合格已删除全部遮罩侧车文件
+  （重新生成走完整模型）；其余 59 张 ≥0.95 保留。109 张抽绳遮罩落点复检全部
+  ≥0.994 无污染。判定原则不变：宁可重跑模型，绝不留错遮罩。
+
+## peiyi_mask v1.6.1 (2026-09-07) — 同图判定修正：改「结构像素一致率」+ 阈值 0.15（防错配）
+
+- **问题**：v1.6.0 用整图近似像素占比判同图，两张不同的黑色/白色卫衣因大片同色区域
+  虚假匹配（实测假对 黑W12↔黑B4 raw=0.19 被判同图；白W21→白W20 错配 0.117）。
+  首轮同步把抽绳遮罩错配给不同照片，并已清理（132+9 个文件删除）。
+- **修正**：判定改「结构像素一致率」——只在边缘像素（梯度>18）上比对原值 |Δ|<8，
+  平坦同色区不参与。15 对真 + 6 对假人工核对：真对 0.154~0.572，假对 ≤0.117，
+  阈值取 0.15 保守线（宁漏勿错）。粗筛保留整图占比 ≥0.10 提速。
+- **另修**：候选迭代器排除 _parse/_occluder 等遮罩产物文件（v1.6.0 会把遮罩复制到
+  产物文件上）。全库重跑后抽绳遮罩共 71 张（自动共用 50 张，全部 ≥0.15）。
+- 试行过的失败方案留档：网格中位数、分辨率趋势、严容差 Δ≤3 均无法在 0.09~0.15
+  灰区分离真假对（112px 指纹下白底白卫衣的褶皱阴影会巧合匹配）。
+
+## peiyi_mask v1.6.0 + lovart_bridge + peiyi.html (2026-09-07) — 同图换色遮罩共用（抽绳遮罩不用重画）
+
+- **场景**：素材库大量胚衣是「同一张照片只换衣色」（如 白W11.jpg ↔ 黑W16.jpg，背景像素
+  100% 一致）。遮罩（抽绳/body/occluder/alpha/印花框 meta）是几何数据，坐标完全一致，
+  直接复制即可——尤其抽绳遮罩是手动画的，共用后不用每张重画。
+- **peiyi_mask.py**：
+  - `find_image_siblings()`：同库（03_MATERIAL 根）内找同图兄弟——原图尺寸相同 +
+    112px 低分辨率指纹「近似相同像素占比(|Δ|<8)」≥0.15（实测同图对 0.36~0.41，
+    同模特不同照片 ≤0.07）。指纹缓存 `_sibling_fp.pkl`（按 mtime+size 失效）。
+  - `derive_masks_from()`：复制 occluder_mask/body_mask/alpha/drawstring_mask/meta.json；
+    occluder.png 与 parse.png 用目标图自己的像素重合成；归档版本 flags 记 derived_from。
+    实测 0.7s（跑模型需几十秒），parse 遮罩与黑色卫衣逐像素对齐。
+  - `sync_sibling_drawstring_masks()`：全库扫描，把已画好的抽绳遮罩复制给同图且缺
+    抽绳的图，只复制不覆盖。
+- **_peiyi_worker.py**：run_mask 先查同图兄弟（有遮罩则直接 derive，不跑 BiRefNet/FASHN；
+  tpl 扭曲素材与衣色相关，仍按本图生成）；新增 sync_drawstring 模式。
+- **lovart_bridge.py**：新增 `POST /api/peiyi/share-drawstring`（子进程执行同步，600s 超时）。
+- **peiyi.html**：工具栏新增「🔗 同图共用抽绳遮罩」按钮，日志逐对列出 源→目标（相似度）。
+- 验证：黑W16 从 白W11 复制成功（0.7s，含抽绳遮罩）； bridge 已重启。
+
+## lovart_bridge + peiyi.html (2026-09-06c) — 遮罩生成队列化不卡死 + 一键生成全部
+
+- **用户需求**：点生成遮罩不要卡死页面，连点多张按点击顺序排队；新增「🎭 一键生成全部遮罩」
+  按钮，自动给所有还没有遮罩的图生成。
+- **lovart_bridge.py**：原同步 `api_peiyi_mask`（subprocess timeout=600 阻塞请求）重构为
+  队列模式——`_mask_worker()` 单消费者线程串行跑 `_run_mask_job()`；`_mask_enqueue()`
+  按 `cat/category/name` 去重入队。端点改为：
+  - `POST /api/peiyi/mask`：异步入队，立即返回 `{ok, queued, status, position}`；
+  - `GET /api/peiyi/mask-queue`：current / pending / done(50) / failed(50)；
+  - `POST /api/peiyi/mask-all`：扫全部胚衣分类，缺 `_occluder_mask.png`/`_occluder.png`
+    的全部入队（与画廊 has_mask 口径一致）。
+- **peiyi.html**：工具栏新增「🎭 一键生成全部遮罩」（genAllMasks）；遮罩按钮状态扩展
+  ⏳生成中 / 🕐排队中；`pollMaskQueue()` 每 3s 轮询，完成/失败自动记日志并刷新对应
+  分类画廊，队列空自动停轮询；页面加载时先同步一次队列状态。bridge 已重启生效。
+
+## wb_naming v2.6.8 (2026-09-06) — 卫衣平铺胚衣判定改精确匹配，修复 12 号图被误当平铺
+
+- **用户规则**：整款全部重新贴图时，每个颜色固定用「2 号图」（平铺胚衣，如 B2）贴平铺图，
+  另外随机选 1 张模特图。
+- **修复**：卫衣 `is_flat_stem` 原判定 `stem.endswith("2")` 会把 12 号图（B12/W12）误判为
+  平铺胚衣——素材库有 B10~B17 时，模特图 B12 会被当平铺用、且从模特池中剔除。改为
+  stem 去空格后精确匹配 {白W2, 黑W2, 白B2, 黑B2, W2, B2}（兼容英文色胚衣名前导空格如 " B2"）。
+- 改动文件：`engine/wb_naming.py`（已同步到 `D:\Semems WB\04_OS\engine\` 与
+  `D:\Semems Hoodie\04_OS\engine\`，check_rem wb@8766 / hoodie@8767 已重启生效）；
+  `engine/w_mockup_extra.py` 注释同步。T恤白名单判定不变（已回归验证）。
+
+## activity.html + lovart_bridge (2026-09-06b) — 下架面板过滤「请勿重复上架」类违规 + 下架后自动删除
+
+- **violation-spus 接口过滤**：violation 表 suggestion 含「请勿重复上架/实物印花违规」的
+  SPU（全部违规都是这类时）不再出现在「违规商品下架」面板——这类是升级管控提醒，
+  商品已被平台处理，无需再下架/删除。混合违规的 SPU 仍显示。实测面板 694 → 172。
+- **下架后自动删除商品**（配合报活动项目 offshelf_spus.py v4.9.0）：下架成功的 SPU 自动调
+  product/remove 从商品列表删除；面板确认弹窗与提示文案已同步说明"下架后会删除，不可逆"。
+
+## activity.html v4.5.0 + lovart_bridge (2026-09-06) — 报活动页面新增「违规商品批量下架」
+
+- **activity.html**：工具栏「同步已报名明细」旁新增「🚫 违规商品下架」+「⏹ 停止下架」按钮；
+  新增 offshelfPanel 勾选面板（列出全部违规 SPU，带款号/违规原因，已下架/待废弃的默认不勾、
+  可手动勾回）；JS 新增 openOffshelf/confirmOffshelf/pollOffshelfStatus/stopOffshelf，
+  下架日志经 appendLog 进主日志框实时滚动。
+- **lovart_bridge.py**：新增 4 个接口（插在 sync-stop 之后，模式照抄 sync_task）：
+  - `GET /api/activity/violation-spus`：违规 SPU 列表 + 货号 + 已下架/待废弃标记
+    （联查 base_data.db 的 violation 与 goods_status_current）；
+  - `POST /api/activity/offshelf`：写 `_offshelf_spus_ui.txt` 清单 → spawn
+    `E:/Claude code/Temu自动化/报活动/offshelf_spus.py`（独立 offshelf_task/offshelf_lock）；
+  - `GET /api/activity/offshelf-status`：轮询进度/日志；
+  - `POST /api/activity/offshelf-stop`：终止下架进程。
+- **闭环实测**：页面接口 POST offshelf {"spus":[2973313725]} → 脚本跑完 status=completed，
+  该 SPU 补下架成功（之前"请稍后重试"卡住的 1 条，10 SKC 中 1 条本次成功、9 条已是下架态）。
+
+## lovart_bridge v2.8.0 (2026-09-03) — ×4 变体升级 ×5：新增 V5 严格复刻（VIRAL FACTORY v5）
+
+- 一张原图现在生成 **5** 张 AI 图：V1-V4 = `POD STYLE VARIANT v4.1` 四个独立风格文件，
+  **V5 = `POD AI VIRAL FACTORY v5 - Hoodie.md`**（严格复刻路线：保风格/构图/色调，
+  只在"线条干净度/色彩平整度"两维优化，纯绿底、graphic-only）。
+- `lovart_bridge.py`：`/api/generate` 的 `variants=4/5` 统一映射为 5；注入
+  `LOVART_VARIANT_PROMPT_V5` 指向 VIRAL FACTORY v5 文件；V5 文件缺失时自动降回 ×4，
+  V1-V4 缺失时回退合并版 v4（原有回退链不变）。
+- 管线零改动：`run_official_v53.py` 变体循环按 `LOVART_VARIANTS` 计数（1..N），
+  `check_rem.py` 变体暂存/收编按 `_v(\d+)` 正则分组，均天然支持 v5。
+- UI 不变（仍叫"×4 风格变体"勾选框，实际出 5 张）。
+
+## bridge / lovart_control / check_rem v2.7.7 (2026-08-31) — ×4 风格变体：暂存 + 去背收编时分配文件夹
+
+- **需求**：一张原图生成 4 个风格变体，变体图暂存 `_AI_VARIANTS`，去背（美图+脚本两种）时才分配 DX/HX 文件夹。
+- **lovart_control.html**：生图工具栏新增「×4 风格变体」勾选框；确认弹窗提示 4 变体与积分（16×4/张）；请求带 `variants=4`。
+- **lovart_bridge.py**：`/api/generate` 解析 `variants`（仅支持 4）并透传 `_run_generation(variants=)`；
+  variants=4 时 env 注入 `LOVART_VARIANTS=4`，且无论 always_prompt 与否都注入
+  `LOVART_PROMPT_FILE` → 变体引擎 v2（wb→`POD STYLE VARIANT ENGINE v2 - Universal - Tshirt.md`，
+  hoodie→`POD STYLE VARIANT ENGINE v2 - Universal.md`）。
+- **check_rem.py v2.7.7（双副本同步）**：
+  - 页面顶部新增「变体暂存区」板块：扫 `品类根/01_INBOX/_AI_VARIANTS/*.png`（排除 _src），
+    缩略图（`/thumb?kind=var`）+ 勾选框；
+  - 新增 `adopt_variants()`：按 (原图编号, variant_index) 分组，角色 {B,W}→后缀BW、单角色→B/W；
+    分配编号读写 `WB_REGISTRY/registry.json` 的 `_meta.max_dx_num`（同 run_official_v53.py
+    next_dx_number/update_max_dx 真源逻辑，不存在则扫 02_PROJECTS 兜底初始化，分配后立即推进）；
+    建 `<编号+后缀>/{01_AI,02_REM_BG,03_UPLOAD}`；变体图移入 01_AI 改名 `{文件夹名}_{角色}.png`；
+    原图从 _src 复制进 01_AI 保留原名；写 source_map.json；从 variants.json 移除已收编条目；
+  - 新路由 `/adopt-rembg`（收编→batch_rembg 美图）与 `/adopt-script-rembg`（收编→batch_script_rembg），
+    与批量去背共用 `.rembg_lock` 锁与 `/batch-result` 结果机制；
+  - `/clear-variants`：剩余变体 png 移入 `_ai_trash`，variants.json 相应清理；
+  - `/api/projects` 改为 `{projects, variants}` 结构（check_rem.js fetchProjects 兼容新旧形态）；
+  - 收编/清空后让 scan 缓存失效。
+- **验证**：假暂存 99w_v1.png 走脚本去背收编全链路实测通过（DX3573W 建好、命名正确、
+  _cut.png 4.8MB、variants.json 清空、max_dx_num 3572→3573），测试数据已移 _ai_trash；
+  美图路径未实测（会占屏幕），代码路径与脚本路径共用同一收编函数。
+
 ## upload.html v2.5.8e (2026-08-24) — 悬停放大预览刷新修复 + h1 版本号同步
 
 - **问题**：v2.5.8d 后展开区/审图都刷成新图了，但"鼠标放在缩略图上的悬停放大图"还是旧图。

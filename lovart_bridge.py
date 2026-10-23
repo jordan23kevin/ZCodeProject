@@ -1,12 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.7.3
+Y2 Bridge Server v2.7.5
 =======================
 Flask HTTP 桥接服务 — 连接 Y2 控制台与本地 Lovart 管线 + 文件系统
 
 架构: HTML ←HTTP/JSON→ Flask Bridge ←subprocess→ Lovart-official pipeline
                                     ←文件IO→   INBOX / DX 目录 / Registry
+
+变更 v2.7.5（2026-10-23）：
+  - 镜像侧占用检查（用户规则：款号文件夹里只要有一张别的图就不许合并）：
+    _mirror_one_folder 写入目标款号前调 _mirror_target_occupied 检查——
+    01_AI/03_UPLOAD 镜像永不写入、有文件即被生图/贴图流程占用；
+    02_REM_BG 仅在文件夹已标记为本镜像资产时视为自有内容。
+    占用 → 放弃该号改分配全新空号并记日志，防 RX0489W 类事故
+    （生图管线占用中的款号被镜像塞入别的设计）。
+    配套生图侧修复：run_official_v53.py v6.7.1 _alloc_reuse_dx 同规则。
+
+变更 v2.7.4（2026-09-03）：
+  - 修复 check_rem 守护线程重复拉起 bug：check_rem 启动慢（模型加载约 1 分钟），
+    旧逻辑只看端口是否就绪，启动窗口内每 5 秒重复 spawn，曾失控拉起 86 个实例
+    （SO_REUSEADDR 下同端口共存），吃光 33GB 内存提交量导致全系统 OOM。
+    现在 _CHECK_REM_PROCS 记录已拉起的 PID：进程活着且未满 300 秒不再重复拉起；
+    超 300 秒端口仍不就绪视为卡死，taskkill 后重拉一次。
 
 变更 v2.7.3（2026-08-24）：
   - /api/upload/projects 返回的 files[].mtime 改用 float 秒（毫秒精度），原来是 int 截断到秒——
@@ -309,17 +325,28 @@ import shutil
 import hashlib
 import subprocess
 import threading
+import queue
 import re
 import io
 import ctypes
 import argparse
+import sqlite3
 import socket
-from urllib.request import urlopen
+from urllib.request import urlopen, build_opener, ProxyHandler
 from urllib.error import URLError
 from ctypes import wintypes
 from pathlib import Path
 from datetime import datetime, timedelta
 import urllib.parse
+
+# 本机转发专用 opener：禁用系统代理。系统代理 ProxyOverride 只豁免 localhost 没豁免 127.0.0.1，
+# 导致转发本机引擎（8766/8767/9222）的请求被塞进 127.0.0.1:9567 代理，代理一抖动就 502
+# （HX0930W 宝蓝色反相即因此漏贴）。所有本机 urlopen 统一走 _local_urlopen。
+_LOCAL_OPENER = build_opener(ProxyHandler({}))
+
+
+def _local_urlopen(url, timeout=10):
+    return _LOCAL_OPENER.open(url, timeout=timeout)
 
 try:
     from flask import Flask, jsonify, request, send_file, abort, make_response
@@ -556,7 +583,8 @@ def _gen_paths(cat=None):
         "wb_registry": root / "WB_REGISTRY" / "registry.json",
         # 卫衣提示词：LOVART_PROMPT_FILE 覆盖视为完整 prompt（不再拼接脚本内置 CONCEPT），
         # 故文件内自带 concrete request 段
-        "prompt": LOVART_DIR / "config" / f"POD AI VIRAL FACTORY v3 - {'Hoodie' if cat == 'hoodie' else cat}.md",
+        # 2026-10-23：hoodie360 回滚到 v5（v6 自由重设计效果不理想，文件仍保留在 config 可再启用）
+        "prompt": LOVART_DIR / "config" / f"POD AI VIRAL FACTORY v5 - {'Hoodie' if cat == 'hoodie' else cat}.md",
         "always_prompt": True,
     }
 # 各分类底色（JPG 输出）：白胚衣用白底、黑胚衣用黑底
@@ -826,8 +854,20 @@ def _port_ready(host, port, timeout=2):
 
 
 # 去背预览服务：每个品类一个独立实例（单进程服务单一品类，互不串类）
-_CHECK_REM_INSTANCES = [("wb", 8766), ("hoodie", 8767)]
+_CHECK_REM_INSTANCES = [("wb", 8766), ("hoodie", 8767), ("hoodie360", 8768)]
 _CHECK_REM_PORT_FOR_CAT = {cat: port for cat, port in _CHECK_REM_INSTANCES}
+# port -> {"pid": int, "ts": float}；防止 check_rem 启动慢（模型加载）期间被守护线程重复拉起
+_CHECK_REM_PROCS = {}
+
+
+def _pid_alive(pid):
+    """Windows 下判断 PID 是否存活。"""
+    import ctypes
+    h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if h:
+        ctypes.windll.kernel32.CloseHandle(h)
+        return True
+    return False
 
 
 def _check_rem_ensure(cat, port):
@@ -838,7 +878,20 @@ def _check_rem_ensure(cat, port):
         print(f"  [check_rem daemon] 脚本不存在，跳过 {cat}@{port}", flush=True)
         return
     if _port_ready("127.0.0.1", port, timeout=3):
+        _CHECK_REM_PROCS.pop(port, None)
         return
+    info = _CHECK_REM_PROCS.get(port)
+    if info and _pid_alive(info["pid"]):
+        if time.time() - info["ts"] < 300:
+            return  # 进程活着但还在启动（模型加载慢），不重复拉起
+        # 超过 5 分钟端口仍不就绪：视为卡死，杀掉重拉一次
+        print(f"  [check_rem daemon] {cat}@{port} 300s 未就绪，杀掉 PID={info['pid']} 重拉", flush=True)
+        try:
+            subprocess.run(["taskkill", "/PID", str(info["pid"]), "/F", "/T"],
+                           capture_output=True)
+        except Exception:
+            pass
+        time.sleep(2)
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     log_path = script.parent / f"check_rem_daemon_{port}.log"
     try:
@@ -856,6 +909,7 @@ def _check_rem_ensure(cat, port):
             stderr=subprocess.STDOUT,
         )
         print(f"  [check_rem daemon] 已启动 check_rem.py cat={cat} port={port} (PID={proc.pid})", flush=True)
+        _CHECK_REM_PROCS[port] = {"pid": proc.pid, "ts": time.time()}
     except Exception as e:
         print(f"  [check_rem daemon] 启动失败 cat={cat} port={port}: {e}", flush=True)
 
@@ -979,6 +1033,251 @@ retail_price_lock = threading.Lock()
 
 
 _lock = threading.Lock()
+
+
+# ============================================================================
+# 去背图镜像（hoodie → wb）：源品类去背完成后，把该款 02_REM_BG 同步到
+# categories.json 里 "mirror_to" 配置的目标品类（自动分配 DX 号、文件名换前缀）。
+# AI 原图不镜像（2026-09-12 曾短暂加过 AI 镜像，用户确认不需要，已回退）。
+# 同一个源款永远映射同一个目标文件夹（mirror_map.json 记账）。
+# 幂等：可重复调用；回滚 = 删掉 categories.json 里的 mirror_to 字段。
+# ============================================================================
+from wb_category import mirror_targets as _cat_mirror_targets
+
+MIRROR_MAP_FILE = Path(r"D:\Semems") / "mirror_map.json"   # "源cat:款号" → {目标cat: 目标款号}
+_mirror_lock = threading.Lock()
+_MIRROR_FILE_EXT = ('.png', '.jpg', '.jpeg')
+
+
+def _mirror_map_load() -> dict:
+    try:
+        if MIRROR_MAP_FILE.exists():
+            data = json.loads(MIRROR_MAP_FILE.read_text(encoding='utf-8'))
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {}
+
+
+def _mirror_map_save(mmap: dict):
+    MIRROR_MAP_FILE.write_text(json.dumps(mmap, indent=2, ensure_ascii=False), encoding='utf-8')
+
+
+def _mirror_src_suffix(folder: str, src_prefix: str) -> str:
+    """HX0459BW → 'BW'；HX0459 → ''（款号尾部角色后缀原样带到目标款号）"""
+    m = re.match(rf'^{re.escape(src_prefix)}\d+(BW|B|W)?$', folder)
+    return (m.group(1) or '') if m else ''
+
+
+def _mirror_folder_marked(dst_dir: Path, src_folder: str) -> bool:
+    """目标文件夹的 source_map.json 是否标记为镜像自 src_folder"""
+    sm = dst_dir / "source_map.json"
+    if not sm.is_file():
+        return False
+    try:
+        data = json.loads(sm.read_text(encoding='utf-8'))
+        return data.get("mirrored_from") == src_folder
+    except Exception:
+        return False
+
+
+def _mirror_find_existing(dst_projects: Path, dst_prefix: str, src_folder: str):
+    """map 记录丢失时的兜底：扫目标 projects，找 source_map 标记 mirrored_from=src_folder 的款"""
+    dst_re = _dx_re(dst_prefix)
+    try:
+        for d in sorted(os.listdir(dst_projects)):
+            if not dst_re.match(d):
+                continue
+            if _mirror_folder_marked(dst_projects / d, src_folder):
+                return d
+    except Exception:
+        pass
+    return None
+
+
+def _mirror_target_occupied(dst_dir: Path, src_folder: str) -> bool:
+    """目标款号文件夹是否已被其它流程占用（2026-10-23 用户规则：
+    款号文件夹里只要有一张别的图，就不许把镜像内容合并进去）。
+    - 01_AI / 03_UPLOAD：镜像流程永不写入，有文件即被生图/贴图流程占用；
+    - 02_REM_BG：仅当文件夹已标记为本镜像资产（source_map.mirrored_from=src_folder）
+      时视为自有内容，否则也算占用。"""
+    if not dst_dir.is_dir():
+        return False
+    for sub in ("01_AI", "03_UPLOAD"):
+        p = dst_dir / sub
+        if p.is_dir() and any(f.is_file() for f in p.iterdir()):
+            return True
+    if not _mirror_folder_marked(dst_dir, src_folder):
+        p = dst_dir / "02_REM_BG"
+        if p.is_dir() and any(f.is_file() for f in p.iterdir()):
+            return True
+    return False
+
+
+def _mirror_alloc_folder(dst_projects: Path, dst_prefix: str, suffix: str) -> str:
+    """分配目标品类新款号：最大编号+1（与 run_official_v53 同一套逻辑），保留 BW/B/W 后缀"""
+    max_num = 0
+    if dst_projects.exists():
+        for d in os.listdir(dst_projects):
+            m = re.match(rf'^{re.escape(dst_prefix)}(\d+)(?:BW|B|W)?$', d)
+            if m:
+                max_num = max(max_num, int(m.group(1)))
+    return f"{dst_prefix}{max_num + 1:04d}{suffix}"
+
+
+def _mirror_one_folder(src_cat: str, folder: str, tcat: str, mmap: dict) -> dict:
+    """把 源cat/folder/02_REM_BG 同步镜像到目标品类 tcat 的对应款文件夹。"""
+    src_root = _cat_root(src_cat)
+    src_rem = src_root / "02_PROJECTS" / folder / "02_REM_BG"
+    if not src_rem.is_dir():
+        return {"target": tcat, "ok": False, "error": f"{folder}/02_REM_BG 不存在"}
+
+    dst_root = _cat_root(tcat)
+    dst_projects = dst_root / "02_PROJECTS"
+    dst_prefix = _cat_prefix(tcat)
+    src_prefix = _cat_prefix(src_cat)
+    dst_projects.mkdir(parents=True, exist_ok=True)
+
+    # 2026-09-23 规则（仅 T 恤目标适用）：只有 B 面（背面）素材的款，镜像到 T恤 后
+    # 图案当正面用——素材角色 B→W，目标款号也带 W 后缀。存量 B 后缀镜像款不动。
+    # 2026-10-21：该规则是 T 恤专用（T 恤正面才出图）；hoodie→hoodie360 等同类目
+    # 镜像不做角色转换，B/W 原样保留。
+    src_suffix = _mirror_src_suffix(folder, src_prefix)
+    b_only = (src_suffix == "B") and tcat == "wb"
+
+    map_key = f"{src_cat}:{folder}"
+    entry = mmap.setdefault(map_key, {})
+    dx = entry.get(tcat, "")
+    created = False
+    if dx and not _mirror_folder_marked(dst_projects / dx, folder):
+        dx = ""   # 记录与实际不符（文件夹被删/被改），重新找
+    if not dx:
+        dx = _mirror_find_existing(dst_projects, dst_prefix, folder) or ""
+    if not dx:
+        dx = _mirror_alloc_folder(dst_projects, dst_prefix, "W" if b_only else src_suffix)
+        created = True
+    entry[tcat] = dx
+
+    # 2026-10-23 占用检查（用户规则）：目标款号文件夹里已有别的图
+    # （01_AI 原图 / 03_UPLOAD 贴图 / 未标记为本镜像的 02_REM_BG 去背图）
+    # → 不许合并，放弃该号改分配全新空号。防 RX0489W 类事故：
+    # 生图管线正在用/已占用的款号被镜像塞入别的设计。
+    if _mirror_target_occupied(dst_projects / dx, folder):
+        _old_dx = dx
+        dx = _mirror_alloc_folder(dst_projects, dst_prefix, "W" if b_only else src_suffix)
+        created = True
+        entry[tcat] = dx
+        try:
+            log(f"[镜像] 目标款号 {_old_dx} 已被其它内容占用，改用新款号 {dx}（源 {folder}）")
+        except Exception:
+            pass
+
+    # 存量 B 后缀镜像款（本规则前的）保持 B 素材不转换；新分配的 W 款才做 B→W
+    convert_b2w = b_only and dx.endswith("W")
+
+    def _role_b2w(sp: str) -> str:
+        m = re.match(r'^_(.*?)(?:BW|WB|B|W)(\d*)(_cut\.\w+)$', sp, re.IGNORECASE)
+        return f"_{m.group(1)}W{m.group(2)}{m.group(3)}" if m else sp
+
+    dst_dir = dst_projects / dx
+    dst_rem = dst_dir / "02_REM_BG"
+    for sub in ("01_AI", "02_REM_BG", "03_UPLOAD"):   # 01_AI 留空目录：让各列表页能列出该款
+        (dst_dir / sub).mkdir(parents=True, exist_ok=True)
+
+    # 整目录同步：新增的复制 / 改过的覆盖 / 源侧已删的移入回收目录
+    # 目标品类可在 categories.json 配 "mirror_colors"（允许的颜色前缀列表，
+    # ""=通用无前缀）——T恤只有黑白两色，配 ["", "黑", "白"]，其它颜色变体不镜像；
+    # 未配置=不过滤（全部镜像）。被过滤掉的已有文件会在下面删除同步里清掉。
+    allow_colors = None
+    try:
+        mc = (_cat_all().get(tcat) or {}).get("mirror_colors")
+        if isinstance(mc, list):
+            allow_colors = {str(x) for x in mc}
+    except Exception:
+        pass
+
+    src_files = {}
+    for f in sorted(src_rem.iterdir()):
+        if not (f.is_file() and f.name.startswith(folder) and f.suffix.lower() in _MIRROR_FILE_EXT):
+            continue
+        suffix_part = f.name[len(folder):]   # 去掉款号前缀的部分（如 _B_cut.png / _宝蓝色B_cut.png）
+        if allow_colors is not None:
+            m = re.match(r'^_(.*?)(?:BW|WB|B|W)\d*_cut\.(?:png|jpg|jpeg)$', suffix_part, re.IGNORECASE)
+            if not m or m.group(1) not in allow_colors:
+                continue
+        src_files[suffix_part] = f
+
+    copied, updated, removed = 0, 0, 0
+    dst_names = set()
+    for suffix_part, src_fp in src_files.items():
+        if convert_b2w:
+            suffix_part = _role_b2w(suffix_part)   # B面素材 → T恤正面（W）
+        dst_name = dx + suffix_part
+        dst_names.add(dst_name)
+        dst_fp = dst_rem / dst_name
+        if not dst_fp.exists():
+            shutil.copy2(str(src_fp), str(dst_fp))
+            copied += 1
+        else:
+            s_st, d_st = src_fp.stat(), dst_fp.stat()
+            if s_st.st_size != d_st.st_size or int(s_st.st_mtime) != int(d_st.st_mtime):
+                shutil.copy2(str(src_fp), str(dst_fp))
+                updated += 1
+
+    trash_dir = dst_root / "_ai_trash"
+    for f in sorted(dst_rem.iterdir()):
+        if f.is_file() and f.name.startswith(dx) and f.name not in dst_names:
+            trash_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(f), str(trash_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{f.name}"))
+            removed += 1
+
+    # source_map.json：镜像标记 + 文件清单（WB 控制台/引擎据此识别镜像款）
+    sm = {
+        "version": 1,
+        "mirrored_from": folder,
+        "mirrored_cat": src_cat,
+        "mirrored_at": datetime.now().isoformat(),
+        "sources": [{"file": dx + (_role_b2w(sp) if convert_b2w else sp)} for sp in sorted(src_files)],
+    }
+    if convert_b2w:
+        sm["role_map"] = "B→W（源款只有背面素材，镜像后作正面）"
+    (dst_dir / "source_map.json").write_text(json.dumps(sm, indent=2, ensure_ascii=False), encoding='utf-8')
+
+    return {"target": tcat, "ok": True, "dx": dx, "created": created,
+            "copied": copied, "updated": updated, "removed": removed}
+
+
+@app.route('/api/mirror/rembg', methods=['POST'])
+def api_mirror_rembg():
+    """去背图镜像端点。入参 folder（源款号，如 HX0459BW）、cat（源品类，缺省 hoodie）。
+    由去背引擎在 cut 图写盘成功后调用；幂等，可重复调用。"""
+    data = request.get_json(silent=True) or {}
+    folder = (data.get('folder') or request.form.get('folder') or request.args.get('folder') or '').strip()
+    src_cat = (data.get('cat') or request.form.get('cat') or request.args.get('cat') or 'hoodie').strip()
+
+    if src_cat not in _cat_all():
+        return jsonify({"ok": False, "error": f"未知品类: {src_cat!r}"}), 400
+    src_prefix = _cat_prefix(src_cat)
+    if not re.match(rf'^{re.escape(src_prefix)}\d+(?:BW|B|W)?$', folder):
+        return jsonify({"ok": False, "error": f"款号格式不对: {folder!r}（应为 {src_prefix}#### 带可选 BW/B/W 后缀）"}), 400
+
+    targets = [t for t in _cat_mirror_targets(src_cat) if t in _cat_all() and t != src_cat]
+    if not targets:
+        return jsonify({"ok": True, "mirrored": [], "message": f"品类 {src_cat} 未配置 mirror_to，跳过"})
+
+    results = []
+    with _mirror_lock:
+        mmap = _mirror_map_load()
+        for tcat in targets:
+            try:
+                results.append(_mirror_one_folder(src_cat, folder, tcat, mmap))
+            except Exception as e:
+                results.append({"target": tcat, "ok": False, "error": f"{type(e).__name__}: {e}"})
+        _mirror_map_save(mmap)
+
+    ok_all = all(r.get("ok") for r in results)
+    return jsonify({"ok": ok_all, "mirrored": results})
 
 
 # ---------------------------------------------------------------------------
@@ -1274,53 +1573,16 @@ def get_next_group_id(reg: dict) -> str:
 
 
 def find_reusable_group(reg: dict, group_number: int, roles_md5: dict, projects_dir: Path = None):
-    """同组链接（生图点击时即建立）：编号 group_number 在注册表已有组时，判断本次文件能否并入旧组。
+    """【2026-08-27 用户定案】批次 = 一次生图点击，编号只在本次点击内有效。
 
-    解决：同一设计的两半分批生图（先生 15W、再生 15B）旧逻辑每次都开新 group →
-    新 DX 文件夹 → 同设计被拆到两个文件夹（HX0137BW / HX0144B 事故）。
-
-    roles_md5: {角色: md5}（本组本次选中待生成的文件，角色=B/W/BW/WB）
-    组级判定（防 DX0455 式交叉污染——不同设计复用同编号绝不能合并）：
-      - 任一角色在旧组已存在且 MD5 不同 → 新设计复用编号 → 返回 None（开新组）；
-      - BW/WB 是双面完整图，自带两面，不可能是"后到的另一半"：仅当旧组角色集合
-        完全相同且 MD5 全同（同图重生成）才并入，其余一律开新组
-        （HX0065W 事故：13bw 新设计复用编号被并进 13W 的组）；
-      - 旧组缺本次某角色（后到的另一半）或全部角色 MD5 相同（同图重生）→ 并入旧组；
-      - 旧组未落过 dx_folder 或该文件夹已不在磁盘 → None（开了新组才能落新文件夹）。
-    多个候选旧组取最新创建的。返回 (gid, dx_folder) 或 (None, None)。
+    任何"并入旧组"都是错并：
+      - 同一次点击里 1B+1W = 同一组（点击时已就地分好组，不经过这里）；
+      - 之后的点击再来 1B/1W = 全新的一批，与旧组毫无关系；
+      - 隔天同编号更是永远无关。
+    原"后到的另一半并入旧组"逻辑（HX0137BW/HX0144B 场景）经查证是误判——
+    用户的工作流里两半一定在同一次点击里勾选，不存在"后到的另一半"。
+    故本函数永远返回 (None, None)：每次都开新组新文件夹。
     """
-    projects_dir = projects_dir or PROJECTS_DIR
-    FULL_SIDES = {"BW", "WB"}  # 双面完整图角色
-    candidates = {}  # gid -> {"roles": {role: md5}, "created": str, "dx_folder": str}
-    for md5_key, info in reg.get("images", {}).items():
-        if info.get("design_number") != group_number:
-            continue
-        gid = info.get("group_id") or ""
-        if not gid:
-            continue
-        c = candidates.setdefault(gid, {"roles": {}, "created": "", "dx_folder": ""})
-        c["roles"][info.get("role", "")] = md5_key
-        ginfo = reg.get("groups", {}).get(gid) or {}
-        c["created"] = ginfo.get("created", "")
-        c["dx_folder"] = ginfo.get("dx_folder", "")
-    if not candidates:
-        return None, None
-    # 最新创建的优先
-    for gid in sorted(candidates, key=lambda g: candidates[g]["created"], reverse=True):
-        c = candidates[gid]
-        dx = c["dx_folder"]
-        if not dx or not (projects_dir / dx).is_dir():
-            continue
-        if any(r in FULL_SIDES for r in roles_md5) or any(r in FULL_SIDES for r in c["roles"]):
-            # 涉及双面图：只有"同角色集合 + 同 MD5"的同图重生成才允许并入
-            if c["roles"] == roles_md5:
-                return gid, dx
-            continue
-        conflict = any(role in c["roles"] and c["roles"][role] != md5
-                       for role, md5 in roles_md5.items())
-        if conflict:
-            continue   # 同角色不同内容 = 新设计复用编号，绝不能并入
-        return gid, dx
     return None, None
 
 
@@ -1674,8 +1936,11 @@ def _online_listed_file(cat=None):
 
 
 def _title_cache_for(cat=None):
-    """标题缓存文件：按品类落各自根（wb 缺省=D:\\Semems WB\\标题缓存_wb.md，与改造前一致）。"""
-    return _cat_root(cat or _DEFAULT_CAT) / f"标题缓存_{_cat_suffix(cat)}.md"
+    """标题缓存文件：按品类落各自根（wb 缺省=D:\\Semems WB\\标题缓存_wb.md，与改造前一致）。
+    抓绒卫衣360 例外：用户维护的缓存文件名为 标题缓存_360.md（2026-10-12 用户指定）。"""
+    cat = cat or _DEFAULT_CAT
+    suffix = "360" if cat == "hoodie360" else _cat_suffix(cat)
+    return _cat_root(cat) / f"标题缓存_{suffix}.md"
 
 
 def _dx_dir_date(d: Path) -> str:
@@ -1690,40 +1955,75 @@ def _scan_upload_projects(projects_dir: Path = None, prefix: str = "DX", thumb_d
     """扫描所有 DX 的 03_UPLOAD，返回 [{dx, date, files:[{name,mtime}]}]
     date 统一按 DX 文件夹建立日期分类，不再按文件最后更新时间。
     projects_dir/prefix 缺省为 wb 常量（行为不变）。
+
+    性能：用 os.scandir + DirEntry.stat（Windows 下 stat 信息随目录枚举免费返回），
+    600+ 款 / 1.4w 图的扫描从 ~5s 降到 ~0.3s，避免 4s 轮询把服务器打满。
     """
     projects_dir = projects_dir or PROJECTS_DIR
     dx_re = _dx_re(prefix)
     projects = []
     if not projects_dir.exists():
         return projects
-    for d in sorted(projects_dir.iterdir()):
-        if not d.is_dir() or not dx_re.match(d.name):
-            continue
-        up_dir = d / "03_UPLOAD"
-        if not up_dir.is_dir():
-            continue
-        dx = d.name
-        files = []
-        for f in sorted(up_dir.iterdir()):
-            if not f.is_file():
+    # 缩略图目录一次性 scandir，建 {缩略图文件名: mtime} 索引（扁平结构 {dx}__{name}.jpg）
+    thumb_dir = thumb_dir or UPLOAD_THUMB_DIR
+    thumb_mtimes = {}
+    try:
+        for te in os.scandir(str(thumb_dir)):
+            try:
+                if te.is_file():
+                    thumb_mtimes[te.name] = te.stat().st_mtime
+            except OSError:
+                pass
+    except OSError:
+        pass
+    try:
+        dir_entries = sorted(os.scandir(str(projects_dir)), key=lambda e: e.name)
+    except OSError:
+        return projects
+    for de in dir_entries:
+        try:
+            if not de.is_dir():
                 continue
-            ext = f.suffix.lower()
+        except OSError:
+            continue
+        if not dx_re.match(de.name):
+            continue
+        up_path = os.path.join(de.path, "03_UPLOAD")
+        if not os.path.isdir(up_path):
+            continue
+        dx = de.name
+        files = []
+        try:
+            file_entries = sorted(os.scandir(up_path), key=lambda e: e.name)
+        except OSError:
+            continue
+        for fe in file_entries:
+            try:
+                if not fe.is_file():
+                    continue
+            except OSError:
+                continue
+            ext = os.path.splitext(fe.name)[1].lower()
             if ext not in ('.png', '.jpg', '.jpeg', '.webp'):
                 continue
-            src_mtime = f.stat().st_mtime
-            thumb = _upload_thumb_path(dx, f.name, thumb_dir=thumb_dir)
-            thumb_mtime = thumb.stat().st_mtime if thumb.exists() else src_mtime
-            files.append({"name": f.name, "mtime": src_mtime, "thumb_mtime": thumb_mtime})
+            try:
+                src_mtime = fe.stat().st_mtime
+            except OSError:
+                continue
+            safe_name = re.sub(r'[\\/*?:"<>|]', '_', fe.name)
+            thumb_mtime = thumb_mtimes.get(f"{dx}__{safe_name}.jpg", src_mtime)
+            files.append({"name": fe.name, "mtime": src_mtime, "thumb_mtime": thumb_mtime})
         if not files:
             continue
-        dx_date = _dx_dir_date(d)
+        dx_date = _dx_dir_date(Path(de.path))
         # BW 共用源图判定：02_REM_BG 只有 {dx}_BW_cut.png、没有独立 B/W cut
         # → B/W 两面成品贴的是同一张图，反相只能对 BW_cut 做一次（前端据此只放每色一个 ⚡）
-        rem_dir = d / "02_REM_BG"
+        rem_dir = os.path.join(de.path, "02_REM_BG")
         bw_shared = False
-        if rem_dir.is_dir():
-            has_bw_cut = (rem_dir / f"{dx}_BW_cut.png").exists()
-            has_split_cut = (rem_dir / f"{dx}_B_cut.png").exists() or (rem_dir / f"{dx}_W_cut.png").exists()
+        if os.path.isdir(rem_dir):
+            has_bw_cut = os.path.exists(os.path.join(rem_dir, f"{dx}_BW_cut.png"))
+            has_split_cut = (os.path.exists(os.path.join(rem_dir, f"{dx}_B_cut.png"))
+                             or os.path.exists(os.path.join(rem_dir, f"{dx}_W_cut.png")))
             bw_shared = has_bw_cut and not has_split_cut
         projects.append({"dx": dx, "date": dx_date, "files": files, "bw_shared": bw_shared})
     return projects
@@ -2013,7 +2313,8 @@ def _upload_thumb_path(dx: str, filename: str, thumb_dir: Path = None) -> Path:
 
 
 def _get_upload_thumb(dx: str, filename: str, projects_dir: Path = None, thumb_dir: Path = None, prefix: str = "DX"):
-    """返回 03_UPLOAD 缩略图路径（不存在或源文件已更新则重新生成 220px 高）。
+    """返回 03_UPLOAD 缩略图路径（不存在或源文件已更新则重新生成 500px 高）。
+    v2.6.8 起从 220px 提到 500px：展开区显示尺寸已达 340×425，220px 缩略图被放大近 2 倍导致模糊。
     优先使用已缓存缩略图；透明 PNG 则合成白底。目录/前缀缺省为 wb 常量（行为不变）"""
     projects_dir = projects_dir or PROJECTS_DIR
     thumb_dir = thumb_dir or UPLOAD_THUMB_DIR
@@ -2050,7 +2351,7 @@ def _get_upload_thumb(dx: str, filename: str, projects_dir: Path = None, thumb_d
         else:
             img = img.convert('RGB')
         w, h = img.size
-        target_h = 220
+        target_h = 500
         new_w = max(1, int(w * target_h / h))
         img = img.resize((new_w, target_h), Image.LANCZOS)
         img.save(str(thumb_file), "JPEG", quality=85, optimize=True)
@@ -2219,9 +2520,13 @@ def api_fix_mismatch():
 def group_inbox_files(inbox_dir: Path = None) -> list:
     """
     将 INBOX 中的 .png 按数字编号分组。inbox_dir 缺省为 wb 常量（行为不变）
-    例如: 1B.png + 1W.png → group "1"
-          13BW.png        → group "13"
-    返回: [{"group_number": int, "images": [...], "count": int, "types": [...]}, ...]
+    分组规则（与 run_official_v53.py 的 group_images 保持一致）:
+          1B.png + 1W.png → 一组（B+W 同编号配对）
+          13BW.png        → 单独一组（BW/WB 永远独立，不与同编号 B/W 合并）
+          同编号同角色重复（如 1B.png + 1B.jpg）→ 整编号标 error，不参与生图，
+            文件留在 INBOX，用户删除/改名多余文件后下次可独立成组
+    返回: [{"group_number": int, "group_key": str, "images": [...],
+            "count": int, "types": [...], "error": str(可选)}, ...]
     """
     inbox_dir = inbox_dir or INBOX_DIR
     if not inbox_dir.exists():
@@ -2245,15 +2550,47 @@ def group_inbox_files(inbox_dir: Path = None) -> list:
             "size": fp.stat().st_size if fp.exists() else 0,
         })
 
-    sorted_groups = []
-    for num in sorted(groups, key=lambda x: int(x)):
-        images = groups[num]
-        sorted_groups.append({
-            "group_number": int(num),
+    def _entry(num_key, images, group_key, error=None):
+        e = {
+            "group_number": int(num_key),
+            "group_key": group_key,
             "images": images,
             "count": len(images),
             "types": [img["suffix"] for img in images],
-        })
+        }
+        if error:
+            e["error"] = error
+        return e
+
+    sorted_groups = []
+    for num in sorted(groups, key=lambda x: int(x)):
+        images = groups[num]
+        b_imgs = [i for i in images if i["suffix"] == "B"]
+        w_imgs = [i for i in images if i["suffix"] == "W"]
+        bw_imgs = [i for i in images if i["suffix"] in ("BW", "WB")]
+
+        # 同编号同角色重复 → 整编号报错跳过（文件留 INBOX）
+        if len(b_imgs) > 1 or len(w_imgs) > 1 or len(bw_imgs) > 1:
+            dup_desc = []
+            if len(b_imgs) > 1:
+                dup_desc.append("B×" + str(len(b_imgs)))
+            if len(w_imgs) > 1:
+                dup_desc.append("W×" + str(len(w_imgs)))
+            if len(bw_imgs) > 1:
+                dup_desc.append("BW/WB×" + str(len(bw_imgs)))
+            sorted_groups.append(_entry(
+                num, images, f"{num}#ERR",
+                error=f"编号 {num} 同角色重复（{', '.join(dup_desc)}），已整组跳过；"
+                      f"请在 INBOX 删除或改名多余文件后再生图"))
+            continue
+
+        # B+W 配对（或单 B / 单 W）→ 一组
+        pair = b_imgs + w_imgs
+        if pair:
+            sorted_groups.append(_entry(num, pair, num))
+        # BW/WB 永远单独一组（哪怕同编号有 B+W）
+        for img in bw_imgs:
+            sorted_groups.append(_entry(num, [img], f"{num}#{img['suffix']}"))
     return sorted_groups
 
 
@@ -2372,6 +2709,11 @@ def api_generate():
 
         data = request.get_json(silent=True) or {}
         selected = data.get("selected", [])
+        try:
+            variants = int(data.get("variants", 0) or 0)
+        except Exception:
+            variants = 0
+        variants = 0   # 2026-09-05 回滚：停用风格变体模式，恢复一图一印花（管线已回滚 v6.2.0，不读 LOVART_VARIANTS）
 
         if not selected:
             return jsonify({"error": "请至少选择一张图片"}), 400
@@ -2392,22 +2734,172 @@ def api_generate():
             "groups_total": 0,
             "task_id": task_id,
         }
+        if variants:
+            task_state["variants"] = variants
         if cat != _DEFAULT_CAT:
             task_state["cat"] = cat      # wb 状态体与改造前逐字节一致
         _save_state()
 
     # 后台线程执行
-    t = threading.Thread(target=_run_generation, args=(selected, task_id), kwargs={"cat": cat}, daemon=True)
+    t = threading.Thread(target=_run_generation, args=(selected, task_id), kwargs={"cat": cat, "variants": variants}, daemon=True)
     t.start()
 
     resp = {
         "status": "started",
         "task_id": task_id,
-        "message": f"已启动生图任务，处理 {len(selected)} 张图片",
+        "message": (f"已启动生图任务，处理 {len(selected)} 张图片 × {variants} 个风格变体（暂存 _AI_VARIANTS）"
+                    if variants else f"已启动生图任务，处理 {len(selected)} 张图片"),
     }
     if cat != _DEFAULT_CAT:
         resp["cat"] = cat              # wb 响应体与改造前逐字节一致
     return jsonify(resp)
+
+
+# ===== 老张 VIP 余额查询（2026-10-21）=====
+# AccessToken 与调用模型的 API Key 不同，需在老张控制台「账户设置 → 系统令牌」单独获取，
+# 存到 lovart-official/keys_direct.json 的 "laozhang_token" 字段，或设环境变量 LAOZHANG_ACCESS_TOKEN。
+_BALANCE_CACHE = {"ts": 0.0, "data": None}
+
+
+def _laozhang_access_token():
+    tok = os.environ.get("LAOZHANG_ACCESS_TOKEN", "").strip()
+    if tok:
+        return tok
+    kf = LOVART_DIR / "keys_direct.json"
+    if kf.exists():
+        try:
+            return str(json.loads(kf.read_text(encoding="utf-8")).get("laozhang_token", "")).strip()
+        except Exception:
+            pass
+    return ""
+
+
+@app.route('/api/laozhang_balance')
+def api_laozhang_balance():
+    """老张 VIP 余额与可生图张数（30s 缓存）。每张 $0.03 = 15000 额度（50万额度≈1 USD）。"""
+    now = time.time()
+    if _BALANCE_CACHE["data"] and now - _BALANCE_CACHE["ts"] < 30:
+        return jsonify(_BALANCE_CACHE["data"])
+    tok = _laozhang_access_token()
+    if not tok:
+        return jsonify({"ok": False, "error": "no_token"})
+    try:
+        from urllib.request import Request
+        req = Request("https://api.laozhang.ai/api/user/self",
+                      headers={"Authorization": tok, "Accept": "application/json",
+                               "User-Agent": "Mozilla/5.0"})
+        with urlopen(req, timeout=10) as r:
+            payload = json.loads(r.read().decode("utf-8"))
+        if not payload.get("success"):
+            data = {"ok": False, "error": str(payload.get("message"))[:120]}
+        else:
+            quota = int(payload["data"].get("quota", 0))
+            data = {"ok": True, "quota": quota, "usd": round(quota / 500000, 2),
+                    "images": quota // 15000}
+    except Exception as e:
+        data = {"ok": False, "error": f"{type(e).__name__}: {str(e)[:100]}"}
+    _BALANCE_CACHE.update(ts=now, data=data)
+    return jsonify(data)
+
+
+# ===== ArgoLink 余额查询（2026-10-23）=====
+# 官方文档 https://argolink.io/zh-cn/docs#/quickstart：
+#   GET /v1/account/balance  Authorization: Bearer <KEY>  →  {"available": ..., "held": ..., "total": ...}
+# 计费按请求的 size 档位：我们请求 2048x2048（2K 档）= $0.015/张（4K 档才是 $0.02）。
+_ARGO_BALANCE_CACHE = {"ts": 0.0, "data": None}
+
+
+def _argolink_api_key():
+    k = os.environ.get("ARGOLINK_API_KEY", "").strip()
+    if k:
+        return k
+    kf = LOVART_DIR / "keys_direct.json"
+    if kf.exists():
+        try:
+            return str(json.loads(kf.read_text(encoding="utf-8")).get("argolink", "")).strip()
+        except Exception:
+            pass
+    return ""
+
+
+def _query_argolink_balance():
+    """查询 ArgoLink 余额（30s 缓存 + 失败重试2次，代理偶发 SSL EOF）。
+    返回 {"ok":True,"usd":...,"images":...} 或 {"ok":False,"error":...}"""
+    now = time.time()
+    if _ARGO_BALANCE_CACHE["data"] and now - _ARGO_BALANCE_CACHE["ts"] < 30:
+        return _ARGO_BALANCE_CACHE["data"]
+    key = _argolink_api_key()
+    if not key:
+        return {"ok": False, "error": "no_key"}
+    data = {"ok": False, "error": "unknown"}
+    from urllib.request import Request, build_opener, ProxyHandler
+    # 2026-10-23：系统代理对 argolink.io 偶发 SSL 握手失败，直连可用 → 直连优先，代理兜底
+    direct = build_opener(ProxyHandler({}))
+    for opener in (direct, None):
+        for attempt in range(2):
+            try:
+                req = Request("https://argolink.io/v1/account/balance",
+                              headers={"Authorization": f"Bearer {key}", "Accept": "application/json",
+                                       "User-Agent": "Mozilla/5.0"})
+                open_fn = opener.open if opener else urlopen
+                with open_fn(req, timeout=10) as r:
+                    payload = json.loads(r.read().decode("utf-8"))
+                avail = float(payload.get("available", 0))
+                data = {"ok": True, "usd": round(avail, 2), "images": int(avail // 0.015)}
+                break
+            except Exception as e:
+                data = {"ok": False, "error": f"{type(e).__name__}: {str(e)[:100]}"}
+                time.sleep(1)
+        if data["ok"]:
+            break
+    # 失败时不写缓存（避免 30s 内一直失败），但上次有成功数据时回退显示旧数据
+    if data["ok"]:
+        _ARGO_BALANCE_CACHE.update(ts=now, data=data)
+    elif _ARGO_BALANCE_CACHE["data"] and _ARGO_BALANCE_CACHE["data"].get("ok"):
+        stale = dict(_ARGO_BALANCE_CACHE["data"])
+        stale["stale"] = True
+        return stale
+    return data
+
+
+def _current_gen_backend():
+    """当前生图后端（与 run_official_v53.py 的选择逻辑一致）：
+    GEN_BACKEND 环境变量 > argolink key > laozhang key > lovart。"""
+    gb = os.environ.get("GEN_BACKEND", "").strip().lower()
+    if gb in ("argolink", "laozhang", "lovart"):
+        return gb
+    kf = LOVART_DIR / "keys_direct.json"
+    keys = {}
+    if kf.exists():
+        try:
+            keys = json.loads(kf.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    if str(keys.get("argolink", "")).strip() or os.environ.get("ARGOLINK_API_KEY", "").strip():
+        return "argolink"
+    if str(keys.get("laozhang", "")).strip() or os.environ.get("LAOZHANG_API_KEY", "").strip():
+        return "laozhang"
+    return "lovart"
+
+
+@app.route('/api/gen_balance')
+def api_gen_balance():
+    """当前生图后端 + 余额/可生图张数。"""
+    backend = _current_gen_backend()
+    if backend == "argolink":
+        data = _query_argolink_balance()
+        data["backend"] = "argolink"
+        data["note"] = "ArgoLink · $0.015/张"
+        return jsonify(data)
+    if backend == "lovart":
+        return jsonify({"ok": True, "backend": "lovart", "images": None,
+                        "note": "Lovart 旧链路 · 消耗 Lovart 积分"})
+    # laozhang：复用余额查询
+    resp = api_laozhang_balance()
+    data = json.loads(resp.get_data(as_text=True))
+    data["backend"] = "laozhang"
+    data["note"] = "老张 VIP · $0.03/张"
+    return jsonify(data)
 
 
 @app.route('/api/status')
@@ -3528,13 +4020,13 @@ def _upload_listing_profile_ready(cat: str) -> bool:
     wb（T恤）永远视为已就绪。
 
     非 wb 品类（如 hoodie）采用「店小秘引用模板款号」机制：上款时引用对应模板款号
-    （如卫衣 HX0000），类目/卖点/属性/尺码表从模板继承，无需静态 listing_profile.json。
+    （如卫衣 HX00001），类目/卖点/属性/尺码表从模板继承，无需静态 listing_profile.json。
     就绪判定：标题提示词 prompts/title_<cat>.md 已就位（即「标定」完成）。
     仍兼容旧式 listing_profile.json / categories.json 配置。
     """
     if cat == _DEFAULT_CAT:
         return True
-    # 新机制：标题提示词就位即视为就绪（卫衣引用 HX0000 模板继承 4 字段，无需静态 profile）
+    # 新机制：标题提示词就位即视为就绪（卫衣引用 HX00001 模板继承 4 字段，无需静态 profile）
     prompt = (WB_LISTING_DIR / "prompts" / f"title_{cat}.md")
     if prompt.exists():
         return True
@@ -3578,7 +4070,11 @@ def api_category_ready():
 
 @app.route('/api/upload/projects')
 def api_upload_projects():
-    """返回所有含 03_UPLOAD 成品的 DX 列表，并标记是否在线已上款（?cat= 缺省 wb）"""
+    """返回所有含 03_UPLOAD 成品的 DX 列表，并标记是否在线已上款（?cat= 缺省 wb）
+
+    指纹短回路：客户端带 ?fp=<上次响应的 fp>，若数据未变只回 {"unchanged":true}，
+    避免 4s 轮询每次传输 1.5MB 全量 JSON（fp 仅由服务端计算，前端当不透明令牌）。
+    """
     cat, ctx, err = _upload_cat_guard()
     if err:
         return err
@@ -3587,7 +4083,13 @@ def api_upload_projects():
     online_set = _read_online_listed(cat)
     for p in projects:
         p["online_listed"] = p.get("dx", "") in online_set
-    payload = {"ok": True, "projects": projects, "online_updated_at": _online_listed_updated_at(cat), "online_mode": _online_listed_mode(cat)}
+    fp_src = json.dumps([[p["dx"], p["online_listed"], [[f["name"], f["mtime"]] for f in p["files"]]]
+                         for p in projects], separators=(",", ":"))
+    fp = hashlib.md5(fp_src.encode("utf-8")).hexdigest()
+    client_fp = request.args.get("fp", "")
+    if client_fp and client_fp == fp:
+        return jsonify({"ok": True, "unchanged": True, "fp": fp})
+    payload = {"ok": True, "projects": projects, "fp": fp, "online_updated_at": _online_listed_updated_at(cat), "online_mode": _online_listed_mode(cat)}
     if cat != _DEFAULT_CAT:
         payload["cat"] = cat
     return jsonify(payload)
@@ -3843,8 +4345,14 @@ def api_upload_progress():
     selected_set = set(data.get("selected", []))
     failed_set = set(data.get("failed", [])) & selected_set
     online_set = _read_online_listed(cat)
-    # 店小秘在线产品页为唯一权威来源；同时保留当前运行中的 completed（wb_listing.py 实时写入）
-    completed_set = (set(data.get("completed", [])) | online_set) & selected_set
+    # 店小秘在线产品页为权威来源；但「运行中」只按本次运行脚本的 completed 计数——
+    # 否则强制重新上款时，重上前就在线的款会被 online_set 提前计入"已上款"，
+    # 面板显示 65/120 而脚本实际才完成 9 款（2026-10-15 用户实测困惑）。
+    # 脚本对"跳过/成功"都会自己写 completed，运行中用脚本计数不丢信息。
+    if data.get("running"):
+        completed_set = set(data.get("completed", [])) & selected_set
+    else:
+        completed_set = (set(data.get("completed", [])) | online_set) & selected_set
 
     data["completed"] = sorted(completed_set)
     data["failed"] = sorted(failed_set)
@@ -3920,6 +4428,18 @@ def api_upload_refresh_online_listed():
     try:
         # 非 wb 品类注入 WB_LISTING_CAT，使 check_online_listed.py 按品类抓取/落文件（卫衣→D:\Semems Hoodie）
         extra_env = {"WB_LISTING_CAT": cat} if cat and cat != _DEFAULT_CAT else None
+        # 2026-09-14：先把共享 Edge(CDP 9222) 确保起来——check_online_listed 的
+        # EdgeService 会优先复用它，不再自己拉起 9223 隔离实例（用户桌面少一个黑窗口）。
+        # 失败不影响主流程（子进程自己也会处理）。
+        try:
+            from playwright.sync_api import sync_playwright
+            _p = sync_playwright().start()
+            try:
+                _b, _ = _ensure_edge_cdp(_p, [])
+            finally:
+                _p.stop()
+        except Exception as e:
+            print(f"[刷新已上款] 预启动共享 Edge 失败（子进程会自行处理）: {e}")
         proc = run_minimized([sys.executable, str(script_path), "--mode", mode], wait=False, no_console=True, env=extra_env)
         mode_label = "深度清理" if mode == "deep" else "增量刷新"
         return jsonify({
@@ -3959,6 +4479,7 @@ def _open_folder_front(folder_path: Path):
         import win32gui
         import win32con
         import time
+        import ctypes
 
         folder_name = folder_path.name
         best_hwnd = None
@@ -3968,8 +4489,9 @@ def _open_folder_front(folder_path: Path):
             if not win32gui.IsWindowVisible(hwnd):
                 return True
             title = win32gui.GetWindowText(hwnd)
-            # 资源管理器窗口标题通常包含文件夹名；也可用类名 CabinetWClass
-            if folder_name in title and 'CabinetWClass' in win32gui.GetClassName(hwnd):
+            # 资源管理器窗口标题含文件夹名或完整路径；类名 CabinetWClass
+            if ('CabinetWClass' in win32gui.GetClassName(hwnd)
+                    and (folder_name in title or str(folder_path).replace('/', '\\') in title)):
                 best_hwnd = hwnd
                 return False
             return True
@@ -3982,8 +4504,18 @@ def _open_folder_front(folder_path: Path):
                 break
 
         if best_hwnd:
+            user32 = ctypes.windll.user32
             win32gui.ShowWindow(best_hwnd, win32con.SW_RESTORE)
-            win32gui.SetForegroundWindow(best_hwnd)
+            # TOPMOST 强制置顶（闪现后还原），确保可见
+            win32gui.SetWindowPos(best_hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
+                                  win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
+            win32gui.SetWindowPos(best_hwnd, win32con.HWND_NOTOPMOST, 0, 0, 0, 0,
+                                  win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
+            # 模拟 Alt 键释放前台锁，允许后台进程 SetForegroundWindow
+            user32.keybd_event(0x12, 0, 0, 0)   # VK_MENU down
+            user32.keybd_event(0x12, 0, 2, 0)   # VK_MENU up
+            user32.SetForegroundWindow(best_hwnd)
+            user32.BringWindowToTop(best_hwnd)
     except Exception:
         pass
 
@@ -4110,7 +4642,16 @@ def api_batch_upload():
                 try:
                     _start = _dt.fromisoformat(str(_pd["started_at"]))
                     _age = (_dt.now() - _start).total_seconds()
-                    if 0 <= _age < 30 * 60:
+                    _alive = 0 <= _age < 30 * 60
+                    if not _alive:
+                        # 启动超 30 分钟但进度文件最近 2 分钟内还在更新 → 任务其实还活着
+                        # （长批次 UI 上款常超 30 分钟；2026-08-27 UI+API 并跑触发平台限流）
+                        try:
+                            _u = _dt.fromisoformat(str(_pd.get("updated_at") or ""))
+                            _alive = 0 <= (_dt.now() - _u).total_seconds() < 120
+                        except Exception:
+                            pass
+                    if _alive:
                         return jsonify({
                             "ok": False,
                             "error": f"已有上款任务正在运行（{int(_age)}s 前启动）。请等它跑完再点，不要重复点击（重复点击会开两个进程抢浏览器导致崩溃）。"
@@ -4191,7 +4732,7 @@ def api_batch_upload():
     try:
         # wait=False: wb_listing.py 运行时间较长，API 立即返回，后台执行
         # no_console=True: 不弹控制台黑窗（wb_listing.py 自己写日志到品类根 _debug）
-        # 非 wb 品类注入 WB_LISTING_CAT，使 wb_listing.py 解析到对应数据根与引用模板（HX0000）
+        # 非 wb 品类注入 WB_LISTING_CAT，使 wb_listing.py 解析到对应数据根与引用模板（HX00001）
         extra_env = {"WB_LISTING_CAT": cat} if cat and cat != _DEFAULT_CAT else None
         run_minimized(args, wait=False, no_console=True, env=extra_env)
     except Exception as e:
@@ -4240,7 +4781,16 @@ def api_batch_upload_api():
                 try:
                     _start = _dt.fromisoformat(str(_pd["started_at"]))
                     _age = (_dt.now() - _start).total_seconds()
-                    if 0 <= _age < 30 * 60:
+                    _alive = 0 <= _age < 30 * 60
+                    if not _alive:
+                        # 启动超 30 分钟但进度文件最近 2 分钟内还在更新 → 任务其实还活着
+                        # （长批次 UI 上款常超 30 分钟；2026-08-27 UI+API 并跑触发平台限流）
+                        try:
+                            _u = _dt.fromisoformat(str(_pd.get("updated_at") or ""))
+                            _alive = 0 <= (_dt.now() - _u).total_seconds() < 120
+                        except Exception:
+                            pass
+                    if _alive:
                         return jsonify({
                             "ok": False,
                             "error": f"已有上款任务正在运行（{int(_age)}s 前启动）。请等它跑完再点，不要重复点击。"
@@ -4388,7 +4938,7 @@ def api_upload_batch_invert_rem():
             return jsonify({"ok": False, "msg": f"去背服务({cat}@{port})未就绪"}), 503
     try:
         url = f"http://127.0.0.1:{port}/batch-invert-rem?dx={urllib.parse.quote(dx)}&mode={urllib.parse.quote(mode)}"
-        with urlopen(url, timeout=15) as resp:
+        with _local_urlopen(url, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return jsonify(data)
     except URLError as e:
@@ -4409,7 +4959,7 @@ def api_upload_batch_invert_result():
         return cat_err
     port = _CHECK_REM_PORT_FOR_CAT.get(cat, 8766)
     try:
-        with urlopen(f"http://127.0.0.1:{port}/batch-invert-result", timeout=10) as resp:
+        with _local_urlopen(f"http://127.0.0.1:{port}/batch-invert-result", timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return jsonify(data)
     except URLError as e:
@@ -4444,7 +4994,7 @@ def api_upload_resticker():
         url = f"http://127.0.0.1:{port}/ps-sticker?dx={urllib.parse.quote(dx)}"
         if color:
             url += f"&color={urllib.parse.quote(color)}"
-        with urlopen(url, timeout=900) as resp:
+        with _local_urlopen(url, timeout=900) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return jsonify(data)
     except URLError as e:
@@ -4476,7 +5026,7 @@ def api_upload_invert_rem():
             return jsonify({"ok": False, "msg": f"去背服务({cat}@{port})未就绪"}), 503
     try:
         url = f"http://127.0.0.1:{port}/invert-rem?dx={urllib.parse.quote(dx)}&file={urllib.parse.quote(file)}&mode={urllib.parse.quote(mode)}"
-        with urlopen(url, timeout=15) as resp:
+        with _local_urlopen(url, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return jsonify(data)
     except URLError as e:
@@ -4493,7 +5043,7 @@ def api_upload_invert_queue_status():
         return cat_err
     port = _CHECK_REM_PORT_FOR_CAT.get(cat, 8766)
     try:
-        with urlopen(f"http://127.0.0.1:{port}/invert-queue-status", timeout=10) as resp:
+        with _local_urlopen(f"http://127.0.0.1:{port}/invert-queue-status", timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return jsonify(data)
     except URLError as e:
@@ -4524,7 +5074,7 @@ def api_upload_invert_only():
             return jsonify({"ok": False, "msg": f"去背服务({cat}@{port})未就绪"}), 503
     try:
         url = f"http://127.0.0.1:{port}/invert-only?dx={urllib.parse.quote(dx)}&file={urllib.parse.quote(file)}&mode={urllib.parse.quote(mode)}"
-        with urlopen(url, timeout=15) as resp:
+        with _local_urlopen(url, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return jsonify(data)
     except URLError as e:
@@ -4554,7 +5104,7 @@ def api_upload_resticker_file():
             return jsonify({"ok": False, "msg": f"去背服务({cat}@{port})未就绪"}), 503
     try:
         url = f"http://127.0.0.1:{port}/resticker?dx={urllib.parse.quote(dx)}&file={urllib.parse.quote(file)}"
-        with urlopen(url, timeout=120) as resp:
+        with _local_urlopen(url, timeout=120) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return jsonify(data)
     except URLError as e:
@@ -5217,7 +5767,11 @@ def _edge_running():
 
 
 def _kill_edge():
-    """关闭所有 Edge 进程（用于把普通 Edge 换成带 9222 的共用 Edge）。"""
+    """关闭所有 Edge 进程（用于把普通 Edge 换成带 9222 的共用 Edge）。
+
+    ⚠️ 2026-09-13 起 _ensure_edge_cdp 不再调用它——全杀会把用户正在用的 Edge 一起关掉。
+    保留仅供旧代码参考；新逻辑用 _cdp_profile_edge_pids/_kill_cdp_profile_edge。
+    """
     try:
         subprocess.run(['taskkill', '/IM', 'msedge.exe', '/F'],
                        capture_output=True, text=True, timeout=15)
@@ -5225,15 +5779,48 @@ def _kill_edge():
         pass
 
 
+_CDP_PROFILE = r"C:\edge-cdp-profile"
+
+
+def _cdp_profile_edge_pids():
+    """使用 CDP 专用 profile（C:\\edge-cdp-profile）的 msedge 进程 PID 列表。
+
+    用户日常 Edge（默认 profile）命令行里没有这个目录，绝不会被匹配到。
+    """
+    try:
+        out = subprocess.run(
+            ['powershell', '-NoProfile', '-Command',
+             "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | "
+             "Where-Object { $_.CommandLine -and $_.CommandLine.Contains('edge-cdp-profile') } | "
+             "ForEach-Object { $_.ProcessId }"],
+            capture_output=True, text=True, timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0).stdout
+        return [int(x) for x in out.split() if x.strip().isdigit()]
+    except Exception:
+        return []
+
+
+def _kill_cdp_profile_edge():
+    """只关「带 CDP profile 但没开 9222」的残留共用实例（同 profile 不能并存两个），
+    绝不动用户自己的 Edge。"""
+    for pid in _cdp_profile_edge_pids():
+        try:
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(pid)],
+                           capture_output=True, timeout=15)
+        except Exception:
+            pass
+
+
 def _ensure_edge_cdp(p, log, timeout=40):
     """连接本机 Edge CDP(9222)——这是大家共用的调试端口。
 
     规则：
     - 9222 可达 → 直接连（使用已开的、带调试端口的 Edge，不新开）。
-    - 9222 不可达但已有其它 Edge 在跑（没带 9222）→ 先关掉它，再用标准
-      端口/配置（9222 + C:\\edge-cdp-profile）重开那「一个」共用的 Edge
-      （关掉旧的再开新的，绝不出现两个 Edge）。
-    - 9222 不可达且无任何 Edge → 同样用标准配置启动那一个共用 Edge。
+    - 9222 不可达 → 用标准配置（9222 + C:\\edge-cdp-profile 独立 profile）
+      启动共用 Edge。它与用户日常 Edge 完全并存，互不干扰（2026-09-13 起
+      不再整体关闭所有 Edge——那会杀掉用户正在用的浏览器）。
+    - 若有「带 CDP profile 但没开 9222」的残留实例（同 profile 开不了两个），
+      只关闭那个残留实例。
 
     返回 (browser, edge_auto_launched)。
     """
@@ -5243,20 +5830,20 @@ def _ensure_edge_cdp(p, log, timeout=40):
         return p.chromium.connect_over_cdp("http://127.0.0.1:9222"), False
     except Exception:
         pass
-    if _edge_running():
-        log.append("⚠️ 检测到已有 Edge 在运行但未带 9222 端口，将关闭它并用共用端口(9222)重新打开（只开这一个，不会多开）…")
-        _kill_edge()
+    if _cdp_profile_edge_pids():
+        log.append("⚠️ 检测到带 CDP 配置但未开 9222 端口的 Edge 残留实例，只关闭它（不影响你正在用的 Edge）…")
+        _kill_cdp_profile_edge()
         for _ in range(20):
-            if not _edge_running():
+            if not _cdp_profile_edge_pids():
                 break
             _t.sleep(0.5)
-    log.append("ℹ️ 启动共用的 Edge（端口 9222）…")
+    log.append("ℹ️ 启动共用的 Edge（端口 9222，独立 profile，不影响你正在用的 Edge）…")
     edge = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
     if not os.path.exists(edge):
         edge = r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
     if not os.path.exists(edge):
         raise RuntimeError("未找到 Edge 安装路径，请先安装 Microsoft Edge。")
-    profile = r"C:\edge-cdp-profile"
+    profile = _CDP_PROFILE
     args = [edge, "--remote-debugging-port=9222", f"--user-data-dir={profile}",
             "--no-first-run", "--no-default-browser-check",
             # Temu 页面 JS 堆随运行时间增长，默认 ~2GB 易撞顶报 Out of Memory；
@@ -5271,7 +5858,7 @@ def _ensure_edge_cdp(p, log, timeout=40):
     deadline = _t.time() + timeout
     while _t.time() < deadline:
         try:
-            with urllib.request.urlopen("http://127.0.0.1:9222/json/version", timeout=2) as r:
+            with _local_urlopen("http://127.0.0.1:9222/json/version", timeout=2) as r:
                 if r.status == 200:
                     break
         except Exception:
@@ -7779,7 +8366,8 @@ def api_activity_select():
 # 商品信息同步（报活动前置：抓取最新商品信息，用户指定页数）
 # ============================================================================
 ACTIVITY_SYNC_SCRIPT = ACTIVITY_DIR + '/sync_products.py'
-ACTIVITY_SYNC_RESULT = ACTIVITY_DIR + '/state/product_sync/latest_sync_result.json'
+# 商品数据默认保存文件夹（用户指定，2026-08-24）：与 sync_products.py OUT_DIR 一致
+ACTIVITY_SYNC_RESULT = r'E:\Kimi Code\temu分析\报活动\latest_sync_result.json'
 ACTIVITY_GO_SIGNAL = ACTIVITY_DIR + '/go.signal'  # 用户『好了』信号（与核价同机制）
 
 sync_task = {
@@ -7834,12 +8422,12 @@ def _sync_log_reader(proc):
 @app.route('/api/activity/sync-products', methods=['POST'])
 def api_activity_sync_products():
     """启动商品信息同步。mode=full → 全量抓取重建 SQLite 基底（约 43 页×100，1~1.5 小时）；
-    默认 incremental → 抓指定页（1-5 页）合并进基底。两者都需在 Edge 确认上新页后点『好了』。"""
+    默认 incremental → 抓指定页（每页 50，默认 1-10 页 = 500 SPU）合并进基底。两者都需在 Edge 确认上新页后点『好了』。"""
     data = request.get_json(silent=True) or {}
     mode = str(data.get("mode") or "incremental").strip() or "incremental"
     start_pg = data.get("start")
     end_pg = data.get("end")
-    pages = str(data.get("pages") or "").strip() or "1-5"
+    pages = str(data.get("pages") or "").strip() or "1-10"
 
     if mode == "full":
         args = ["--mode", "full"]
@@ -7914,8 +8502,11 @@ def api_activity_sync_signal():
 
 @app.route('/api/activity/sync-status')
 def api_activity_sync_status():
-    """获取商品信息同步状态（增量日志 + 结果汇总）。"""
+    """获取商品信息同步状态（增量日志 + 结果汇总）。?reset=1 返回全量日志（页面刷新恢复用）。"""
+    reset = request.args.get("reset") == "1"
     with sync_lock:
+        if reset:
+            sync_task["log_index"] = 0
         idx = sync_task.get("log_index", 0)
         all_logs = sync_task.get("log", [])
         logs = all_logs[idx:]
@@ -7975,6 +8566,216 @@ def api_activity_sync_stop():
     return jsonify({"success": True, "message": f"已停止商品信息同步（PID {pid}）"})
 
 
+# ============================================================================
+# 违规商品批量下架（offshelf_spus.py：SPU → 全 SKC → 批量下架，2026-09-05 抓包接入）
+# ============================================================================
+ACTIVITY_OFFSHELF_SCRIPT = ACTIVITY_DIR + '/offshelf_spus.py'
+ACTIVITY_BASE_DB = r'E:\Kimi Code\temu分析\报活动\base_data.db'
+
+offshelf_task = {
+    "status": "idle",
+    "started_at": None,
+    "completed_at": None,
+    "proc": None,
+    "log": [],
+    "log_index": 0,
+}
+offshelf_lock = threading.Lock()
+
+
+def _offshelf_log_reader(proc):
+    """后台线程：读下架脚本 stdout/stderr 写入 offshelf_task 日志。"""
+    def _read_stream(stream):
+        try:
+            for raw in iter(stream.readline, b""):
+                line = None
+                for enc in ("utf-8", "gbk", "gb2312"):
+                    try:
+                        line = raw.decode(enc, errors="strict").rstrip("\r\n")
+                        break
+                    except Exception:
+                        continue
+                if line is None:
+                    line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                if not line:
+                    continue
+                with offshelf_lock:
+                    offshelf_task["log"].append(line)
+        except Exception:
+            pass
+
+    try:
+        _read_stream(proc.stdout)
+        _read_stream(proc.stderr)
+    finally:
+        rc = proc.wait()
+        for t in (proc.stdout, proc.stderr):
+            try:
+                t.close()
+            except Exception:
+                pass
+        with offshelf_lock:
+            if offshelf_task["status"] == "running":
+                offshelf_task["status"] = "completed" if rc == 0 else "error"
+            offshelf_task["completed_at"] = datetime.now().isoformat()
+            offshelf_task["proc"] = None
+
+
+@app.route('/api/activity/violation-spus')
+def api_activity_violation_spus():
+    """违规待整改 SPU 列表（供批量下架勾选）。
+
+    返回每个 SPU 的违规条数 + 货号 + 当前商品状态（已下架/待废弃的默认不勾选）。
+    """
+    import sqlite3
+    if not os.path.exists(ACTIVITY_BASE_DB):
+        return jsonify({"success": False, "message": "基底数据库不存在，先点「获取最新商品信息」"}), 404
+    con = sqlite3.connect(ACTIVITY_BASE_DB, timeout=30)
+    try:
+        # 排除"实物印花违规/请勿重复上架"类：这类是升级管控提醒，商品已被平台处理，
+        # 不需要再下架/删除。只排除"全部违规都是这类"的 SPU，混合违规的仍显示。
+        rows = con.execute(
+            "SELECT spu_id, COUNT(*) FROM violation "
+            "WHERE spu_id NOT IN ("
+            "  SELECT spu_id FROM violation GROUP BY spu_id "
+            "  HAVING SUM(CASE WHEN suggestion LIKE '%请勿重复上架%' "
+            "                  OR suggestion LIKE '%实物印花违规%' THEN 0 ELSE 1 END) = 0"
+            ") GROUP BY spu_id ORDER BY spu_id").fetchall()
+        # 商品状态（goods_status_current 存在时）：货号 + 是否已下架/待废弃
+        status_map = {}
+        has_cur = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='goods_status_current'").fetchone()
+        tbl = None
+        if has_cur and con.execute("SELECT COUNT(*) FROM goods_status_current").fetchone()[0]:
+            tbl = "goods_status_current"
+        else:
+            has_old = con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='goods_auto_delete'").fetchone()
+            if has_old:
+                tbl = ("goods_auto_delete",)
+        if tbl == "goods_status_current":
+            for spu, ext, n_off, n_days in con.execute(
+                    "SELECT spu_id, MIN(ext_code), SUM(skc_top_status=200), COUNT(auto_delete_remaining_days) "
+                    "FROM goods_status_current GROUP BY spu_id"):
+                status_map[spu] = {"ext": ext or "", "off": bool(n_off), "days": bool(n_days)}
+        elif tbl:
+            for spu, ext, n_off, n_days in con.execute(
+                    "SELECT spu_id, MIN(ext_code), SUM(skc_top_status=200), COUNT(auto_delete_remaining_days) "
+                    "FROM goods_auto_delete WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM goods_auto_delete) "
+                    "GROUP BY spu_id"):
+                status_map[spu] = {"ext": ext or "", "off": bool(n_off), "days": bool(n_days)}
+        out = []
+        for spu, n in rows:
+            st = status_map.get(spu, {})
+            out.append({"spu": spu, "n_viol": n, "ext": st.get("ext", ""),
+                        "off": st.get("off", False), "days": st.get("days", False)})
+        return jsonify({"success": True, "items": out, "total": len(out)})
+    finally:
+        con.close()
+
+
+@app.route('/api/activity/offshelf', methods=['POST'])
+def api_activity_offshelf():
+    """启动批量下架：body {spus: [...]}。写临时清单文件 → spawn offshelf_spus.py。"""
+    data = request.get_json(silent=True) or {}
+    spus = [int(s) for s in (data.get("spus") or []) if str(s).strip().isdigit()]
+    if not spus:
+        return jsonify({"success": False, "message": "未选择任何 SPU"}), 400
+
+    with offshelf_lock:
+        if offshelf_task.get("status") == "running" and offshelf_task.get("proc") and offshelf_task["proc"].poll() is None:
+            return jsonify({"success": False, "message": "批量下架已在运行，请等待完成"}), 409
+        offshelf_task["status"] = "running"
+        offshelf_task["started_at"] = datetime.now().isoformat()
+        offshelf_task["completed_at"] = None
+        offshelf_task["log"] = [f"[{datetime.now().strftime('%H:%M:%S')}] 启动批量下架: {len(spus)} 个 SPU"]
+        offshelf_task["log_index"] = 0
+
+    if not os.path.exists(ACTIVITY_OFFSHELF_SCRIPT):
+        with offshelf_lock:
+            offshelf_task["status"] = "error"
+            offshelf_task["completed_at"] = datetime.now().isoformat()
+        return jsonify({"success": False, "message": f"下架脚本不存在: {ACTIVITY_OFFSHELF_SCRIPT}"}), 404
+
+    list_file = os.path.join(ACTIVITY_DIR, "_offshelf_spus_ui.txt")
+    try:
+        with open(list_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(str(s) for s in spus))
+    except Exception as e:
+        return jsonify({"success": False, "message": f"写清单失败: {e}"}), 500
+
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        proc = subprocess.Popen(
+            [get_python(), ACTIVITY_OFFSHELF_SCRIPT, list_file],
+            cwd=ACTIVITY_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=1,
+            env=env,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except Exception as e:
+        with offshelf_lock:
+            offshelf_task["status"] = "error"
+            offshelf_task["completed_at"] = datetime.now().isoformat()
+            offshelf_task["proc"] = None
+        return jsonify({"success": False, "message": f"启动下架脚本失败: {e}"}), 500
+
+    with offshelf_lock:
+        offshelf_task["proc"] = proc
+    threading.Thread(target=_offshelf_log_reader, args=(proc,), daemon=True).start()
+    return jsonify({"success": True, "message": f"已启动批量下架（{len(spus)} 个 SPU）"})
+
+
+@app.route('/api/activity/offshelf-status')
+def api_activity_offshelf_status():
+    """批量下架状态（增量日志）。?reset=1 返回全量日志。"""
+    reset = request.args.get("reset") == "1"
+    with offshelf_lock:
+        if reset:
+            offshelf_task["log_index"] = 0
+        idx = offshelf_task.get("log_index", 0)
+        all_logs = offshelf_task.get("log", [])
+        logs = all_logs[idx:]
+        offshelf_task["log_index"] = len(all_logs)
+        return jsonify({
+            "status": offshelf_task.get("status", "idle"),
+            "started_at": offshelf_task.get("started_at"),
+            "completed_at": offshelf_task.get("completed_at"),
+            "log": logs,
+        })
+
+
+@app.route('/api/activity/offshelf-stop', methods=['POST'])
+def api_activity_offshelf_stop():
+    """停止当前批量下架脚本。"""
+    with offshelf_lock:
+        proc = offshelf_task.get("proc")
+        if not proc or proc.poll() is not None:
+            offshelf_task["status"] = "idle"
+            offshelf_task["proc"] = None
+            offshelf_task["completed_at"] = datetime.now().isoformat()
+            return jsonify({"success": True, "message": "当前没有运行中的下架任务"})
+        pid = proc.pid
+        offshelf_task["status"] = "stopped"
+        offshelf_task["log"] = offshelf_task.get("log", []) + [
+            f"[{datetime.now().strftime('%H:%M:%S')}] 用户点击停止，终止下架脚本 PID {pid}"]
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=10)
+    except Exception as e:
+        with offshelf_lock:
+            offshelf_task["status"] = "error"
+            offshelf_task["completed_at"] = datetime.now().isoformat()
+        return jsonify({"success": False, "message": f"停止下架脚本失败: {e}"}), 500
+    with offshelf_lock:
+        offshelf_task["completed_at"] = datetime.now().isoformat()
+        offshelf_task["proc"] = None
+    return jsonify({"success": True, "message": f"已停止批量下架（PID {pid}）"})
+
+
 @app.route('/api/activity/sync-download')
 def api_activity_sync_download():
     """下载商品信息同步生成的 Excel。"""
@@ -7984,10 +8785,630 @@ def api_activity_sync_download():
     filename = os.path.basename(filename)
     if not filename.endswith(".xlsx"):
         return jsonify({"error": "仅支持 .xlsx 文件"}), 400
-    path = Path(ACTIVITY_DIR) / "state" / "product_sync" / filename
+    path = Path(r"E:\Kimi Code\temu分析\报活动") / filename
     if not path.exists():
         return jsonify({"error": "文件不存在"}), 404
     return send_file(str(path), as_attachment=True, download_name=filename)
+
+
+# ============================================================================
+# 制作活动报名表（报活动前置：按规则从商品数据库生成 17 站报名表 Excel）
+# ============================================================================
+APPLY_SHEET_SCRIPT = ACTIVITY_DIR + '/generate_apply_sheets.py'
+apply_sheet_task = {
+    "status": "idle",          # idle | running | completed | error | stopped
+    "started_at": None,
+    "completed_at": None,
+    "proc": None,
+    "log": [],
+    "log_index": 0,
+}
+apply_sheet_lock = threading.Lock()
+
+
+def _apply_sheet_log_reader(proc):
+    """后台线程：读取制表脚本 stdout/stderr 写入 apply_sheet_task 日志。"""
+    def _read_stream(stream):
+        try:
+            for raw in iter(stream.readline, b""):
+                line = None
+                for enc in ("utf-8", "gbk", "gb2312"):
+                    try:
+                        line = raw.decode(enc, errors="strict").rstrip("\r\n")
+                        break
+                    except Exception:
+                        continue
+                if line is None:
+                    line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                if not line:
+                    continue
+                with apply_sheet_lock:
+                    apply_sheet_task["log"].append(line)
+        except Exception:
+            pass
+
+    try:
+        _read_stream(proc.stdout)
+        _read_stream(proc.stderr)
+    finally:
+        rc = proc.wait()
+        for t in (proc.stdout, proc.stderr):
+            try:
+                t.close()
+            except Exception:
+                pass
+        with apply_sheet_lock:
+            if apply_sheet_task["status"] == "running":
+                apply_sheet_task["status"] = "completed" if rc == 0 else "error"
+            apply_sheet_task["completed_at"] = datetime.now().isoformat()
+            apply_sheet_task["proc"] = None
+
+
+@app.route('/api/activity/start-edge', methods=['POST'])
+def api_activity_start_edge():
+    """拉起 Edge（CDP 9222）并打开营销活动首页全球，不执行报活动后续操作。"""
+    try:
+        import sys as _sys
+        if ACTIVITY_DIR not in _sys.path:
+            _sys.path.insert(0, ACTIVITY_DIR)
+        from hermes_browser import HermesBrowser
+        hb = HermesBrowser()
+        hb.start_edge()
+        hb.connect_browser()
+        hb.ensure_context()
+        browser = hb._browser
+        target = None
+        for ctx in browser.contexts:
+            for pg in ctx.pages:
+                if "marketing-activity" in (pg.url or ""):
+                    target = pg
+                    break
+            if target:
+                break
+        if not target:
+            ctx = browser.contexts[0]
+            target = ctx.new_page()
+            target.goto("https://agentseller.temu.com/activity/marketing-activity",
+                        wait_until="domcontentloaded", timeout=60000)
+        target.bring_to_front()
+        return jsonify({"success": True, "message": "Edge 已就绪，已打开营销活动首页全球（可点「📋 制作活动报名表」）"})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"拉起 Edge 失败: {e}"}), 500
+
+
+@app.route('/api/activity/apply-sheet/start', methods=['POST'])
+def api_activity_apply_sheet_start():
+    """启动制作活动报名表（默认 17 站全量；可传 sites 指定站点）。日志实时回流前端。"""
+    data = request.get_json(silent=True) or {}
+    sites = str(data.get("sites") or "").strip()
+    with apply_sheet_lock:
+        if apply_sheet_task.get("status") == "running" and apply_sheet_task.get("proc") and apply_sheet_task["proc"].poll() is None:
+            return jsonify({"success": False, "message": "报名表生成已在运行，请等待完成"}), 409
+        apply_sheet_task["status"] = "running"
+        apply_sheet_task["started_at"] = datetime.now().isoformat()
+        apply_sheet_task["completed_at"] = None
+        apply_sheet_task["log"] = [f"[{datetime.now().strftime('%H:%M:%S')}] 启动: 制作活动报名表" + (f"（站点: {sites}）" if sites else "（17站全量）")]
+        apply_sheet_task["log_index"] = 0
+    if not os.path.exists(APPLY_SHEET_SCRIPT):
+        with apply_sheet_lock:
+            apply_sheet_task["status"] = "error"
+            apply_sheet_task["completed_at"] = datetime.now().isoformat()
+        return jsonify({"success": False, "message": f"制表脚本不存在: {APPLY_SHEET_SCRIPT}"}), 404
+    args = ["--sites", sites] if sites else []
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        proc = subprocess.Popen(
+            [get_python(), APPLY_SHEET_SCRIPT] + args,
+            cwd=ACTIVITY_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=1,
+            env=env,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except Exception as e:
+        with apply_sheet_lock:
+            apply_sheet_task["status"] = "error"
+            apply_sheet_task["completed_at"] = datetime.now().isoformat()
+            apply_sheet_task["proc"] = None
+        return jsonify({"success": False, "message": f"启动制表脚本失败: {e}"}), 500
+    with apply_sheet_lock:
+        apply_sheet_task["proc"] = proc
+    threading.Thread(target=_apply_sheet_log_reader, args=(proc,), daemon=True).start()
+    return jsonify({"success": True, "message": "已开始制作活动报名表，进度见实时日志（约 8 分钟，可随时停止）"})
+
+
+@app.route('/api/activity/apply-sheet/status')
+def api_activity_apply_sheet_status():
+    """轮询制表实时日志。?reset=1 返回全量日志（页面刷新恢复用）。"""
+    reset = request.args.get("reset") == "1"
+    with apply_sheet_lock:
+        if reset:
+            apply_sheet_task["log_index"] = 0
+        idx = apply_sheet_task.get("log_index", 0)
+        all_logs = apply_sheet_task.get("log", [])
+        logs = all_logs[idx:]
+        apply_sheet_task["log_index"] = len(all_logs)
+        elapsed = 0
+        if apply_sheet_task.get("status") == "running" and apply_sheet_task.get("started_at"):
+            try:
+                elapsed = int((datetime.now() - datetime.fromisoformat(apply_sheet_task["started_at"])).total_seconds())
+            except Exception:
+                pass
+        return jsonify({
+            "status": apply_sheet_task.get("status", "idle"),
+            "started_at": apply_sheet_task.get("started_at"),
+            "completed_at": apply_sheet_task.get("completed_at"),
+            "elapsed_sec": elapsed,
+            "log": logs,
+        })
+
+
+@app.route('/api/activity/apply-sheet/stop', methods=['POST'])
+def api_activity_apply_sheet_stop():
+    """停止当前制表脚本（仅终止 apply_sheet_task 管理的子进程 PID，不误杀其它脚本）。"""
+    with apply_sheet_lock:
+        proc = apply_sheet_task.get("proc")
+        if not proc or proc.poll() is not None:
+            apply_sheet_task["status"] = "idle"
+            apply_sheet_task["proc"] = None
+            apply_sheet_task["completed_at"] = datetime.now().isoformat()
+            return jsonify({"success": True, "message": "当前没有运行中的制表任务"})
+        pid = proc.pid
+        apply_sheet_task["status"] = "stopped"
+        apply_sheet_task["log"] = apply_sheet_task.get("log", []) + [
+            f"[{datetime.now().strftime('%H:%M:%S')}] 用户点击停止，终止制表脚本 PID {pid}"]
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=10)
+    except Exception as e:
+        with apply_sheet_lock:
+            apply_sheet_task["status"] = "error"
+            apply_sheet_task["completed_at"] = datetime.now().isoformat()
+        return jsonify({"success": False, "message": f"停止制表脚本失败: {e}"}), 500
+    with apply_sheet_lock:
+        apply_sheet_task["completed_at"] = datetime.now().isoformat()
+        apply_sheet_task["proc"] = None
+    return jsonify({"success": True, "message": f"已停止制表（PID {pid}）"})
+
+
+# ============================================================================
+# 已报名明细库同步（fetch_enrolled.py）：报活动页「🔄 同步已报名明细」独立按钮用，
+# 只同步 enroll_detail，不制表不提交。任务模型与商品信息同步（sync_task）一致。
+# ============================================================================
+ENROLL_SYNC_SCRIPT = ACTIVITY_DIR + '/fetch_enrolled.py'
+enroll_sync_task = {
+    "status": "idle",          # idle | running | completed | error | stopped
+    "started_at": None,
+    "completed_at": None,
+    "proc": None,
+    "log": [],
+    "log_index": 0,
+}
+enroll_sync_lock = threading.Lock()
+
+
+def _enroll_sync_log_reader(proc):
+    """后台线程：读取 fetch_enrolled stdout/stderr 写入 enroll_sync_task 日志。"""
+    def _read_stream(stream):
+        try:
+            for raw in iter(stream.readline, b""):
+                line = None
+                for enc in ("utf-8", "gbk", "gb2312"):
+                    try:
+                        line = raw.decode(enc, errors="strict").rstrip("\r\n")
+                        break
+                    except Exception:
+                        continue
+                if line is None:
+                    line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                if not line:
+                    continue
+                with enroll_sync_lock:
+                    enroll_sync_task["log"].append(line)
+        except Exception:
+            pass
+
+    try:
+        _read_stream(proc.stdout)
+        _read_stream(proc.stderr)
+    finally:
+        rc = proc.wait()
+        with enroll_sync_lock:
+            if enroll_sync_task["status"] == "running":
+                enroll_sync_task["status"] = "completed" if rc == 0 else "error"
+            enroll_sync_task["completed_at"] = datetime.now().isoformat()
+            enroll_sync_task["proc"] = None
+
+
+@app.route('/api/activity/enroll-sync-start', methods=['POST'])
+def api_activity_enroll_sync_start():
+    """启动已报名明细库同步（fetch_enrolled.py，会自动拉起 Edge CDP 9222）。"""
+    with enroll_sync_lock:
+        if enroll_sync_task["status"] == "running":
+            return jsonify({"success": False, "message": "明细库同步已在运行"}), 409
+        enroll_sync_task.update({
+            "status": "running", "started_at": datetime.now().isoformat(),
+            "completed_at": None, "log": [], "log_index": 0, "proc": None,
+        })
+    if not os.path.exists(ENROLL_SYNC_SCRIPT):
+        with enroll_sync_lock:
+            enroll_sync_task["status"] = "error"
+        return jsonify({"success": False, "message": f"脚本不存在: {ENROLL_SYNC_SCRIPT}"}), 404
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        proc = subprocess.Popen(
+            [get_python(), ENROLL_SYNC_SCRIPT],
+            cwd=ACTIVITY_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except Exception as e:
+        with enroll_sync_lock:
+            enroll_sync_task["status"] = "error"
+            enroll_sync_task["completed_at"] = datetime.now().isoformat()
+        return jsonify({"success": False, "message": f"启动失败: {e}"}), 500
+    with enroll_sync_lock:
+        enroll_sync_task["proc"] = proc
+    threading.Thread(target=_enroll_sync_log_reader, args=(proc,), daemon=True).start()
+    return jsonify({"success": True, "message": "已启动已报名明细库同步（fetch_enrolled）"})
+
+
+@app.route('/api/activity/enroll-sync-status')
+def api_activity_enroll_sync_status():
+    """明细库同步状态（增量日志）。?reset=1 返回全量日志。"""
+    reset = request.args.get("reset") == "1"
+    with enroll_sync_lock:
+        if reset:
+            enroll_sync_task["log_index"] = 0
+        idx = enroll_sync_task.get("log_index", 0)
+        all_logs = enroll_sync_task.get("log", [])
+        logs = all_logs[idx:]
+        enroll_sync_task["log_index"] = len(all_logs)
+        elapsed = 0
+        if enroll_sync_task.get("status") == "running" and enroll_sync_task.get("started_at"):
+            try:
+                elapsed = int((datetime.now() - datetime.fromisoformat(enroll_sync_task["started_at"])).total_seconds())
+            except Exception:
+                pass
+        return jsonify({
+            "status": enroll_sync_task.get("status", "idle"),
+            "started_at": enroll_sync_task.get("started_at"),
+            "completed_at": enroll_sync_task.get("completed_at"),
+            "elapsed_sec": elapsed,
+            "log": logs,
+        })
+
+
+@app.route('/api/activity/enroll-sync-stop', methods=['POST'])
+def api_activity_enroll_sync_stop():
+    """停止明细库同步（只杀本任务管理的子进程树）。"""
+    with enroll_sync_lock:
+        proc = enroll_sync_task.get("proc")
+        if not proc or proc.poll() is not None:
+            enroll_sync_task["status"] = "idle"
+            enroll_sync_task["proc"] = None
+            return jsonify({"success": True, "message": "当前没有运行中的明细库同步任务"})
+        pid = proc.pid
+        enroll_sync_task["status"] = "stopped"
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=10)
+    except Exception as e:
+        with enroll_sync_lock:
+            enroll_sync_task["status"] = "error"
+        return jsonify({"success": False, "message": f"停止失败: {e}"}), 500
+    with enroll_sync_lock:
+        enroll_sync_task["completed_at"] = datetime.now().isoformat()
+        enroll_sync_task["proc"] = None
+    return jsonify({"success": True, "message": f"已停止明细库同步（PID {pid}）"})
+
+
+# ============================================================================
+# 商品活动状态查询：输入款号/SPU，列出各站点参加的活动、场次起止、是否空档
+# 数据源 base_data.db 的 enroll_detail（fetch_enrolled 从 Temu 后台同步）
+# ============================================================================
+ACTIVITY_BASE_DB = r'E:\Kimi Code\temu分析\报活动\base_data.db'
+
+
+@app.route('/api/activity/product-status')
+def api_activity_product_status():
+    """商品活动状态查询。参数 kw=款号（HX0162BW，可部分匹配）或 SPU ID（纯数字）。
+
+    返回每个命中款号：各站点的活动明细（活动名/场次起止/报名状态码/场次状态码），
+    每行附 state（active进行中/upcoming未开始/expired已结束，按当前时间 vs 场次区间算），
+    以及站点级汇总：sites_total（有该商品的站点数）、active_sites、gap_sites（空档站点）。
+    """
+    kw = request.args.get("kw", "").strip()
+    if not kw:
+        return jsonify({"ok": False, "msg": "缺少 kw 参数（款号或 SPU ID）"}), 400
+    if not os.path.exists(ACTIVITY_BASE_DB):
+        return jsonify({"ok": False, "msg": f"基础数据库不存在: {ACTIVITY_BASE_DB}"}), 500
+
+    now = datetime.now()
+    try:
+        conn = sqlite3.connect(f"file:{ACTIVITY_BASE_DB}?mode=ro", uri=True, timeout=15)
+        conn.row_factory = sqlite3.Row
+        # 1. 款号 → (spu_id, skc_code) 映射；纯数字长串同时按 SPU 直接查
+        like = f"%{kw}%"
+        prods = {}
+        for r in conn.execute(
+                "SELECT DISTINCT spu_id, skc_code FROM base_data WHERE skc_code LIKE ?", (like,)):
+            if r["spu_id"] and r["skc_code"]:
+                prods[r["skc_code"]] = r["spu_id"]
+        if kw.isdigit():
+            for r in conn.execute(
+                    "SELECT DISTINCT spu_id, skc_code FROM base_data WHERE spu_id=?", (int(kw),)):
+                if r["spu_id"]:
+                    prods[r["skc_code"] or str(r["spu_id"])] = r["spu_id"]
+            if not prods:
+                prods[str(kw)] = int(kw)   # base_data 没有也允许直接按 SPU 查明细
+        if not prods:
+            conn.close()
+            return jsonify({"ok": True, "kw": kw, "products": [], "msg": f"没有找到匹配「{kw}」的商品"})
+
+        # 本地明细库缺失的 SPU：实时按 SPU 精确抓一次入库
+        # （productIds 过滤不受报名记录列表分页上限影响；与全量/增量同步互补）
+        live_note = ""
+        missing_spus = [spu for spu in set(prods.values()) if not conn.execute(
+            "SELECT 1 FROM enroll_detail WHERE spu_id=? LIMIT 1", (spu,)).fetchone()]
+        if missing_spus:
+            if len(missing_spus) <= 5 and enroll_sync_task.get("status") != "running":
+                try:
+                    subprocess.run(
+                        [get_python(), ENROLL_SYNC_SCRIPT,
+                         "--spus", ",".join(str(s) for s in missing_spus)],
+                        cwd=ACTIVITY_DIR, capture_output=True, timeout=180,
+                        env={**os.environ, "PYTHONUTF8": "1"})
+                    live_note = f"已实时同步 {len(missing_spus)} 个 SPU 的报名明细"
+                    conn.close()   # 重开连接，确保读到子进程刚写入的数据
+                    conn = sqlite3.connect(f"file:{ACTIVITY_BASE_DB}?mode=ro", uri=True, timeout=15)
+                    conn.row_factory = sqlite3.Row
+                except Exception as e:
+                    live_note = f"实时同步失败（以下仅本地已有数据）: {type(e).__name__}: {e}"
+            else:
+                live_note = "有 SPU 本地无明细，未实时抓取（同步任务进行中或一次查询超过 5 个 SPU）"
+
+        # 价格缺失的 SPU：实时抓生效活动分站价（semiEffectiveProductList → activity_price）
+        try:
+            no_price_spus = [spu for spu in set(prods.values()) if not conn.execute(
+                "SELECT 1 FROM activity_price WHERE spu_id=? LIMIT 1", (spu,)).fetchone()]
+        except Exception:
+            no_price_spus = []   # 表还没建（还没跑过 --prices）就跳过
+        if no_price_spus and len(no_price_spus) <= 5 and enroll_sync_task.get("status") != "running":
+            try:
+                subprocess.run(
+                    [get_python(), ENROLL_SYNC_SCRIPT, "--prices",
+                     "--spus", ",".join(str(s) for s in no_price_spus)],
+                    cwd=ACTIVITY_DIR, capture_output=True, timeout=180,
+                    env={**os.environ, "PYTHONUTF8": "1"})
+                conn.close()   # 重开连接读子进程刚写入的价格
+                conn = sqlite3.connect(f"file:{ACTIVITY_BASE_DB}?mode=ro", uri=True, timeout=15)
+                conn.row_factory = sqlite3.Row
+            except Exception:
+                pass
+
+        products = []
+        synced_at = ""
+        for skc_code, spu_id in sorted(prods.items()):
+            # 该商品存在的站点
+            sites = [r[0] for r in conn.execute(
+                "SELECT DISTINCT site FROM base_data WHERE spu_id=? ORDER BY site", (spu_id,))]
+            # 报名价格映射：(站点, 活动) → (price_min, price_max)，单位分
+            price_map = {}
+            try:
+                for pr in conn.execute(
+                        "SELECT site, activity_thematic_id, price_min, price_max"
+                        " FROM activity_price WHERE spu_id=?", (spu_id,)):
+                    price_map[(pr["site"], pr["activity_thematic_id"])] = (pr["price_min"], pr["price_max"])
+            except Exception:
+                pass
+            rows = []
+            active_sites = set()
+            for r in conn.execute(
+                    "SELECT site, activity_thematic_id, activity_name, session_start, session_end, enroll_status,"
+                    " session_status, updated_at FROM enroll_detail WHERE spu_id=?"
+                    " ORDER BY site, session_end DESC", (spu_id,)):
+                s_start, s_end = r["session_start"] or "", r["session_end"] or ""
+                state = "unknown"
+                try:
+                    t0 = datetime.strptime(s_start, "%Y-%m-%d %H:%M") if s_start else None
+                    t1 = datetime.strptime(s_end, "%Y-%m-%d %H:%M") if s_end else None
+                    if t0 and now < t0:
+                        state = "upcoming"
+                    elif t1 and now > t1:
+                        state = "expired"
+                    elif t0 or t1:
+                        state = "active"
+                except Exception:
+                    pass
+                if state == "active":
+                    active_sites.add(r["site"])
+                if not synced_at or (r["updated_at"] or "") > synced_at:
+                    synced_at = r["updated_at"] or synced_at
+                pmn, pmx = price_map.get((r["site"], r["activity_thematic_id"]), (None, None))
+                rows.append({
+                    "site": r["site"], "activity_name": r["activity_name"],
+                    "session_start": s_start, "session_end": s_end,
+                    "enroll_status": r["enroll_status"], "session_status": r["session_status"],
+                    "state": state, "price_min": pmn, "price_max": pmx,
+                })
+            gap_sites = [s for s in sites if s not in active_sites]
+            products.append({
+                "skc_code": skc_code, "spu_id": spu_id,
+                "sites_total": len(sites), "active_sites": len(active_sites),
+                "gap_sites": gap_sites, "rows": rows,
+            })
+        conn.close()
+        return jsonify({"ok": True, "kw": kw, "synced_at": synced_at, "live_note": live_note,
+                        "now": now.strftime("%Y-%m-%d %H:%M"), "products": products})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"查询异常: {type(e).__name__}: {e}"}), 500
+
+
+# ============================================================================
+# API 报活动·一键全流程（同步明细库 → 增量制表 → 接口提交，串联脚本 auto_enroll_api.py）
+# ============================================================================
+API_ENROLL_SCRIPT = ACTIVITY_DIR + '/auto_enroll_api.py'
+api_enroll_task = {    "status": "idle",          # idle | running | completed | error | stopped
+    "started_at": None,
+    "completed_at": None,
+    "proc": None,
+    "log": [],
+    "log_index": 0,
+}
+api_enroll_lock = threading.Lock()
+
+
+def _api_enroll_log_reader(proc):
+    """后台线程：读取一键报名脚本 stdout/stderr 写入 api_enroll_task 日志。"""
+    def _read_stream(stream):
+        try:
+            for raw in iter(stream.readline, b""):
+                line = None
+                for enc in ("utf-8", "gbk", "gb2312"):
+                    try:
+                        line = raw.decode(enc, errors="strict").rstrip("\r\n")
+                        break
+                    except Exception:
+                        continue
+                if line is None:
+                    line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                if not line:
+                    continue
+                # 2026-09-13：每行统一补 [HH:MM:SS] 时间戳（子脚本输出多数不带时间，
+                # 限流冷却时用户无法判断还要等多久）；已带时间戳的行不重复加
+                if not re.match(r'^\[\d{2}:\d{2}:\d{2}\]', line):
+                    line = f"[{datetime.now().strftime('%H:%M:%S')}] {line}"
+                with api_enroll_lock:
+                    api_enroll_task["log"].append(line)
+        except Exception:
+            pass
+
+    try:
+        _read_stream(proc.stdout)
+    finally:
+        rc = proc.wait()
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+        with api_enroll_lock:
+            if api_enroll_task["status"] == "running":
+                api_enroll_task["status"] = "completed" if rc == 0 else "error"
+            api_enroll_task["completed_at"] = datetime.now().isoformat()
+            api_enroll_task["proc"] = None
+
+
+@app.route('/api/activity/api-enroll/start', methods=['POST'])
+def api_activity_api_enroll_start():
+    """启动 API 报活动一键全流程（增量：新商品报全部活动，老商品只报新活动）。"""
+    with api_enroll_lock:
+        if api_enroll_task.get("status") == "running" and api_enroll_task.get("proc") and api_enroll_task["proc"].poll() is None:
+            return jsonify({"success": False, "message": "API报活动已在运行，请等待完成"}), 409
+        api_enroll_task["status"] = "running"
+        api_enroll_task["started_at"] = datetime.now().isoformat()
+        api_enroll_task["completed_at"] = None
+        api_enroll_task["log"] = [f"[{datetime.now().strftime('%H:%M:%S')}] 启动: API报活动一键全流程（同步明细→增量制表→接口提交）"]
+        api_enroll_task["log_index"] = 0
+    if not os.path.exists(API_ENROLL_SCRIPT):
+        with api_enroll_lock:
+            api_enroll_task["status"] = "error"
+            api_enroll_task["completed_at"] = datetime.now().isoformat()
+        return jsonify({"success": False, "message": f"一键报名脚本不存在: {API_ENROLL_SCRIPT}"}), 404
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        proc = subprocess.Popen(
+            [get_python(), API_ENROLL_SCRIPT],
+            cwd=ACTIVITY_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+            env=env,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except Exception as e:
+        with api_enroll_lock:
+            api_enroll_task["status"] = "error"
+            api_enroll_task["completed_at"] = datetime.now().isoformat()
+            api_enroll_task["proc"] = None
+        return jsonify({"success": False, "message": f"启动一键报名脚本失败: {e}"}), 500
+    with api_enroll_lock:
+        api_enroll_task["proc"] = proc
+    threading.Thread(target=_api_enroll_log_reader, args=(proc,), daemon=True).start()
+    return jsonify({"success": True, "message": "API报活动已启动：同步明细→增量制表→接口提交，进度见实时日志"})
+
+
+@app.route('/api/activity/api-enroll/status')
+def api_activity_api_enroll_status():
+    """轮询 API 报活动实时日志。?reset=1 返回全量日志（页面刷新恢复用）。"""
+    reset = request.args.get("reset") == "1"
+    with api_enroll_lock:
+        if reset:
+            api_enroll_task["log_index"] = 0
+        idx = api_enroll_task.get("log_index", 0)
+        all_logs = api_enroll_task.get("log", [])
+        logs = all_logs[idx:]
+        api_enroll_task["log_index"] = len(all_logs)
+        elapsed = 0
+        if api_enroll_task.get("status") == "running" and api_enroll_task.get("started_at"):
+            try:
+                elapsed = int((datetime.now() - datetime.fromisoformat(api_enroll_task["started_at"])).total_seconds())
+            except Exception:
+                pass
+        return jsonify({
+            "status": api_enroll_task.get("status", "idle"),
+            "started_at": api_enroll_task.get("started_at"),
+            "completed_at": api_enroll_task.get("completed_at"),
+            "elapsed_sec": elapsed,
+            "log": logs,
+        })
+
+
+@app.route('/api/activity/api-enroll/stop', methods=['POST'])
+def api_activity_api_enroll_stop():
+    """停止当前 API 报活动任务（仅终止 api_enroll_task 管理的子进程树，不误杀其它脚本）。"""
+    with api_enroll_lock:
+        proc = api_enroll_task.get("proc")
+        if not proc or proc.poll() is not None:
+            api_enroll_task["status"] = "idle"
+            api_enroll_task["proc"] = None
+            api_enroll_task["completed_at"] = datetime.now().isoformat()
+            return jsonify({"success": True, "message": "当前没有运行中的 API报活动任务"})
+        pid = proc.pid
+        api_enroll_task["status"] = "stopped"
+        api_enroll_task["log"] = api_enroll_task.get("log", []) + [
+            f"[{datetime.now().strftime('%H:%M:%S')}] 用户点击停止，终止 API报活动 PID {pid}"]
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=10)
+    except Exception as e:
+        with api_enroll_lock:
+            api_enroll_task["status"] = "error"
+            api_enroll_task["completed_at"] = datetime.now().isoformat()
+        return jsonify({"success": False, "message": f"停止 API报活动失败: {e}"}), 500
+    with api_enroll_lock:
+        api_enroll_task["completed_at"] = datetime.now().isoformat()
+        api_enroll_task["proc"] = None
+    return jsonify({"success": True, "message": f"已停止 API报活动（PID {pid}）"})
+
+
+@app.route('/api/activity/open-log-folder', methods=['POST'])
+def api_activity_open_log_folder():
+    """前台打开当天日期输出文件夹（E:\\Kimi Code\\temu分析\\报活动\\{YYYYMMDD}）。"""
+    today = datetime.now().strftime("%Y%m%d")
+    folder = Path(r"E:\Kimi Code\temu分析\报活动") / today
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        _open_folder_front(folder)
+        return jsonify({"success": True, "message": f"已打开文件夹: {folder}"})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"打开文件夹失败: {e}"}), 500
 
 
 @app.route('/retail_price')
@@ -8191,6 +9612,12 @@ def _peiyi_read_meta(dest_dir, name):
         bw = data.get('bw')
         if isinstance(bw, dict):
             out['bw'] = {k: bw.get(k) for k in PEIYI_META_KEYS}
+        # 关联母版标记透传给画廊（卡片展示 🔗母版 用）
+        if data.get('_linked_from'):
+            out['_linked_from'] = data['_linked_from']
+        # 抓绒卫衣360 白色母版同步标记（卡片展示 ⟳白版同步 用）
+        if data.get('_synced_from'):
+            out['_synced_from'] = data['_synced_from']
         return out
     except Exception:
         return None
@@ -8285,6 +9712,8 @@ def api_peiyi_list():
                         'unfilled': unfilled,
                         'bw_missing': bw_missing,
                         'has_mask': has_mask,
+                        # 抽绳遮罩（仅卫衣 W* 正面需要；前端据此打「缺抽绳」角标）
+                        'has_drawstring': (d / (stem + '_drawstring_mask.png')).exists(),
                         'occluder_px': occ_px,
                         'mask_urls': mask_urls,
                         'score': score_info,
@@ -8801,15 +10230,379 @@ def api_peiyi_meta():
         meta['bw'] = bw
     elif isinstance(existing.get('bw'), dict):
         meta['bw'] = existing['bw']
+    # 白色母版同步标记保留（手动保存不丢）：_synced_vals 与新值不符 = 同步后被手动改过，
+    # 抓绒卫衣360 的白色→彩色同步据此跳过本图（手动权重最高）
+    for _mk in ('_synced_from', '_synced_vals'):
+        if _mk in existing:
+            meta[_mk] = existing[_mk]
     mp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
-    return jsonify({'ok': True, 'meta': meta})
+
+    # 手动保存 = 用户明确改动本图：若本图此前关联了母版，保存后脱离关联
+    # （meta 是按字段重建的，_linked_from 本就不会被带过来，这里只是上报）。
+    detached = existing.get('_linked_from')
+
+    # 级联：本图若是母版（有子图 _linked_from 指向它），把已填的组推给所有关联子图
+    my_ref = f'{category}/{stem}'
+    top_filled = any(meta.get(k) is not None for k in PEIYI_META_KEYS)
+    bw_filled = isinstance(meta.get('bw'), dict) and any(
+        meta['bw'].get(k) is not None for k in PEIYI_META_KEYS)
+    propagated = []
+    if top_filled or bw_filled:
+        for c2, d2 in peiyi_dirs.items():
+            if not d2.is_dir():
+                continue
+            for f2 in os.listdir(d2):
+                if not f2.endswith('.meta.json'):
+                    continue
+                if c2 == category and f2 == stem + '.meta.json':
+                    continue
+                cp = d2 / f2
+                try:
+                    ch = json.loads(cp.read_text(encoding='utf-8'))
+                except Exception:
+                    continue
+                if not isinstance(ch, dict) or ch.get('_linked_from') != my_ref:
+                    continue
+                if top_filled:
+                    for k in PEIYI_META_KEYS:
+                        ch[k] = meta.get(k)
+                if bw_filled:
+                    ch['bw'] = {k: meta['bw'].get(k) for k in PEIYI_META_KEYS}
+                try:
+                    cp.write_text(json.dumps(ch, ensure_ascii=False, indent=2), encoding='utf-8')
+                    propagated.append(f'{c2}/{f2[:-len(".meta.json")]}')
+                except Exception:
+                    pass
+    # 抓绒卫衣360：白色母版五参 → 其它颜色同编号图同步（手动改/手动关联的跳过）
+    white_synced, white_skipped = _hoodie360_white_sync(_cat, peiyi_dirs, category, stem, meta)
+    return jsonify({'ok': True, 'meta': meta,
+                    'propagated': propagated, 'detached': detached,
+                    'white_synced': white_synced, 'white_skipped': white_skipped})
+
+
+def _hoodie360_white_sync(cat, peiyi_dirs, category, stem, meta):
+    """抓绒卫衣360 专用：白色母版（W白/B白）的五参按文件名编号同步到其它颜色同编号图。
+
+    规则（用户 2026-10-11）：
+      - 白B20 的五参 → B黑/黑B20、B Heather Grey/ B20 等所有颜色的 B20（W/B 各自按编号对齐）；
+      - 手动权重最高：目标有 _linked_from（手动关联同款5参）→ 跳过；
+        目标同步过但现值与 _synced_vals 快照不符（同步后被手动改过）→ 跳过；
+      - 只推白色已填的组（main/bw 各自独立），未填的组不动目标原值。
+    返回 (synced, skipped) 两个明细列表。
+    """
+    synced, skipped = [], []
+    if cat != 'hoodie360' or category not in ('W白', 'B白'):
+        return synced, skipped
+    m = re.search(r'([WB]\d+)\s*$', stem)
+    if not m:
+        return synced, skipped
+    key = m.group(1)
+    top_filled = any(meta.get(k) is not None for k in PEIYI_META_KEYS)
+    bw_filled = isinstance(meta.get('bw'), dict) and any(
+        meta['bw'].get(k) is not None for k in PEIYI_META_KEYS)
+    if not (top_filled or bw_filled):
+        return synced, skipped
+    for c2, d2 in peiyi_dirs.items():
+        if c2 in ('W白', 'B白') or not d2.is_dir():
+            continue
+        for fn in os.listdir(d2):
+            s2, ext = os.path.splitext(fn)
+            if ext.lower() not in PEIYI_ALLOWED_EXT:
+                continue
+            m2 = re.search(r'([WB]\d+)\s*$', s2)
+            if not m2 or m2.group(1) != key:
+                continue
+            ref2 = f'{c2}/{s2}'
+            mp2 = d2 / (s2 + '.meta.json')
+            try:
+                tmeta = json.loads(mp2.read_text(encoding='utf-8')) if mp2.exists() else {}
+            except Exception:
+                tmeta = {}
+            if not isinstance(tmeta, dict):
+                tmeta = {}
+            if tmeta.get('_linked_from'):
+                skipped.append(ref2 + '（手动关联）')
+                continue
+            cur_main = {k: tmeta.get(k) for k in PEIYI_META_KEYS}
+            cur_bw = {k: (tmeta.get('bw') or {}).get(k) for k in PEIYI_META_KEYS}
+            sv = tmeta.get('_synced_vals') or {}
+            if (sv.get('main') and cur_main != sv['main']) or (sv.get('bw') and cur_bw != sv['bw']):
+                skipped.append(ref2 + '（手动改过）')
+                continue
+            new_vals = {}
+            if top_filled:
+                for k in PEIYI_META_KEYS:
+                    tmeta[k] = meta.get(k)
+                new_vals['main'] = {k: meta.get(k) for k in PEIYI_META_KEYS}
+            if bw_filled:
+                tmeta['bw'] = {k: meta['bw'].get(k) for k in PEIYI_META_KEYS}
+                new_vals['bw'] = tmeta['bw']
+            tmeta['_synced_from'] = f'{category}/{stem}'
+            merged = dict(sv)
+            merged.update(new_vals)
+            tmeta['_synced_vals'] = merged
+            try:
+                mp2.write_text(json.dumps(tmeta, ensure_ascii=False, indent=2), encoding='utf-8')
+                synced.append(ref2)
+            except Exception:
+                pass
+    return synced, skipped
+
+
+@app.route('/api/peiyi/link-meta', methods=['POST'])
+def api_peiyi_link_meta():
+    """手动关联同款不同色：把「源图」的贴图5参（单面款+双面款bw组）整份复制给目标图。
+
+    用于自动同图识别漏掉的浅色换色对（edge/geom 都不达标时用户肉眼指定）。
+    src 支持：'黑W19' / '黑W19.jpg' / 'W黑/黑W19' / 'W黑（黑·正面）/黑W19.jpg'
+    （空白与中文括号展示后缀会被忽略）；跨品类：'卫衣/W白/白W27.jpg' 或 '卫衣/白W27.jpg'
+    （品类写注册 key 或显示名，如 hoodie / hoodie360 / 卫衣 / 抓绒卫衣360）。
+    手动指定 = 明确意图，直接覆盖目标对应组。跨品类关联的 _linked_from 带品类前缀
+    （如 hoodie/W白/白W27），级联更新仍只在同品类内生效。
+    """
+    data = request.get_json(silent=True) or {}
+    category = data.get('category', '')
+    name = data.get('name', '')
+    src_in = (data.get('src') or '').strip()
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    if category not in peiyi_dirs:
+        return jsonify({'ok': False, 'error': '未知分类'}), 400
+    if not src_in:
+        return jsonify({'ok': False, 'error': '缺少 src（源图名）'}), 400
+    safe = os.path.basename(name)
+    d_dst = peiyi_dirs[category]
+    if not (d_dst / safe).exists():
+        return jsonify({'ok': False, 'error': '目标文件不存在'}), 404
+
+    def _norm(s):
+        s = re.sub(r'[（(].*?[）)]', '', s)   # 去「（黑·正面）」等展示后缀
+        s = re.sub(r'\s+', '', s)            # 去所有空白（含前导空格文件名）
+        return s.lower()
+
+    def _cat_alias_key(label):
+        """品类别名 → 注册 key：精确匹配 key/display；无精确则唯一前缀匹配；否则 None。"""
+        want = _norm(label)
+        cats = _cat_all()
+        for k, cfg in cats.items():
+            if want in (_norm(k), _norm(str(cfg.get('display', '')))):
+                return k
+        pref = [k for k, cfg in cats.items()
+                if _norm(k).startswith(want) or _norm(str(cfg.get('display', ''))).startswith(want)]
+        return pref[0] if len(pref) == 1 else None
+
+    # 去扩展名后的纯 stem 比较；支持「分类/文件名」，及跨品类「品类/分类/文件名」「品类/文件名」
+    src_in = re.sub(r'[（(].*?[）)]', '', src_in)
+    parts = [p for p in src_in.split('/') if p.strip()]
+    src_pcat_key, src_cat, src_name = None, None, ''
+    if len(parts) >= 3:
+        src_pcat_key = _cat_alias_key(parts[0])
+        if not src_pcat_key:
+            return jsonify({'ok': False, 'error': f'未知品类「{parts[0]}」（已注册: T恤/卫衣/抓绒卫衣360）'}), 400
+        src_cat, src_name = parts[-2], parts[-1]
+    elif len(parts) == 2:
+        k = _cat_alias_key(parts[0])
+        if k:
+            src_pcat_key, src_name = k, parts[1]          # 品类/文件名：该品类全库搜
+        else:
+            src_cat, src_name = parts[0], parts[1]        # 分类/文件名（本品类，旧行为）
+    elif parts:
+        src_name = parts[0]
+    want = _norm(os.path.splitext(src_name)[0])
+    search_dirs = _peiyi_dirs(src_pcat_key) if src_pcat_key else peiyi_dirs
+    if not search_dirs:
+        return jsonify({'ok': False, 'error': f'品类 {src_pcat_key} 无素材库'}), 400
+    matches = []
+    for c, d in search_dirs.items():
+        if src_cat and not (_norm(c) == _norm(src_cat)
+                            or _norm(c).startswith(_norm(src_cat))
+                            or _norm(src_cat) in _norm(c)):
+            continue
+        if not d.is_dir():
+            continue
+        for fn in os.listdir(d):
+            stem, ext = os.path.splitext(fn)
+            if ext.lower() not in PEIYI_ALLOWED_EXT:
+                continue
+            if _norm(stem) == want:
+                matches.append((c, fn))
+    # 排除「指向自己」（仅同源搜索时可能命中自己）
+    matches = [(c, fn) for c, fn in matches
+               if not (src_pcat_key in (None, _cat) and c == category and fn == safe)]
+    if not matches:
+        return jsonify({'ok': False, 'error': f'找不到源图「{src_in}」（按文件名全库精确匹配，可带分类前缀；跨品类写成 品类/分类/文件名，如 卫衣/W白/白W27.jpg）'}), 404
+    if len(matches) > 1:
+        cands = '、'.join(f'{c}/{fn}' for c, fn in matches[:8])
+        return jsonify({'ok': False, 'error': f'「{src_in}」匹配到多张，请写成分类/文件名：{cands}'}), 409
+
+    sc, sfn = matches[0]
+    sstem, _ = os.path.splitext(sfn)
+    smp = search_dirs[sc] / (sstem + '.meta.json')
+    try:
+        smeta = json.loads(smp.read_text(encoding='utf-8')) if smp.exists() else {}
+    except Exception:
+        smeta = {}
+    top_ok = any(smeta.get(k) is not None for k in PEIYI_META_KEYS)
+    bw_ok = isinstance(smeta.get('bw'), dict) and any(smeta['bw'].get(k) is not None for k in PEIYI_META_KEYS)
+    if not (top_ok or bw_ok):
+        return jsonify({'ok': False, 'error': f'源图 {sc}/{sfn} 还没有填写贴图参数，无法关联'}), 400
+
+    dst_stem, _ = os.path.splitext(safe)
+    dmp = d_dst / (dst_stem + '.meta.json')
+    try:
+        dmeta = json.loads(dmp.read_text(encoding='utf-8')) if dmp.exists() else {}
+    except Exception:
+        dmeta = {}
+    if not isinstance(dmeta, dict):
+        dmeta = {}
+    groups = []
+    if top_ok:
+        for k in PEIYI_META_KEYS:
+            dmeta[k] = smeta.get(k)
+        groups.append('main')
+    if bw_ok:
+        dmeta['bw'] = {k: smeta['bw'].get(k) for k in PEIYI_META_KEYS}
+        groups.append('bw')
+    # 记录人工关联来源，便于排查（跨品类时带品类前缀，如 hoodie/W白/白W27）
+    src_ref = f'{src_pcat_key}/{sc}/{sstem}' if src_pcat_key else f'{sc}/{sstem}'
+    dmeta['_linked_from'] = src_ref
+    dmp.write_text(json.dumps(dmeta, ensure_ascii=False, indent=2), encoding='utf-8')
+    # 抓绒卫衣360：目标是白色母版时，新五参同步给其它颜色同编号图
+    white_synced, white_skipped = _hoodie360_white_sync(_cat, peiyi_dirs, category, dst_stem, dmeta)
+    return jsonify({'ok': True, 'src': f'{sc}/{sfn}', 'groups': groups,
+                    'white_synced': white_synced, 'white_skipped': white_skipped,
+                    'msg': f'已关联 {src_ref} 的贴图参数（{"+".join(groups)}）'})
+
+
+# ── 遮罩生成队列（2026-09-06）：「生成遮罩」只入队，worker 后台执行 ──
+# 原版同步等子进程（timeout=600），连点几张会并发起多个 BiRefNet 子进程压垮机器（页面卡死）。
+# 现在：POST /api/peiyi/mask 立即返回（已入队）；GET /api/peiyi/mask-queue 轮询进度；
+#       POST /api/peiyi/mask-all 把所有「无遮罩」素材按分类顺序全部入队。
+# 2026-09-07：worker 并行化（MASK_Q_WORKERS 路）。本机无 GPU 纯 CPU 跑，
+#       单个子进程峰值内存实测约 4.2GB（torch+BiRefNet+FASHN），整机 31GB →
+#       默认 3 路（≈13GB 预算）；想调就改 MASK_Q_WORKERS，每路约 4GB，不建议超 5。
+_MASK_Q = queue.Queue()
+_MASK_Q_LOCK = threading.Lock()
+_MASK_Q_STATE = {"current": None, "pending": [], "done": [], "failed": [], "running": []}
+_MASK_Q_WORKERS_STARTED = 0
+MASK_Q_WORKERS = 3
+
+
+def _run_mask_job(fp, category):
+    """跑一个遮罩子进程（原 api_peiyi_mask 的同步逻辑原样抽出），返回结果 dict。"""
+    MOCKUP_OUT.mkdir(parents=True, exist_ok=True)
+    env = _single_thread_env(os.environ)
+    env["PYTHONPATH"] = f"{ZCODE_PROJECT};{PY_PACKAGES}"
+    # 并行 worker 共用目录：日志/结果文件按随机标签隔离，避免互相覆盖
+    tag = os.urandom(4).hex()
+    out_log = MOCKUP_OUT / f"_mask_stdout_{tag}.log"
+    err_log = MOCKUP_OUT / f"_mask_stderr_{tag}.log"
+    startupinfo = None
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+    with open(out_log, "w", encoding="utf-8", errors="replace") as of, \
+         open(err_log, "w", encoding="utf-8", errors="replace") as ef:
+        r = subprocess.run(
+            [str(MOCKUP_PY), str(ZCODE_PROJECT / "_peiyi_worker.py"), "mask", str(fp), category,
+             str(out_log) + ".json"],
+            cwd=str(ZCODE_PROJECT), env=env,
+            stdin=subprocess.DEVNULL, stdout=of, stderr=ef,
+            timeout=600,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            startupinfo=startupinfo,
+        )
+    raw = out_log.read_text(encoding="utf-8", errors="replace").strip()
+    err = err_log.read_text(encoding="utf-8", errors="replace").strip()
+    res_path = str(out_log) + ".json"
+    if r.returncode != 0 or not Path(res_path).exists():
+        res = {'ok': False, 'error': f'subprocess rc={r.returncode}: {err[-800:]}', 'trace': raw[-800:]}
+    else:
+        res = json.loads(Path(res_path).read_text(encoding="utf-8", errors="replace"))
+    # 并行 worker 每任务独立日志，读完即删，避免堆积
+    for p in (out_log, err_log, Path(res_path)):
+        try:
+            p.unlink(missing_ok=True)
+        except Exception:
+            pass
+    return res
+
+
+def _mask_worker():
+    """遮罩队列消费者：MASK_Q_WORKERS 个线程并行，各自一次跑一个子进程，
+    结果记入 done/failed（各留最近 50 条）。running 记录所有在跑任务，
+    current 保留为 running[0] 兼容旧前端。"""
+    while True:
+        item = _MASK_Q.get()
+        try:
+            with _MASK_Q_LOCK:
+                _MASK_Q_STATE["pending"] = [p for p in _MASK_Q_STATE["pending"] if p["key"] != item["key"]]
+                _MASK_Q_STATE["running"].append(item)
+                _MASK_Q_STATE["current"] = _MASK_Q_STATE["running"][0]
+            try:
+                dirs = _peiyi_dirs(item["cat"])
+                fp = None
+                if dirs and item["category"] in dirs:
+                    fp = dirs[item["category"]] / os.path.basename(item["name"])
+                if fp is None or not fp.exists():
+                    res = {"ok": False, "error": "文件不存在或未知分类"}
+                else:
+                    res = _run_mask_job(fp, item["category"])
+            except Exception as e:
+                res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            entry = dict(item)
+            entry["ok"] = bool(res.get("ok"))
+            entry["elapsed"] = res.get("elapsed")
+            entry["error"] = res.get("error")
+            entry["ts"] = datetime.now().isoformat(timespec="seconds")
+            with _MASK_Q_LOCK:
+                _MASK_Q_STATE["running"] = [r for r in _MASK_Q_STATE["running"] if r["key"] != item["key"]]
+                _MASK_Q_STATE["current"] = _MASK_Q_STATE["running"][0] if _MASK_Q_STATE["running"] else None
+                bucket = _MASK_Q_STATE["done"] if entry["ok"] else _MASK_Q_STATE["failed"]
+                bucket.append(entry)
+                _MASK_Q_STATE["done"] = _MASK_Q_STATE["done"][-50:]
+                _MASK_Q_STATE["failed"] = _MASK_Q_STATE["failed"][-50:]
+        finally:
+            _MASK_Q.task_done()
+
+
+def _mask_start_workers():
+    """懒启动 MASK_Q_WORKERS 个消费线程（daemon，常驻等任务）。"""
+    global _MASK_Q_WORKERS_STARTED
+    with _MASK_Q_LOCK:
+        if _MASK_Q_WORKERS_STARTED >= MASK_Q_WORKERS:
+            return
+        for i in range(MASK_Q_WORKERS - _MASK_Q_WORKERS_STARTED):
+            threading.Thread(target=_mask_worker, daemon=True,
+                             name=f"mask-queue-{i}").start()
+        _MASK_Q_WORKERS_STARTED = MASK_Q_WORKERS
+
+
+def _mask_enqueue(cat, category, name):
+    """入队一个遮罩任务；同一素材在跑/在排则去重。返回 (状态, 排队位置)。"""
+    key = f"{cat}/{category}/{name}"
+    with _MASK_Q_LOCK:
+        for r in _MASK_Q_STATE["running"]:
+            if r["key"] == key:
+                return "running", 0
+        for i, p in enumerate(_MASK_Q_STATE["pending"]):
+            if p["key"] == key:
+                return "dup", i + 1
+        item = {"key": key, "cat": cat, "category": category, "name": name}
+        _MASK_Q_STATE["pending"].append(item)
+        pos = len(_MASK_Q_STATE["pending"])
+    _MASK_Q.put(item)
+    _mask_start_workers()
+    return "queued", pos
 
 
 @app.route('/api/peiyi/mask', methods=['POST'])
 def api_peiyi_mask():
-    """为单张胚衣素材生成三层遮罩 + _tpl 扭曲素材。
+    """为单张胚衣素材生成三层遮罩 + _tpl 扭曲素材（异步队列版）。
 
-    返回 JSON 在原有 masks 基础上新增 tpl 字段（_tpl 生成状态）。
+    立即返回 {queued:True}；实际生成由队列 worker 顺序执行，前端轮询 /api/peiyi/mask-queue。
     """
     data = request.get_json(silent=True) or {}
     category = data.get('category', '')
@@ -8820,49 +10613,196 @@ def api_peiyi_mask():
     if category not in peiyi_dirs:
         return jsonify({'ok': False, 'error': '未知分类'}), 400
     safe = os.path.basename(name)
-    d = peiyi_dirs[category]
-    fp = d / safe
+    fp = peiyi_dirs[category] / safe
     if not fp.exists():
         return jsonify({'ok': False, 'error': '文件不存在'}), 404
-    # 隔离到子进程执行（cv2/OpenMP 偶发崩溃会拖垮主服务，故必须隔离）
+    status, pos = _mask_enqueue(_cat, category, safe)
+    return jsonify({'ok': True, 'queued': True, 'status': status, 'position': pos})
+
+
+@app.route('/api/peiyi/mask-queue')
+def api_peiyi_mask_queue():
+    """遮罩队列状态：running（所有在跑任务）/ current（=running[0]，兼容旧前端）/
+    pending（排队中）/ done / failed（各留最近 50 条）。"""
+    with _MASK_Q_LOCK:
+        return jsonify({'ok': True,
+                        'current': _MASK_Q_STATE['current'],
+                        'running': list(_MASK_Q_STATE['running']),
+                        'pending': list(_MASK_Q_STATE['pending']),
+                        'done': list(_MASK_Q_STATE['done']),
+                        'failed': list(_MASK_Q_STATE['failed'])})
+
+
+@app.route('/api/peiyi/mask-all', methods=['POST'])
+def api_peiyi_mask_all():
+    """一键生成全部遮罩：把当前品类下所有「还没有遮罩」的素材按分类顺序入队。"""
+    _cat, peiyi_dirs = _peiyi_request_dirs()
+    if peiyi_dirs is None:
+        return jsonify({'ok': False, 'error': f'未知品类: {_cat}'}), 400
+    n = 0
+    skipped_dup = 0
+    for c, d in peiyi_dirs.items():
+        if not d.is_dir():
+            continue
+        for fn in sorted(os.listdir(d)):
+            lfn = fn.lower()
+            ext = os.path.splitext(lfn)[1]
+            if ext not in PEIYI_ALLOWED_EXT or fn.startswith('_tmp_'):
+                continue
+            if any(lfn.endswith(s) for s in PEIYI_MASK_SUFFIXES):
+                continue
+            stem, _ = os.path.splitext(fn)
+            # 与画廊 has_mask 同口径：occluder_mask 或 occluder 存在即视为已生成
+            if (d / (stem + '_occluder_mask.png')).exists() or (d / (stem + '_occluder.png')).exists():
+                continue
+            status, _pos = _mask_enqueue(_cat, c, fn)
+            if status == "queued":
+                n += 1
+            else:
+                skipped_dup += 1
+    return jsonify({'ok': True, 'queued': n, 'already_queued': skipped_dup})
+
+
+@app.route('/api/peiyi/share-drawstring', methods=['POST'])
+def api_peiyi_share_drawstring():
+    """同图换色共用抽绳遮罩：扫当前品类素材库，同一张照片的胚衣间，
+    把已有抽绳遮罩（+印花框 meta）复制给缺的图。只复制不覆盖。
+    子进程执行（peiyi_mask 含 torch，避免拖重 bridge），首次会建指纹缓存较慢。
+    """
+    cat = _request_cat()
+    if cat not in _cat_all():
+        return jsonify({'ok': False, 'error': f'未知品类: {cat}'}), 400
+    root = _cat_root(cat) / "03_MATERIAL"
+    if not root.is_dir():
+        return jsonify({'ok': False, 'error': f'素材根目录不存在: {root}'}), 400
+    MOCKUP_OUT.mkdir(parents=True, exist_ok=True)
+    env = _single_thread_env(os.environ)
+    env["PYTHONPATH"] = f"{ZCODE_PROJECT};{PY_PACKAGES}"
+    out_log = MOCKUP_OUT / "_share_ds_stdout.log"
+    err_log = MOCKUP_OUT / "_share_ds_stderr.log"
+    res_path = str(out_log) + ".json"
+    startupinfo = None
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
     try:
-        MOCKUP_OUT.mkdir(parents=True, exist_ok=True)
-        env = _single_thread_env(os.environ)
-        env["PYTHONPATH"] = f"{ZCODE_PROJECT};{PY_PACKAGES}"
-        out_log = MOCKUP_OUT / "_mask_stdout.log"
-        err_log = MOCKUP_OUT / "_mask_stderr.log"
-        startupinfo = None
-        if os.name == "nt":
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
         with open(out_log, "w", encoding="utf-8", errors="replace") as of, \
              open(err_log, "w", encoding="utf-8", errors="replace") as ef:
             r = subprocess.run(
-                [str(MOCKUP_PY), str(ZCODE_PROJECT / "_peiyi_worker.py"), "mask", str(fp), category,
-                 str(out_log) + ".json"],
+                [str(MOCKUP_PY), str(ZCODE_PROJECT / "_peiyi_worker.py"),
+                 "sync_drawstring", str(root), res_path],
                 cwd=str(ZCODE_PROJECT), env=env,
                 stdin=subprocess.DEVNULL, stdout=of, stderr=ef,
                 timeout=600,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                 startupinfo=startupinfo,
             )
-        raw = out_log.read_text(encoding="utf-8", errors="replace").strip()
+    except subprocess.TimeoutExpired:
+        return jsonify({'ok': False, 'error': '扫描超时(600s)'}), 504
+    if r.returncode != 0 or not Path(res_path).exists():
         err = err_log.read_text(encoding="utf-8", errors="replace").strip()
-        res_path = str(out_log) + ".json"
-        if r.returncode != 0 or not Path(res_path).exists():
-            return jsonify({'ok': False,
-                            'error': f'subprocess rc={r.returncode}: {err[-800:]}',
-                            'trace': raw[-800:]}), 500
-        res = json.loads(Path(res_path).read_text(encoding="utf-8", errors="replace"))
-        return jsonify(res), (200 if res.get('ok') else 500)
+        return jsonify({'ok': False, 'error': f'subprocess rc={r.returncode}: {err[-500:]}'}), 500
+    res = json.loads(Path(res_path).read_text(encoding="utf-8", errors="replace"))
+    return jsonify(res)
+
+
+# 同图共用贴图5参单飞锁：自动触发与手动按钮可能并发，子进程同一时间只跑一个
+_PEIYI_SHARE_META_LOCK = threading.Lock()
+
+
+def _share_meta_paths():
+    """share-meta 子进程的进度/结果文件路径（MOCKUP_OUT 下）。"""
+    out_log = MOCKUP_OUT / "_share_meta_stdout.log"
+    return out_log, Path(str(out_log) + ".json"), MOCKUP_OUT / "_share_meta_progress.json"
+
+
+def _watch_share_meta(proc):
+    """子进程结束后释放单飞锁（结果由 status 端点从结果文件读）。"""
+    try:
+        proc.wait()
+    finally:
+        _PEIYI_SHARE_META_LOCK.release()
+
+
+@app.route('/api/peiyi/share-meta', methods=['POST'])
+def api_peiyi_share_meta():
+    """同图换色共用贴图5参：扫当前品类素材库，同一张照片的胚衣间，
+    把已填的5参（单面款 + 双面款bw组）复制给该组还全空的兄弟图。
+    只填空缺不覆盖；源图必须过 body_mask 贴合校验（防错配，同抽绳共用）。
+
+    异步执行（加了 SSIM 指标后全库扫描要几分钟）：本端点只负责启动子进程
+    并立即返回 {started:True}，前端轮询 /api/peiyi/share-meta/status 拿进度
+    和最终结果。单飞锁跨整个子进程持有，重复启动返回 busy。
+    """
+    cat = _request_cat()
+    if cat not in _cat_all():
+        return jsonify({'ok': False, 'error': f'未知品类: {cat}'}), 400
+    root = _cat_root(cat) / "03_MATERIAL"
+    if not root.is_dir():
+        return jsonify({'ok': False, 'error': f'素材根目录不存在: {root}'}), 400
+    if not _PEIYI_SHARE_META_LOCK.acquire(blocking=False):
+        return jsonify({'ok': True, 'busy': True})
+    try:
+        MOCKUP_OUT.mkdir(parents=True, exist_ok=True)
+        env = _single_thread_env(os.environ)
+        env["PYTHONPATH"] = f"{ZCODE_PROJECT};{PY_PACKAGES}"
+        out_log, res_path, prog_path = _share_meta_paths()
+        for p in (res_path, prog_path):
+            try:
+                p.unlink()
+            except FileNotFoundError:
+                pass
+            except Exception:
+                pass
+        err_log = MOCKUP_OUT / "_share_meta_stderr.log"
+        startupinfo = None
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+        try:
+            of = open(out_log, "w", encoding="utf-8", errors="replace")
+            ef = open(err_log, "w", encoding="utf-8", errors="replace")
+            proc = subprocess.Popen(
+                [str(MOCKUP_PY), str(ZCODE_PROJECT / "_peiyi_worker.py"),
+                 "sync_meta", str(root), str(res_path), str(prog_path)],
+                cwd=str(ZCODE_PROJECT), env=env,
+                stdin=subprocess.DEVNULL, stdout=of, stderr=ef,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                startupinfo=startupinfo,
+            )
+        except Exception:
+            _PEIYI_SHARE_META_LOCK.release()
+            raise
+        threading.Thread(target=_watch_share_meta, args=(proc,), daemon=True).start()
+        return jsonify({'ok': True, 'started': True})
     except Exception as e:
-        import traceback as _tb
-        _tb.print_exc()
-        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}', 'trace': _tb.format_exc()[-1500:]}), 500
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
 
 
-@app.route('/api/peiyi/correct_preview', methods=['POST'])
+@app.route('/api/peiyi/share-meta/status')
+def api_peiyi_share_meta_status():
+    """share-meta 进度/结果：running=子进程还在跑；progress=实时进度；
+    跑完带上 result（pairs/skipped 明细）。"""
+    _out_log, res_path, prog_path = _share_meta_paths()
+    running = _PEIYI_SHARE_META_LOCK.locked()
+    progress = None
+    try:
+        if prog_path.exists():
+            progress = json.loads(prog_path.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        progress = None
+    result = None
+    if not running and res_path.exists():
+        try:
+            result = json.loads(res_path.read_text(encoding="utf-8", errors="replace"))
+        except Exception as e:
+            result = {'ok': False, 'error': f'结果读取失败: {e}'}
+    return jsonify({'ok': True, 'running': running, 'progress': progress,
+                    'result': result})
+
+
 def api_peiyi_correct_preview():
     """预览校正效果（不保存，返回临时区状态）"""
     data = request.get_json(silent=True) or {}
@@ -9308,7 +11248,7 @@ def api_mockup_result(filename):
 # 后台生图任务
 # ============================================================================
 
-def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, cat: str = None):
+def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, cat: str = None, variants: int = 0):
     """后台执行 Lovart 管线。cat 缺省 wb（行为与改造前一致）；非 wb 品类走品类独立目录/注册表。"""
     global task_state
     start_ts = datetime.now()
@@ -9336,11 +11276,16 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
         inbox_groups = group_inbox_files(g_inbox)
 
         uid_map = {}       # filename → uid
-        group_map = {}     # group_number → group_id
+        group_map = {}     # group_key → group_id
         reused_groups = 0  # 并入已有组的次数（同组链接）
         dx_join_map = {}   # filename → 已有 DX 文件夹名（并入旧组时传给 Lovart）
+        # 同角色重复的编号整组报错：文件留在 INBOX，不参与本次生图
+        for g in inbox_groups:
+            if g.get("error") and any(f["filename"] in selected_set for f in g["images"]):
+                log(f"❌ {g['error']}")
         matched = [g for g in inbox_groups
-                   if any(f["filename"] in selected_set for f in g["images"])]
+                   if not g.get("error")
+                   and any(f["filename"] in selected_set for f in g["images"])]
 
         task_state["groups_total"] = len(matched)
         log(f"识别到 {len(matched)} 个图片组")
@@ -9363,7 +11308,7 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
                     "dx_folder": "",
                     "status": "pending",
                 }
-            group_map[g["group_number"]] = gid
+            group_map[g.get("group_key", str(g["group_number"]))] = gid
 
             for img in sel_imgs:
                 fname = img["filename"]
@@ -9415,7 +11360,7 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
                 for g in matched:
                     for img in g["images"]:
                         if img["filename"] == fname:
-                            gid = group_map[g["group_number"]]
+                            gid = group_map[g.get("group_key", str(g["group_number"]))]
                             role = img["suffix"]
                             break
                     if gid is not None:
@@ -9454,6 +11399,35 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
         # 非 wb 品类：始终注入品类提示词（覆盖视为完整 prompt，文件自带 concrete request）
         if gp["always_prompt"] and g_prompt.exists():
             env["LOVART_PROMPT_FILE"] = str(g_prompt)
+        # ×5 风格变体：无论 always_prompt 与否都注入变体引擎提示词
+        # （V1-V4 为 v4.1 独立文件（卫衣/T恤共用，正文品类中性），V5 = VIRAL FACTORY 严格复刻）
+        if variants:
+            env["LOVART_VARIANTS"] = str(variants)
+            v_dir = LOVART_DIR / "config"
+            v_files = {
+                1: "POD STYLE VARIANT v4.1 - V1 Best Version.md",
+                2: "POD STYLE VARIANT v4.1 - V2 Graphic Interpretation.md",
+                3: "POD STYLE VARIANT v4.1 - V3 Simplified Print.md",
+                4: "POD STYLE VARIANT v4.1 - V4 Style Reinvention.md",
+                5: "POD AI VIRAL FACTORY v5 - Hoodie.md",
+            }
+            # 缺 V1-V4 时回退合并版 v4 + {{VARIANT_INDEX}} 替换；缺 V5 时只降回 ×4
+            if not (v_dir / v_files[5]).exists():
+                log(f"WARN: V5 提示词缺失 {v_files[5]}，本次降为 ×4")
+                env["LOVART_VARIANTS"] = "4"
+                variants = 4
+                v_files.pop(5)
+            missing = [n for n in v_files.values() if not (v_dir / n).exists()]
+            if not missing:
+                for vi, vn in v_files.items():
+                    env[f"LOVART_VARIANT_PROMPT_V{vi}"] = str(v_dir / vn)
+                log(f"变体模式: 每图 {variants} 个变体，提示词 = 独立文件(v4.1 ×4 + VIRAL FACTORY v5)")
+            else:
+                log(f"WARN: 变体提示词缺失 {missing}，回退合并版 v4")
+                v_prompt = v_dir / ("POD STYLE VARIANT ENGINE v4 - Universal - Tshirt.md" if g_cat == _DEFAULT_CAT
+                                    else "POD STYLE VARIANT ENGINE v4 - Universal.md")
+                if v_prompt.exists():
+                    env["LOVART_PROMPT_FILE"] = str(v_prompt)
         # 强制生成：用户点“开始 Lovart 生图”即明确要生图，忽略去重
         # （原图编号会复用, 每批从1开始, 否则正常生图会被旧记录误拦）
         env["LOVART_FORCE"] = "1"
@@ -9612,7 +11586,7 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
         _refresh_port = _CHECK_REM_PORT_FOR_CAT.get(g_cat)
         if _refresh_port:
             try:
-                urlopen(f"http://127.0.0.1:{_refresh_port}/refresh", timeout=3)
+                _local_urlopen(f"http://127.0.0.1:{_refresh_port}/refresh", timeout=3)
             except Exception:
                 pass
 
@@ -9642,6 +11616,183 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
                 td.rmdir()
         except Exception:
             pass
+
+
+# ============================================================================
+# 制版（D:\Blanks 胚衣去印花/改色，2026-09-10）
+# 原图放 D:\Blanks，参考图决定目标颜色，Lovart 双图生图，成品在 D:\Blanks\out
+# ============================================================================
+BLANKS_DIR     = Path(r"D:\Blanks")
+BLANKS_OUT     = BLANKS_DIR / "out"
+BLANKS_STATE   = BLANKS_DIR / "_state.json"
+BLANKS_RUN_LOG = BLANKS_DIR / "_run.log"
+BLANKS_IMG_EXT = ('.jpg', '.jpeg', '.png', '.webp', '.bmp')
+
+
+def _blanks_ref_path():
+    """当前参考图（D:\\Blanks\\_reference.<图片扩展>），无则 None"""
+    if BLANKS_DIR.exists():
+        for p in sorted(BLANKS_DIR.glob("_reference.*")):
+            if p.suffix.lower() in BLANKS_IMG_EXT:
+                return p
+    return None
+
+
+def _blanks_read_state():
+    try:
+        return json.loads(BLANKS_STATE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _blanks_running(state=None):
+    """制版任务是否还活着：state.running 且状态文件 30 分钟内有更新"""
+    st = state if state is not None else _blanks_read_state()
+    if not st.get("running"):
+        return False
+    try:
+        return (time.time() - BLANKS_STATE.stat().st_mtime) < 30 * 60
+    except Exception:
+        return False
+
+
+def _blanks_safe_file(base: Path, filename: str):
+    """防目录穿越：只允许 base 正下方的文件名"""
+    if not filename or Path(filename).name != filename:
+        abort(404)
+    p = base / filename
+    if not p.exists() or not p.is_file():
+        abort(404)
+    return p
+
+
+@app.route('/api/blanks/list')
+def api_blanks_list():
+    BLANKS_DIR.mkdir(parents=True, exist_ok=True)
+    images = []
+    for p in sorted(BLANKS_DIR.iterdir()):
+        if p.is_file() and p.suffix.lower() in BLANKS_IMG_EXT and not p.name.startswith('_'):
+            images.append({"name": p.name, "size": p.stat().st_size, "mtime": p.stat().st_mtime})
+    outs = []
+    if BLANKS_OUT.exists():
+        for p in sorted(BLANKS_OUT.iterdir(), key=lambda x: -x.stat().st_mtime):
+            if p.is_file() and p.suffix.lower() in BLANKS_IMG_EXT:
+                outs.append({"name": p.name, "mtime": p.stat().st_mtime})
+    return jsonify({
+        "ok": True,
+        "images": images,
+        "out": outs[:100],
+        "has_ref": bool(_blanks_ref_path()),
+        "state": _blanks_read_state(),
+    })
+
+
+BLANKS_THUMBS  = BLANKS_DIR / "_thumbs"
+
+
+def _blanks_thumb(base: Path, tag: str, filename: str, size: int = 320):
+    """生成/复用缩略图（磁盘缓存，按源图 mtime 失效），供网格快速渲染"""
+    src = _blanks_safe_file(base, filename)
+    BLANKS_THUMBS.mkdir(exist_ok=True)
+    dst = BLANKS_THUMBS / f"{tag}_{filename}.{int(src.stat().st_mtime)}.jpg"
+    if not dst.exists():
+        from PIL import Image
+        im = Image.open(src)
+        im.thumbnail((size, size))
+        im.convert("RGB").save(dst, "JPEG", quality=82)
+        # 清掉同名的旧版本缩略图
+        for old in BLANKS_THUMBS.glob(f"{tag}_{filename}.*.jpg"):
+            if old != dst:
+                try: old.unlink()
+                except Exception: pass
+    return dst
+
+
+@app.route('/api/blanks/file/<path:filename>')
+def api_blanks_file(filename):
+    if request.args.get("thumb"):
+        return send_file(str(_blanks_thumb(BLANKS_DIR, "f", filename)), max_age=86400)
+    return send_file(str(_blanks_safe_file(BLANKS_DIR, filename)))
+
+
+@app.route('/api/blanks/out/<path:filename>')
+def api_blanks_out_file(filename):
+    if request.args.get("thumb"):
+        return send_file(str(_blanks_thumb(BLANKS_OUT, "o", filename)), max_age=86400)
+    return send_file(str(_blanks_safe_file(BLANKS_OUT, filename)))
+
+
+@app.route('/api/blanks/ref-img')
+def api_blanks_ref_img():
+    ref = _blanks_ref_path()
+    if not ref:
+        abort(404)
+    if request.args.get("thumb"):
+        return send_file(str(_blanks_thumb(BLANKS_DIR, "r", ref.name)), max_age=0)
+    return send_file(str(ref))
+
+
+@app.route('/api/blanks/ref', methods=['POST'])
+def api_blanks_ref():
+    """上传参考图（固定存为 _reference.<ext>，新的覆盖旧的）"""
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "未收到文件"}), 400
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in BLANKS_IMG_EXT:
+        return jsonify({"ok": False, "error": "不支持的图片格式"}), 400
+    BLANKS_DIR.mkdir(parents=True, exist_ok=True)
+    old = _blanks_ref_path()
+    if old:
+        old.unlink()
+    dest = BLANKS_DIR / f"_reference{ext}"
+    f.save(str(dest))
+    return jsonify({"ok": True, "name": dest.name})
+
+
+@app.route('/api/blanks/status')
+def api_blanks_status():
+    return jsonify({"ok": True, "state": _blanks_read_state()})
+
+
+@app.route('/api/blanks/open')
+def api_blanks_open():
+    BLANKS_DIR.mkdir(parents=True, exist_ok=True)
+    subprocess.Popen(['explorer.exe', str(BLANKS_DIR)])
+    return jsonify({"ok": True})
+
+
+@app.route('/api/blanks/generate', methods=['POST'])
+def api_blanks_generate():
+    """启动制版生图：选中图 + 用户提示词 + 参考图（如有）→ run_blanks.py"""
+    data = request.get_json(silent=True) or {}
+    files = [f for f in (data.get("files") or []) if isinstance(f, str) and Path(f).name == f]
+    prompt = (data.get("prompt") or "").strip()
+    if not files:
+        return jsonify({"ok": False, "error": "请至少选择一张图片"}), 400
+    if not prompt:
+        return jsonify({"ok": False, "error": "请填写提示词"}), 400
+    if _blanks_running():
+        return jsonify({"ok": False, "error": "已有制版任务正在运行，请等待完成"}), 409
+    missing = [f for f in files if not (BLANKS_DIR / f).exists()]
+    if missing:
+        return jsonify({"ok": False, "error": f"文件不存在: {', '.join(missing)}"}), 400
+
+    BLANKS_DIR.mkdir(parents=True, exist_ok=True)
+    (BLANKS_DIR / "_prompt.txt").write_text(prompt, encoding="utf-8")
+    ref = _blanks_ref_path()
+    cmd = [get_python(), str(LOVART_DIR / "run_blanks.py"),
+           "--files", ",".join(files),
+           "--prompt-file", str(BLANKS_DIR / "_prompt.txt")]
+    if ref:
+        cmd += ["--ref", str(ref)]
+    logf = open(BLANKS_RUN_LOG, "a", encoding="utf-8")
+    logf.write(f"\n===== {datetime.now().isoformat(timespec='seconds')} 制版 {len(files)} 张 =====\n")
+    logf.flush()
+    subprocess.Popen(cmd, cwd=str(LOVART_DIR), stdout=logf, stderr=subprocess.STDOUT,
+                     text=True, encoding="utf-8")
+    return jsonify({"ok": True, "message": f"已启动制版任务，处理 {len(files)} 张图片"
+                                           + ("（含参考图）" if ref else "（无参考图）")})
 
 
 # ============================================================================
