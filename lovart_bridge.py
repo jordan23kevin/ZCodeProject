@@ -1,8 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.7.10
+Y2 Bridge Server v2.7.11
 =======================
+
+变更 v2.7.11（2026-10-25）：对账停止按钮 + 订单同步时序修正。
+  - 对账页新增「停止对账」按钮：/api/reconciliation/stop 终止当前步骤子进程（kill 进程树），
+    状态记为 stopped，可随时重新发起；
+  - 订单同步时序修正（用户定位的竞态）：先选日期→等页面重载完→再切每页 500 条→等加载完→
+    再读数。此前日期变更后立即读数会撞上页面重载，导致"页面=157, 抓取=40"的总数不一致。
 
 变更 v2.7.10（2026-10-25）：对账新增衣服成本同步。
   - 对账链路加第 6 步「衣服成本同步」（sync_sds_cost.py，每次对账都跑；失败不中断对账）；
@@ -12023,18 +12029,43 @@ def _recon_env():
     return env
 
 
+class ReconStopped(Exception):
+    """对账被手动停止"""
+
+
+RECON_PROC = None  # 当前对账子进程（用于停止按钮 kill）
+
+
 def _recon_run_step(label, script, timeout=900, *script_args):
+    global RECON_PROC
     path = Path(r"E:\Kimi Code\temu分析") / script
     _recon_log(f"开始：{label}")
-    proc = subprocess.run(
+    proc = subprocess.Popen(
         [_recon_python(), "-X", "utf8", str(path), *script_args],
         cwd=str(path.parent), env=_recon_env(),
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace",
     )
-    for line in (proc.stdout or "").strip().splitlines():
+    with RECON_LOCK:
+        RECON_PROC = proc
+    try:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
+            out, err = proc.communicate()
+            raise RuntimeError(f"{label}超时（{timeout}s）")
+    finally:
+        with RECON_LOCK:
+            RECON_PROC = None
+    for line in (out or "").strip().splitlines():
         _recon_log(line)
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        with RECON_LOCK:
+            stopped = RECON_TASK.get("stop_requested")
+        if stopped:
+            raise ReconStopped()
+        detail = (err or out or "").strip().splitlines()
         raise RuntimeError(f"{label}失败（{proc.returncode}）：{detail[-1] if detail else '未知错误'}")
     _recon_log(f"完成：{label}")
 
@@ -12054,13 +12085,19 @@ def _recon_worker(start, end, refresh):
         try:
             _recon_run_step("衣服成本同步", "sync_sds_cost.py",
                             timeout=900, *(["--full"] if refresh else []))
+        except ReconStopped:
+            raise
         except Exception as cost_exc:
             _recon_log(f"衣服成本同步失败（跳过，沿用已有成本）：{cost_exc}")
         from reconciliation_report import generate_report
         report = generate_report(RECON_DB, start=start, end=end)
         with RECON_LOCK:
             RECON_TASK.update(status="completed", report=report, run_id=report["run_id"], error=None)
-        _recon_log(f"对账完成：{report['report_path']}")
+        _recon_log("对账完成：数据已在对账平台展示")
+    except ReconStopped:
+        with RECON_LOCK:
+            RECON_TASK.update(status="stopped", error=None)
+        _recon_log("对账已手动停止")
     except Exception as exc:
         with RECON_LOCK:
             RECON_TASK.update(status="error", error=str(exc))
@@ -12092,9 +12129,23 @@ def api_reconciliation_run():
         RECON_TASK.update(
             status="running", log=[], run_id=None, report=None,
             error=None, started_at=datetime.now().isoformat(timespec="seconds"),
+            stop_requested=False,
         )
     _recon_log("开始对账" if refresh else "开始重新生成报表")
     threading.Thread(target=_recon_worker, args=(start, end, refresh), daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.route('/api/reconciliation/stop', methods=['POST'])
+def api_reconciliation_stop():
+    with RECON_LOCK:
+        if RECON_TASK["status"] != "running":
+            return jsonify({"ok": False, "error": "没有正在运行的对账任务"}), 409
+        RECON_TASK["stop_requested"] = True
+        proc = RECON_PROC
+    if proc and proc.poll() is None:
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
+        _recon_log("收到停止请求，正在终止当前步骤...")
     return jsonify({"ok": True})
 
 

@@ -18,6 +18,7 @@
       <label class="field">结束日期<input id="end" type="date"></label>
       <label class="check"><input id="refresh" type="checkbox" checked>先刷新平台数据</label>
       <button id="run" class="btn" onclick="startRun()">开始对账</button>
+      <button id="stop" class="btn btn-secondary" onclick="stopRun()" disabled>停止对账</button>
       <span id="status" class="badge">未运行</span>
     </div>
   </section>
@@ -66,21 +67,28 @@ async function startRun(){
     poll();
   }catch(e){$('status').className='badge error';$('status').textContent='启动失败';$('log').textContent=e.message;$('run').disabled=false}
 }
+async function stopRun(){
+  $('stop').disabled=true;
+  try{ await api('/api/reconciliation/stop',{method:'POST'}); $('status').textContent='停止中...'; }
+  catch(e){ $('log').textContent=e.message; }
+}
 async function poll(){
   try{
     const j=await api('/api/reconciliation/status');
     $('log').textContent=(j.log||[]).join('\n');
-    if(j.status==='running'){setTimeout(poll,2500);return}
-    if(j.status==='completed'){
+    if(j.status==='running'){$('status').className='badge running';$('status').textContent='对账中';$('run').disabled=true;$('stop').disabled=false;setTimeout(poll,2500);return}
+    $('run').disabled=false;$('stop').disabled=true;
+    if(j.status==='stopped'){
+      $('status').className='badge running';$('status').textContent='已停止';
+    }else if(j.status==='completed'){
       $('status').className='badge completed';$('status').textContent='对账完成';
       if(j.report)render(j.report);
       const h=await api('/api/reconciliation/history');renderHistory(h.items||[]);
-    }else{
+    }else if(j.status==='error'){
       $('status').className='badge error';$('status').textContent='对账失败';
       if(j.error)$('log').textContent+='\n'+j.error;
     }
-    $('run').disabled=false;
-  }catch(e){$('status').className='badge error';$('status').textContent='状态读取失败';$('log').textContent=e.message;$('run').disabled=false}
+  }catch(e){$('status').className='badge error';$('status').textContent='状态读取失败';$('log').textContent=e.message;$('run').disabled=false;$('stop').disabled=true}
 }
 $('end').value=new Date().toISOString().slice(0,10);
 loadInitial().catch(e=>$('log').textContent=e.message);
