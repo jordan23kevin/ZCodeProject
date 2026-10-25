@@ -1,8 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.7.9
+Y2 Bridge Server v2.7.10
 =======================
+
+变更 v2.7.10（2026-10-25）：对账新增衣服成本同步。
+  - 对账链路加第 6 步「衣服成本同步」（sync_sds_cost.py，每次对账都跑；失败不中断对账）；
+  - 勾刷新=全量遍历 sds.hlhfushi.cn/admin/orders 并回填/修正单价，否则增量（本页无新增即停）；
+  - 抓取规则：先切 200 条/页再遍历（列表按创建时间倒序），没写单价的按货号估价 DX=33、HX/RX=56，
+    sds 实价（含0元视为未定价）优先级：真实单价 > 前缀估价，后续全量刷新自动修正。
 
 变更 v2.7.9（2026-10-25）：Temu 对账功能发布。
   - 新增 /reconciliation 页面（reconciliation.html）+ 五步对账 API（run/status/history/latest/download）；
@@ -12017,11 +12023,11 @@ def _recon_env():
     return env
 
 
-def _recon_run_step(label, script, timeout=900):
+def _recon_run_step(label, script, timeout=900, *script_args):
     path = Path(r"E:\Kimi Code\temu分析") / script
     _recon_log(f"开始：{label}")
     proc = subprocess.run(
-        [_recon_python(), "-X", "utf8", str(path)],
+        [_recon_python(), "-X", "utf8", str(path), *script_args],
         cwd=str(path.parent), env=_recon_env(),
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
     )
@@ -12043,6 +12049,13 @@ def _recon_worker(start, end, refresh):
             _recon_run_step("本地账单文件导入", "import_temu_bills.py")
         else:
             _recon_log("按当前数据库直接生成报表")
+        # 补衣服成本（每次对账都增量抓新增；勾刷新=全量遍历并修正单价），
+        # 失败不中断对账——用库里已有的成本数据照常出报表
+        try:
+            _recon_run_step("衣服成本同步", "sync_sds_cost.py",
+                            timeout=900, *(["--full"] if refresh else []))
+        except Exception as cost_exc:
+            _recon_log(f"衣服成本同步失败（跳过，沿用已有成本）：{cost_exc}")
         from reconciliation_report import generate_report
         report = generate_report(RECON_DB, start=start, end=end)
         with RECON_LOCK:
