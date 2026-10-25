@@ -112,25 +112,25 @@ def _click_next(page):
 
 
 def collect_orders(page, start_day=None, end_day=None):
-    """抓订单；给定窗口时按月循环（订单页日期控件只支持单月区间）"""
+    """抓订单；给定窗口时按月循环（订单页日期控件只支持单月区间）。
+    单月失败自动重新加载页面重试一次（偶发：页面未就绪导致日期面板打不开）。"""
     if end_day is None:
         end_day = date.today()
     if start_day is None:
         start_day = fetch_start()
-    page.goto(ORDERS_URL, wait_until="domcontentloaded", timeout=90000)
-    page.wait_for_timeout(5000)
-    if "auth/authentication" in page.url:
-        raise RuntimeError("欧区代理后台登录失效")
-    page_size = set_max_page_size(page, 100)  # 卖家中心订单页上限 100
-    rows = []
-    parents = set()
-    for year, month in months_between(start_day, end_day):
-        s = date(year, month, start_day.day) if (year, month) == (start_day.year, start_day.month) else date(year, month, 1)
-        e = date(year, month, end_day.day) if (year, month) == (end_day.year, end_day.month) else date(year, month, calendar.monthrange(year, month)[1])
+
+    def load_page():
+        page.goto(ORDERS_URL, wait_until="domcontentloaded", timeout=90000)
+        page.wait_for_timeout(5000)
+        if "auth/authentication" in page.url:
+            raise RuntimeError("欧区代理后台登录失效")
+
+    def fetch_month(page, s, e, page_size):
         set_date_range(page, s, e)
+        rows_m = []
+        parents_m = set()
         page_number = 1
         expected_total = None
-        month_parents = set()
         while True:
             payload = _click_query(page) if page_number == 1 else _click_next(page)
             result = payload.get("result") or {}
@@ -146,15 +146,32 @@ def collect_orders(page, start_day=None, end_day=None):
                 parent = (item.get("parentOrderMap") or {}).get("parentOrderSn")
                 if not parent:
                     raise ValueError("订单缺少 parentOrderSn")
-                parents.add(parent)
-                month_parents.add(parent)
-                rows.extend(flatten_order_item(item))
+                parents_m.add(parent)
+                rows_m.extend(flatten_order_item(item))
             if not items or page_number * page_size >= expected_total:
                 break
             page_number += 1
-        if len(month_parents) != expected_total:
-            raise RuntimeError(f"订单总数不一致: 页面={expected_total}, 抓取={len(month_parents)}")
-        print(f"订单 {s}~{e}: {expected_total} 单")
+        if len(parents_m) != expected_total:
+            raise RuntimeError(f"订单总数不一致: 页面={expected_total}, 抓取={len(parents_m)}")
+        return rows_m, expected_total
+
+    load_page()
+    page_size = set_max_page_size(page, 100)  # 卖家中心订单页上限 100
+    rows = []
+    for year, month in months_between(start_day, end_day):
+        s = date(year, month, start_day.day) if (year, month) == (start_day.year, start_day.month) else date(year, month, 1)
+        e = date(year, month, end_day.day) if (year, month) == (end_day.year, end_day.month) else date(year, month, calendar.monthrange(year, month)[1])
+        for attempt in range(2):
+            try:
+                rows_m, total = fetch_month(page, s, e, page_size)
+                break
+            except Exception as exc:
+                if attempt == 1:
+                    raise
+                print(f"订单 {s}~{e} 第1次失败（{exc}），重新加载页面重试")
+                load_page()
+        rows.extend(rows_m)
+        print(f"订单 {s}~{e}: {total} 单")
     return rows
 
 
