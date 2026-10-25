@@ -12036,7 +12036,7 @@ class ReconStopped(Exception):
 RECON_PROC = None  # 当前对账子进程（用于停止按钮 kill）
 
 
-def _recon_run_step(label, script, timeout=900, *script_args):
+def _recon_run_step(label, script, *script_args, timeout=900):
     global RECON_PROC
     path = Path(r"E:\Kimi Code\temu分析") / script
     _recon_log(f"开始：{label}")
@@ -12084,7 +12084,7 @@ def _recon_worker(start, end, refresh):
         # 失败不中断对账——用库里已有的成本数据照常出报表
         try:
             _recon_run_step("衣服成本同步", "sync_sds_cost.py",
-                            timeout=900, *(["--full"] if refresh else []))
+                            *(["--full"] if refresh else []), timeout=900)
         except ReconStopped:
             raise
         except Exception as cost_exc:
