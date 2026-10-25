@@ -34,16 +34,32 @@ def cost_by_month(con, product_db=PRODUCT_DB):
     FROM recon_sku_ids i LEFT JOIN products.base_data b ON b.sku_id=i.sku_id GROUP BY i.sku_id;
     """)
     rows = con.execute("""
-        SELECT file_key,src,qty,sku_code,codes FROM recon_bill_rows r
+        SELECT file_key,src,qty,r.sku_id,sku_code,codes FROM recon_bill_rows r
         LEFT JOIN recon_sku_map m ON m.sku_id=CAST(r.sku_id AS INTEGER)
     """).fetchall()
-    result = {}
-    for file_key, src, qty, sku_code, mapped in rows:
-        month = file_key.split("|")[-1]
+    # sds 成本实价表（sync_sds_cost.py 抓取）：sku/extcode → 真实单价
+    sds_real = {}
+    if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sds_cost'").fetchone():
+        for sku, extcode, price in con.execute(
+                "SELECT sku,extcode,unit_price FROM sds_cost WHERE price_source='sds' AND unit_price IS NOT NULL"):
+            if sku:
+                sds_real.setdefault(f"sku:{sku}", price)
+            if extcode:
+                sds_real.setdefault(f"ext:{str(extcode).upper()}", price)
+
+    def unit_cost_for(sku_id, sku_code, mapped):
+        """真实单价优先（sds 实价表），没有按货号前缀估价：DX=33，HX/RX=56"""
+        for key in (f"sku:{sku_id}", f"ext:{str(sku_code or '').upper()}", f"ext:{str(mapped or '').upper()}"):
+            if key in sds_real:
+                return sds_real[key]
         code = str(sku_code or mapped or "").upper()
-        unit_cost = 58 if code.startswith(("HX", "RX")) else 33
+        return 56 if code.startswith(("HX", "RX")) else 33
+
+    result = {}
+    for file_key, src, qty, sku_id, sku_code, mapped in rows:
+        month = file_key.split("|")[-1]
         result.setdefault(month, {"settled": 0.0, "pending": 0.0})
-        result[month][src] += (qty or 0) * unit_cost
+        result[month][src] += (qty or 0) * unit_cost_for(sku_id, sku_code, mapped)
     return result
 
 
@@ -137,6 +153,10 @@ def collect_report(db_path, start=None, end=None, product_db=PRODUCT_DB):
         if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='return_fee_estimate'").fetchone():
             estimate_total = con.execute("SELECT COALESCE(SUM(amount_cny),0) FROM return_fee_estimate WHERE status='open'").fetchone()[0]
         notes.append({"level": "info", "title": "退货费暂估", "detail": f"有效站点暂估 {estimate_total:.2f} 元；实际面单出现后完整回正再按实际入账"})
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sds_cost'").fetchone():
+            src_rows = con.execute("SELECT price_source, COUNT(*) FROM sds_cost GROUP BY price_source").fetchall()
+            detail = "；".join(f"{'sds实价' if s == 'sds' else '前缀估价'} {c} 条" for s, c in src_rows)
+            notes.append({"level": "info", "title": "衣服成本来源", "detail": f"sds.hlhfushi.cn 订单成本：{detail}；估价规则 DX=33、HX/RX=56，sds 出现实价后全量刷新自动修正"})
         _vio_cols = {row[1] for row in con.execute("PRAGMA table_info(violation)")}
         _appeal_col = "appeal_status" if "appeal_status" in _vio_cols else "NULL"
         latest_violations = con.execute(f"SELECT violation_id,po,vtype,amount,tx_time,{_appeal_col} FROM violation ORDER BY tx_time DESC LIMIT 5").fetchall()
