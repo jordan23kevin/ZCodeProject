@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from reconciliation_pagination import set_max_page_size
 from reconciliation_sync import fetch_start, months_between, set_date_range
-from sync_aftersales import backup_database, wait_api
+from sync_aftersales import backup_database, ensure_cdp, wait_api
 
 CST = timezone(timedelta(hours=8))
 LEDGER_URL = "https://seller.kuajingmaihuo.com/labor/bill"
@@ -208,7 +208,7 @@ def sync_financials(db_path, start=None, end=None):
         backup = backup_database(db_path, os.path.join(os.path.dirname(db_path), "backups"))
         snapshots = {"ledger": [], "ship_label": [], "return_label": []}
         with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+            browser = ensure_cdp(p)  # 9222 不通时自动拉起专用 Edge
             ctx = browser.contexts[0]
             page = ctx.new_page()
             for kind, url, endpoint, table in [

@@ -7,7 +7,7 @@ import sqlite3
 from datetime import date, datetime, timedelta, timezone
 
 from reconciliation_pagination import set_max_page_size
-from sync_aftersales import backup_database, wait_api
+from sync_aftersales import backup_database, ensure_cdp, wait_api
 
 ORDERS_URL = "https://agentseller-eu.temu.com/mmsos/orders.html?fulfillmentMode=9&pageNumber=1&pageSize=20&queryType=0&sortType=1&timeZone=UTC%2B8&sellerNoteLabelList=&packageAbnormalTypeList="
 ORDER_API = "/kirogi/bg/mms/recentOrderList"
@@ -225,7 +225,7 @@ def sync_orders(db_path, full=False):
     try:
         known = {row[0] for row in con.execute("SELECT DISTINCT order_no FROM orders")}
         with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+            browser = ensure_cdp(p)  # 9222 不通时自动拉起专用 Edge
             ctx = browser.contexts[0]
             # 独立新标签页抓取，避免与用户手动操作互相干扰；结束自动关闭
             page = ctx.new_page()

@@ -6,7 +6,7 @@ from datetime import date
 
 from reconciliation_pagination import set_max_page_size
 from reconciliation_sync import fetch_start, months_between, set_date_range
-from sync_aftersales import backup_database, wait_api
+from sync_aftersales import backup_database, ensure_cdp, wait_api
 
 SETTLE_URL = "https://agentseller-eu.temu.com/labor/settle"
 PAYMENT_COLUMNS = [
@@ -172,7 +172,7 @@ def sync_payments(db_path):
         order_months = {po: str(created)[:7] for po, created in con.execute("SELECT order_no,created_at FROM orders")}
         backup = backup_database(db_path, os.path.join(os.path.dirname(db_path), "backups"))
         with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+            browser = ensure_cdp(p)  # 9222 不通时自动拉起专用 Edge
             ctx = browser.contexts[0]
             page = next((pg for pg in ctx.pages if "labor/settle" in (pg.url or "")), None) or ctx.new_page()
             received = collect_payments(page, "已到账", order_months)
