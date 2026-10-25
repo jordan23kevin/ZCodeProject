@@ -80,3 +80,6 @@ _test_*.py
 dy-workbench/petdesk.log
 dy-workbench/lovart_out/
 dy-workbench/_lovart_in/
+
+# Isolated feature worktrees
+.worktrees/
