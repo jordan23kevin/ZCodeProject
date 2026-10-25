@@ -111,84 +111,134 @@ def _click_next(page):
     """))
 
 
-def collect_orders(page, start_day=None, end_day=None):
-    """抓订单；给定窗口时按月循环（订单页日期控件只支持单月区间）。
-    单月失败自动重新加载页面重试一次（偶发：页面未就绪导致日期面板打不开）。"""
-    if end_day is None:
-        end_day = date.today()
-    if start_day is None:
-        start_day = fetch_start()
+def _load_orders_page(page):
+    page.goto(ORDERS_URL, wait_until="domcontentloaded", timeout=90000)
+    page.wait_for_timeout(5000)
+    if "auth/authentication" in page.url:
+        raise RuntimeError("欧区代理后台登录失效")
 
-    def load_page():
-        page.goto(ORDERS_URL, wait_until="domcontentloaded", timeout=90000)
-        page.wait_for_timeout(5000)
-        if "auth/authentication" in page.url:
-            raise RuntimeError("欧区代理后台登录失效")
 
-    def fetch_month(page, s, e, page_size):
-        set_date_range(page, s, e)
-        rows_m = []
-        parents_m = set()
-        page_number = 1
-        expected_total = None
-        while True:
-            payload = _click_query(page) if page_number == 1 else _click_next(page)
-            result = payload.get("result") or {}
-            total = result.get("totalItemNum")
-            items = result.get("pageItems")
-            if not isinstance(total, int) or not isinstance(items, list):
-                raise ValueError("订单接口缺少 totalItemNum/pageItems")
-            if expected_total is None:
-                expected_total = total
-            elif total != expected_total:
-                raise RuntimeError(f"订单翻页期间总数变化: {expected_total} -> {total}")
-            for item in items:
-                parent = (item.get("parentOrderMap") or {}).get("parentOrderSn")
-                if not parent:
-                    raise ValueError("订单缺少 parentOrderSn")
-                parents_m.add(parent)
-                rows_m.extend(flatten_order_item(item))
-            if not items or page_number * page_size >= expected_total:
-                break
-            page_number += 1
-        if len(parents_m) != expected_total:
-            raise RuntimeError(f"订单总数不一致: 页面={expected_total}, 抓取={len(parents_m)}")
-        return rows_m, expected_total
-
-    load_page()
-    page_size = set_max_page_size(page, 100)  # 卖家中心订单页上限 100
+def _flatten_page_items(items):
     rows = []
-    for year, month in months_between(start_day, end_day):
-        s = date(year, month, start_day.day) if (year, month) == (start_day.year, start_day.month) else date(year, month, 1)
-        e = date(year, month, end_day.day) if (year, month) == (end_day.year, end_day.month) else date(year, month, calendar.monthrange(year, month)[1])
-        for attempt in range(2):
-            try:
-                rows_m, total = fetch_month(page, s, e, page_size)
-                break
-            except Exception as exc:
-                if attempt == 1:
-                    raise
-                print(f"订单 {s}~{e} 第1次失败（{exc}），重新加载页面重试")
-                load_page()
-        rows.extend(rows_m)
-        print(f"订单 {s}~{e}: {total} 单")
+    for item in items:
+        rows.extend(flatten_order_item(item))
     return rows
 
 
-def sync_orders(db_path):
+def collect_orders(page, known_orders=None, full=False):
+    """抓订单（2026-10-25 用户确认，取消前端日期筛选依赖）：
+    - 增量（默认）：每页 500 条从最新页开始，每页主单号与数据库撞库，
+      整页均已同步即停；新订单入库自带 created_at，利润归月与按日期筛选一致。
+    - full=True 兜底：100 条/页 + 逐月设日期全量翻页（500 档会重置日期筛选，
+      且页面默认时间窗只覆盖约 30 天，故全量走已验证的逐月方式）。"""
+    _load_orders_page(page)
+    rows = []
+    seen_parents = set()
+    if full:
+        page_size = set_max_page_size(page, 100)
+        page.wait_for_timeout(1500)
+        end_day = date.today()
+        start_day = fetch_start()
+        for year, month in months_between(start_day, end_day):
+            s = date(year, month, start_day.day) if (year, month) == (start_day.year, start_day.month) else date(year, month, 1)
+            e = date(year, month, end_day.day) if (year, month) == (end_day.year, end_day.month) else date(year, month, calendar.monthrange(year, month)[1])
+            set_date_range(page, s, e)
+            page.wait_for_timeout(800)
+            page_number = 1
+            prev_first = None
+            while True:
+                payload = _click_query(page) if page_number == 1 else _click_next(page)
+                items = (payload.get("result") or {}).get("pageItems")
+                if not isinstance(items, list):
+                    raise ValueError("订单接口缺少 pageItems")
+                if not items:
+                    break
+                page_parents = []
+                for item in items:
+                    parent = (item.get("parentOrderMap") or {}).get("parentOrderSn")
+                    if not parent:
+                        raise ValueError("订单缺少 parentOrderSn")
+                    page_parents.append(parent)
+                if prev_first and page_parents and page_parents[0] == prev_first:
+                    raise RuntimeError("翻页未生效（内容未变化）")
+                prev_first = page_parents[0]
+                seen_parents.update(page_parents)
+                rows.extend(_flatten_page_items(items))
+                nxt = page.locator("li[class*=PGT_next]")
+                if nxt.count() == 0:
+                    break  # 单页结果，无翻页器
+                nxt_cls = nxt.get_attribute("class") or ""
+                if "PGT_disabled" in nxt_cls:
+                    break
+                page_number += 1
+            print(f"全量 {s}~{e}: 累计扫描 {len(seen_parents)} 单")
+        return rows, seen_parents, set()
+
+    # 增量撞库
+    page_size = set_max_page_size(page, 500)  # 订单页上限 500 条/页（尽力切，末页判断不依赖它）
+    page.wait_for_timeout(1500)   # 等切换条数后的重新加载完成
+    known = known_orders or set()
+    new_parents = set()
+    page_number = 1
+    prev_first = None
+    while True:
+        payload = _click_query(page) if page_number == 1 else _click_next(page)
+        result = payload.get("result") or {}
+        items = result.get("pageItems")
+        if not isinstance(items, list):
+            raise ValueError("订单接口缺少 pageItems")
+        if not items:
+            break
+        page_parents = []
+        for item in items:
+            parent = (item.get("parentOrderMap") or {}).get("parentOrderSn")
+            if not parent:
+                raise ValueError("订单缺少 parentOrderSn")
+            page_parents.append(parent)
+        if prev_first and page_parents and page_parents[0] == prev_first:
+            raise RuntimeError("翻页未生效（内容未变化）")
+        prev_first = page_parents[0]
+        new_here = [p for p in page_parents if p not in known]
+        seen_parents.update(page_parents)
+        new_parents.update(new_here)
+        rows.extend(_flatten_page_items(items))
+        print(f"第{page_number}页: {len(page_parents)} 单 / 新单 {len(new_here)}")
+        if not new_here:
+            print("整页均已同步（撞库命中），停止")
+            break
+        # 末页判断看「下一页」按钮状态（不依赖档位值，与页面真实状态一致）
+        nxt = page.locator("li[class*=PGT_next]")
+        if nxt.count() == 0:
+            break  # 单页结果，无翻页器
+        nxt_cls = nxt.get_attribute("class") or ""
+        if "PGT_disabled" in nxt_cls:
+            break
+        page_number += 1
+    return rows, seen_parents, new_parents
+
+
+def sync_orders(db_path, full=False):
     from playwright.sync_api import sync_playwright
 
     backup = backup_database(db_path, os.path.join(os.path.dirname(db_path), "backups"))
     con = sqlite3.connect(db_path)
     try:
+        known = {row[0] for row in con.execute("SELECT DISTINCT order_no FROM orders")}
         with sync_playwright() as p:
             browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
             ctx = browser.contexts[0]
-            page = next((pg for pg in ctx.pages if "orders.html" in (pg.url or "")), None) or ctx.new_page()
-            rows = collect_orders(page)
+            # 独立新标签页抓取，避免与用户手动操作互相干扰；结束自动关闭
+            page = ctx.new_page()
+            try:
+                rows, seen, new = collect_orders(page, known_orders=known, full=full)
+            finally:
+                try:
+                    page.close()
+                except Exception:
+                    pass
         upsert_orders(con, rows)
-        parents = {row["order_no"] for row in rows}
-        print(f"订单主单: {len(parents)}; 订单SKU行: {len(rows)}; 窗口: 最近{SYNC_DAYS}天; 备份: {backup}")
+        print(f"撞库: 库内已有主单 {len(known)}; 本次扫描 {len(seen)}; 新增主单 {len(new)}; "
+              f"入库SKU行 {len(rows)}; 模式={'全量' if full else '增量撞库'}; 备份: {backup}")
     finally:
         con.close()
 
@@ -248,9 +298,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default=os.environ.get("TEMU_BILLS_DB", r"E:\Temu账单\temu_bills.db"))
     parser.add_argument("--source", choices=["orders"], default="orders")
+    parser.add_argument("--full", action="store_true", help="全量翻页（默认增量撞库，整页已同步即停）")
     args = parser.parse_args()
     if args.source == "orders":
-        sync_orders(os.path.abspath(args.db))
+        sync_orders(os.path.abspath(args.db), full=args.full)
 
 
 if __name__ == "__main__":
