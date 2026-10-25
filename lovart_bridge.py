@@ -1,8 +1,27 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Y2 Bridge Server v2.7.6
+Y2 Bridge Server v2.7.9
 =======================
+
+变更 v2.7.9（2026-10-25）：Temu 对账功能发布。
+  - 新增 /reconciliation 页面（reconciliation.html）+ 五步对账 API（run/status/history/latest/download）；
+  - 对账链路：订单同步 → 款项同步 → 售后同步 → 账务及面单同步 → 本地账单导入 → 生成报表（E:\Temu账单）；
+  - 脚本侧分页统一 set_max_page_size（卖家中心/面单 100、结算 200，找不到选择器按当前继续），
+    兼容 beast-core PGT 与 index-module 两套分页组件；
+  - 修复：日期面板选完区间自动收起时报 "Cannot read properties of null"（set_date_range 改为面板仍开才点确认）；
+  - 修复：报表查询 violation.appeal_status 不存在的列（改为探测列存在才查）；
+  - 修复：面单页翻页等分页器超时直接崩（_next 加 3 次重试 + 双组件兼容）。
+
+变更 v2.7.8（2026-10-25）：生图并发改为自动等于实际勾选数量。
+  - 前端取消手工并发输入，勾选变化时实时显示自动并发；
+  - 后端统一按 len(selected) 设置 DIRECT_PARALLEL，超过 200 张按 200 封顶，忽略手工传值。
+
+变更 v2.7.7（2026-10-25）：生图停止按钮 + 可调并发 + 全量连续队列。
+  - 新增 /api/generate/stop 与前端「停止任务」按钮：记录并回查管线 PID，
+    支持启动中/运行中停止，停止后正确保留 cancelled 状态；已提交平台的请求不可撤回。
+  - /api/generate 接收 parallel（1~200，默认 10）并注入 DIRECT_PARALLEL；
+    管线 v6.7.3 改为全量队列，完成一张立即补下一张，不再按批等待最慢请求。
 
 变更 v2.7.6（2026-10-23）：上款页/AI对比页 日期分类改 = max(文件夹建立时间, 款内最新生成内容时间)。
   - 上款页 _scan_upload_projects：+ 款内最新 03_UPLOAD 贴图时间（今天贴的图归今天）；
@@ -946,7 +965,7 @@ app = Flask(__name__, static_folder=None)
 STATE_FILE = BASE_DIR / ".last_task_state.json"
 
 task_state = {
-    "status": "idle",            # idle | running | completed | error | cancelled
+    "status": "idle",            # idle | starting | running | stopping | completed | error | cancelled
     "progress": "",
     "started_at": None,
     "completed_at": None,
@@ -955,7 +974,10 @@ task_state = {
     "groups_processed": 0,
     "groups_total": 0,
     "task_id": None,
+    "pid": None,
 }
+generation_proc = None
+_GENERATION_CANCEL = threading.Event()
 
 
 def _save_state():
@@ -975,9 +997,9 @@ def _load_state():
             with open(STATE_FILE, 'r', encoding='utf-8') as f:
                 saved = json.load(f)
             status = saved.get("status", "")
-            if status in ("completed", "error", "idle"):
+            if status in ("completed", "error", "idle", "cancelled"):
                 task_state = saved
-            elif status == "running":
+            elif status in ("running", "starting", "stopping"):
                 # 进程已不在，标记为中断
                 saved["status"] = "error"
                 saved["progress"] = "⚠️ 上次任务未完成（服务重启中断）"
@@ -1131,6 +1153,29 @@ def _mirror_alloc_folder(dst_projects: Path, dst_prefix: str, suffix: str) -> st
     return f"{dst_prefix}{max_num + 1:04d}{suffix}"
 
 
+def _mirror_bump_max_dx(tcat: str, dx_name: str):
+    """镜像分配新款号后，同步推进目标品类 WB_REGISTRY 的 max_dx_num。
+    2026-10-23 修复：之前镜像只扫文件夹不写 registry，生图链路读 registry 分配号段，
+    两边脱节导致撞号（61W 撞进 RX0489W=HX0001W 镜像款，被镜像删除同步误清）。"""
+    try:
+        m = re.match(r'^[A-Z]+(\d+)', dx_name)
+        if not m:
+            return
+        num = int(m.group(1))
+        regf = _cat_root(tcat) / "WB_REGISTRY" / "registry.json"
+        regf.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            reg = json.loads(regf.read_text(encoding='utf-8')) if regf.exists() else {}
+        except Exception:
+            reg = {}
+        meta = reg.setdefault("_meta", {})
+        if num > int(meta.get("max_dx_num", 0) or 0):
+            meta["max_dx_num"] = num
+            regf.write_text(json.dumps(reg, ensure_ascii=False, indent=2), encoding='utf-8')
+    except Exception:
+        pass
+
+
 def _mirror_one_folder(src_cat: str, folder: str, tcat: str, mmap: dict) -> dict:
     """把 源cat/folder/02_REM_BG 同步镜像到目标品类 tcat 的对应款文件夹。"""
     src_root = _cat_root(src_cat)
@@ -1162,6 +1207,7 @@ def _mirror_one_folder(src_cat: str, folder: str, tcat: str, mmap: dict) -> dict
     if not dx:
         dx = _mirror_alloc_folder(dst_projects, dst_prefix, "W" if b_only else src_suffix)
         created = True
+        _mirror_bump_max_dx(tcat, dx)   # 让生图链路（读 registry）知道号段已占用
     entry[tcat] = dx
 
     # 2026-10-23 占用检查（用户规则）：目标款号文件夹里已有别的图
@@ -2726,11 +2772,12 @@ def api_generate():
     gp = _gen_paths(cat)
 
     with _lock:
-        if task_state["status"] == "running":
-            return jsonify({"error": "已有生图任务正在运行，请等待完成"}), 409
+        if task_state["status"] in ("running", "starting", "stopping"):
+            return jsonify({"error": "已有生图任务正在运行，请等待完成或先停止"}), 409
 
         data = request.get_json(silent=True) or {}
         selected = data.get("selected", [])
+        parallel = max(1, min(200, len(selected)))
         try:
             variants = int(data.get("variants", 0) or 0)
         except Exception:
@@ -2744,6 +2791,7 @@ def api_generate():
         if missing:
             return jsonify({"error": f"以下文件不存在: {', '.join(missing)}"}), 400
 
+        _GENERATION_CANCEL.clear()
         task_id = f"TASK_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         task_state = {
             "status": "starting",
@@ -2755,6 +2803,8 @@ def api_generate():
             "groups_processed": 0,
             "groups_total": 0,
             "task_id": task_id,
+            "pid": None,
+            "parallel": parallel,
         }
         if variants:
             task_state["variants"] = variants
@@ -2763,18 +2813,87 @@ def api_generate():
         _save_state()
 
     # 后台线程执行
-    t = threading.Thread(target=_run_generation, args=(selected, task_id), kwargs={"cat": cat, "variants": variants}, daemon=True)
+    t = threading.Thread(target=_run_generation, args=(selected, task_id),
+                         kwargs={"cat": cat, "variants": variants, "parallel": parallel}, daemon=True)
     t.start()
 
     resp = {
         "status": "started",
         "task_id": task_id,
+        "parallel": parallel,
         "message": (f"已启动生图任务，处理 {len(selected)} 张图片 × {variants} 个风格变体（暂存 _AI_VARIANTS）"
-                    if variants else f"已启动生图任务，处理 {len(selected)} 张图片"),
+                    if variants else f"已启动生图任务，处理 {len(selected)} 张图片，并发上限 {parallel}"),
     }
     if cat != _DEFAULT_CAT:
         resp["cat"] = cat              # wb 响应体与改造前逐字节一致
     return jsonify(resp)
+
+
+def _find_generation_pid():
+    """找当前 Bridge 的生图子进程；兼容启动新停止功能前已经运行的任务。"""
+    if generation_proc is not None and generation_proc.poll() is None:
+        return generation_proc.pid
+    try:
+        script = ("$p=Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq "
+                  f"{os.getpid()} -and $_.CommandLine -and $_.CommandLine -match 'run_official_v53\\.py' }} | "
+                  "Select-Object -First 1 -ExpandProperty ProcessId")
+        result = subprocess.run(["powershell", "-NoProfile", "-Command", script],
+                                capture_output=True, text=True, timeout=10)
+        pid = result.stdout.strip()
+        if pid.isdigit():
+            return int(pid)
+    except Exception:
+        pass
+    try:
+        return int(task_state.get("pid")) if task_state.get("pid") else None
+    except (TypeError, ValueError):
+        return None
+
+
+@app.route('/api/generate/stop', methods=['POST'])
+def api_generate_stop():
+    """停止当前生图管线；已提交到平台的服务端请求无法由本地撤回。"""
+    data = request.get_json(silent=True) or {}
+    with _lock:
+        if task_state.get("status") not in ("running", "starting", "stopping"):
+            return jsonify({"success": False, "message": "当前没有运行中的生图任务"}), 409
+        current_id = task_state.get("task_id")
+        if data.get("task_id") and data["task_id"] != current_id:
+            return jsonify({"success": False, "message": "任务已切换，未停止新任务"}), 409
+        _GENERATION_CANCEL.set()
+        task_state["status"] = "stopping"
+        task_state["progress"] = "正在停止生图管线..."
+
+    pid = _find_generation_pid()
+    if not pid:
+        task_state["status"] = "cancelled"
+        task_state["completed_at"] = datetime.now().isoformat()
+        task_state["progress"] = "已取消（管线尚未启动或已结束）"
+        task_state["pid"] = None
+        log(f"已取消生图任务 {current_id}：无可运行管线")
+        _save_state()
+        return jsonify({"success": True, "status": "cancelled", "message": "任务已取消"})
+
+    try:
+        result = subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
+        if result.returncode != 0:
+            raise RuntimeError((result.stderr or result.stdout or "taskkill 失败").strip()[:200])
+    except Exception as e:
+        task_state["status"] = "running"
+        task_state["progress"] = f"停止失败，任务可能仍在运行: {e}"
+        log(f"停止生图任务失败 PID {pid}: {e}")
+        _save_state()
+        return jsonify({"success": False, "message": f"停止失败: {e}"}), 500
+
+    task_state["status"] = "cancelled"
+    task_state["completed_at"] = datetime.now().isoformat()
+    task_state["progress"] = "已手动停止生图任务"
+    task_state["pid"] = None
+    log(f"用户手动停止生图任务 {current_id}，已终止管线 PID {pid}")
+    _save_state()
+    return jsonify({"success": True, "status": "cancelled", "pid": pid,
+                    "message": "已停止本地管线；已提交到平台的请求无法撤回"})
 
 
 # ===== 老张 VIP 余额查询（2026-10-21）=====
@@ -11270,9 +11389,12 @@ def api_mockup_result(filename):
 # 后台生图任务
 # ============================================================================
 
-def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, cat: str = None, variants: int = 0):
+def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, cat: str = None,
+                    variants: int = 0, parallel: int = 10):
     """后台执行 Lovart 管线。cat 缺省 wb（行为与改造前一致）；非 wb 品类走品类独立目录/注册表。"""
-    global task_state
+    global task_state, generation_proc
+    proc = None
+    parallel = max(1, min(200, int(parallel)))
     start_ts = datetime.now()
 
     # 品类上下文（wb 下全部为既有全局常量，行为不变）
@@ -11290,8 +11412,15 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
     reg = ensure_registry_v4(reg)
 
     try:
+        if _GENERATION_CANCEL.is_set():
+            task_state["status"] = "cancelled"
+            task_state["completed_at"] = datetime.now().isoformat()
+            task_state["progress"] = "已取消生图任务"
+            _save_state()
+            return
         log(f"▶ 任务 {task_id} 开始")
         log(f"选中文件: {', '.join(selected_files)}")
+        log(f"生图并发上限: {parallel}，全量队列完成一张立即补下一张")
 
         # ── 1. 分配 UID / group_id ──────────────────────────────
         selected_set = set(selected_files)
@@ -11401,6 +11530,12 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
         # 元数据已通过 UID manifest 传给 Lovart，不影响溯源。
 
             # ── 2. 运行 Lovart 管线（不移走未选中文件，Lovart 自带 SHA256 去重） ──
+        if _GENERATION_CANCEL.is_set():
+            task_state["status"] = "cancelled"
+            task_state["completed_at"] = datetime.now().isoformat()
+            task_state["progress"] = "已取消生图任务"
+            _save_state()
+            return
         task_state["status"] = "running"
         task_state["progress"] = "正在运行 Lovart 生图管线..."
         log("启动 Lovart 管线...")
@@ -11412,6 +11547,7 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUNBUFFERED"] = "1"
         env["BRIDGE_UID_MANIFEST"] = str(g_manifest)
+        env["DIRECT_PARALLEL"] = str(parallel)
         # 品类注入：数据根 + 款号前缀（wb 下与脚本内缺省值相同，行为不变）
         if g_cat == _DEFAULT_CAT:
             env["SEMEMS_ROOT"] = str(BASE_DIR)      # 便携包=包根 data/，本机=D:\Semems WB，与脚本缺省一致
@@ -11471,6 +11607,12 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
                 if regen_map:
                     env["LOVART_REGEN_DX_MAP"] = json.dumps(regen_map)
 
+        if _GENERATION_CANCEL.is_set():
+            task_state["status"] = "cancelled"
+            task_state["completed_at"] = datetime.now().isoformat()
+            task_state["progress"] = "已取消生图任务"
+            _save_state()
+            return
         proc = subprocess.Popen(
             [get_python(), "run_official_v53.py"],
             cwd=str(LOVART_DIR),
@@ -11480,6 +11622,15 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
             encoding='utf-8',
             env=env,
         )
+        generation_proc = proc
+        task_state["pid"] = proc.pid
+        _save_state()
+        if _GENERATION_CANCEL.is_set():
+            try:
+                subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                               capture_output=True, timeout=15)
+            except Exception:
+                pass
 
         # 逐行读取输出，更新进度（完整透传 Lovart 输出，避免“静默完成”看不出原因）
         for line in proc.stdout:
@@ -11613,17 +11764,27 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
                 pass
 
         # ── 6. 完成 ─────────────────────────────────────────────
-        task_state["status"] = "completed"
+        if task_state.get("task_id") != task_id:
+            return
+        cancelled = _GENERATION_CANCEL.is_set() or task_state.get("status") in ("stopping", "cancelled")
+        task_state["status"] = "cancelled" if cancelled else "completed"
         task_state["completed_at"] = datetime.now().isoformat()
-        task_state["progress"] = f"任务结束：处理 {len(matched)} 组 / {len(uid_map)} 张"
-        if proc.returncode != 0:
-            task_state["progress"] += f" (管线退出码: {proc.returncode})"
+        if cancelled:
+            task_state["progress"] = "任务已手动停止"
+        else:
+            task_state["progress"] = f"任务结束：处理 {len(matched)} 组 / {len(uid_map)} 张"
+            if proc.returncode != 0:
+                task_state["progress"] += f" (管线退出码: {proc.returncode})"
         log(f"⏹ 任务 {task_id} 结束 (处理 {len(uid_map)} 张, {len(matched)} 组)")
         _save_state()
 
     except Exception as e:
-        task_state["status"] = "error"
-        task_state["progress"] = f"错误: {str(e)}"
+        if task_state.get("task_id") != task_id:
+            return
+        cancelled = _GENERATION_CANCEL.is_set() or task_state.get("status") in ("stopping", "cancelled")
+        task_state["status"] = "cancelled" if cancelled else "error"
+        task_state["completed_at"] = datetime.now().isoformat()
+        task_state["progress"] = "任务已手动停止" if cancelled else f"错误: {str(e)}"
         log(f"✘ 错误: {str(e)}")
         _save_state()
         import traceback
@@ -11638,6 +11799,12 @@ def _run_generation(selected_files: list, task_id: str, reuse_dx: str = None, ca
                 td.rmdir()
         except Exception:
             pass
+    finally:
+        if generation_proc is proc:
+            generation_proc = None
+        if task_state.get("task_id") == task_id:
+            task_state["pid"] = None
+            _save_state()
 
 
 # ============================================================================
@@ -11815,6 +11982,142 @@ def api_blanks_generate():
                      text=True, encoding="utf-8")
     return jsonify({"ok": True, "message": f"已启动制版任务，处理 {len(files)} 张图片"
                                            + ("（含参考图）" if ref else "（无参考图）")})
+
+
+# ============================================================================
+# Temu 对账
+# ============================================================================
+
+RECON_DB = os.environ.get("TEMU_BILLS_DB", r"E:\Temu账单\temu_bills.db")
+RECON_SOURCE_DIR = r"E:\Kimi Code\temu分析"
+if RECON_SOURCE_DIR not in sys.path:
+    sys.path.insert(0, RECON_SOURCE_DIR)
+RECON_LOCK = threading.Lock()
+RECON_TASK = {
+    "status": "idle", "log": [], "run_id": None, "report": None,
+    "error": None, "started_at": None,
+}
+
+
+def _recon_log(message):
+    with RECON_LOCK:
+        RECON_TASK["log"].append(f"{datetime.now().strftime('%H:%M:%S')} {message}")
+        RECON_TASK["log"] = RECON_TASK["log"][-300:]
+
+
+def _recon_python():
+    return os.environ.get("RECON_PYTHON", sys.executable)
+
+
+def _recon_env():
+    env = os.environ.copy()
+    env["TEMU_BILLS_DB"] = RECON_DB
+    env["PYTHONPATH"] = r"E:\Kimi Code\temu分析;E:\python_packages"
+    env["PYTHONUTF8"] = "1"
+    return env
+
+
+def _recon_run_step(label, script, timeout=900):
+    path = Path(r"E:\Kimi Code\temu分析") / script
+    _recon_log(f"开始：{label}")
+    proc = subprocess.run(
+        [_recon_python(), "-X", "utf8", str(path)],
+        cwd=str(path.parent), env=_recon_env(),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+    )
+    for line in (proc.stdout or "").strip().splitlines():
+        _recon_log(line)
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        raise RuntimeError(f"{label}失败（{proc.returncode}）：{detail[-1] if detail else '未知错误'}")
+    _recon_log(f"完成：{label}")
+
+
+def _recon_worker(start, end, refresh):
+    try:
+        if refresh:
+            _recon_run_step("订单同步", "reconciliation_sync.py")
+            _recon_run_step("已到账及待处理同步", "reconciliation_payments.py")
+            _recon_run_step("售后同步", "sync_aftersales.py")
+            _recon_run_step("账务及面单同步", "reconciliation_ledger.py", timeout=1200)
+            _recon_run_step("本地账单文件导入", "import_temu_bills.py")
+        else:
+            _recon_log("按当前数据库直接生成报表")
+        from reconciliation_report import generate_report
+        report = generate_report(RECON_DB, start=start, end=end)
+        with RECON_LOCK:
+            RECON_TASK.update(status="completed", report=report, run_id=report["run_id"], error=None)
+        _recon_log(f"对账完成：{report['report_path']}")
+    except Exception as exc:
+        with RECON_LOCK:
+            RECON_TASK.update(status="error", error=str(exc))
+        _recon_log(f"对账失败：{exc}")
+
+
+@app.route('/reconciliation')
+def reconciliation_page():
+    return send_file(str(Path(__file__).parent / 'reconciliation.html'))
+
+
+@app.route('/api/reconciliation/run', methods=['POST'])
+def api_reconciliation_run():
+    data = request.get_json(silent=True) or {}
+    start = data.get("start") or None
+    end = data.get("end") or None
+    for value in (start, end):
+        if value:
+            try:
+                datetime.strptime(value, "%Y-%m-%d")
+            except ValueError:
+                return jsonify({"ok": False, "error": "日期格式必须为 YYYY-MM-DD"}), 400
+    if start and end and start > end:
+        return jsonify({"ok": False, "error": "开始日期不能晚于结束日期"}), 400
+    refresh = data.get("refresh", True) is not False
+    with RECON_LOCK:
+        if RECON_TASK["status"] == "running":
+            return jsonify({"ok": False, "error": "已有对账任务正在运行"}), 409
+        RECON_TASK.update(
+            status="running", log=[], run_id=None, report=None,
+            error=None, started_at=datetime.now().isoformat(timespec="seconds"),
+        )
+    _recon_log("开始对账" if refresh else "开始重新生成报表")
+    threading.Thread(target=_recon_worker, args=(start, end, refresh), daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.route('/api/reconciliation/status')
+def api_reconciliation_status():
+    with RECON_LOCK:
+        return jsonify({
+            "status": RECON_TASK["status"], "log": list(RECON_TASK["log"]),
+            "run_id": RECON_TASK["run_id"], "report": RECON_TASK["report"],
+            "error": RECON_TASK["error"], "started_at": RECON_TASK["started_at"],
+        })
+
+
+@app.route('/api/reconciliation/history')
+def api_reconciliation_history():
+    from reconciliation_report import history
+    return jsonify({"ok": True, "items": history(RECON_DB)})
+
+
+@app.route('/api/reconciliation/latest')
+def api_reconciliation_latest():
+    from reconciliation_report import collect_report
+    return jsonify({"ok": True, "report": collect_report(RECON_DB)})
+
+
+@app.route('/api/reconciliation/download/<run_id>')
+def api_reconciliation_download(run_id):
+    from reconciliation_report import history
+    items = [row for row in history(RECON_DB, limit=100) if row["run_id"] == run_id]
+    if not items:
+        return jsonify({"ok": False, "error": "报表不存在"}), 404
+    path = Path(items[0]["report_path"]).resolve()
+    allowed = Path(r"E:\Temu账单\reports").resolve()
+    if allowed not in path.parents or not path.is_file():
+        return jsonify({"ok": False, "error": "报表文件不存在或路径非法"}), 404
+    return send_file(str(path), as_attachment=True, download_name=path.name)
 
 
 # ============================================================================
