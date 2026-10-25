@@ -32,7 +32,7 @@
   </section>
   <section class="panel">
     <h2>历史记录</h2>
-    <table><thead><tr><th>对账时间</th><th>已到账利润</th><th>未到账利润</th><th>总利润</th><th>状态</th><th>报表</th></tr></thead><tbody id="history"></tbody></table>
+    <table><thead><tr><th>对账时间</th><th>已到账利润</th><th>未到账利润</th><th>总利润</th><th>状态</th></tr></thead><tbody id="history"></tbody></table>
   </section>
   <section class="panel"><h2>运行日志</h2><pre id="log">尚未开始</pre></section>
 </div>
@@ -52,7 +52,7 @@ function render(report){
   $('notes').innerHTML=(report.notes||[]).map(n=>`<tr><td class="${n.level==='error'?'neg':n.level==='warn'?'muted':'pos'}">${esc(n.level)}</td><td>${esc(n.title)}</td><td>${esc(n.detail)}</td></tr>`).join('');
 }
 function renderHistory(items){
-  $('history').innerHTML=items.map(row=>`<tr><td>${esc(row.created_at)}</td><td class="${cls(row.settled_profit)}">${amount(row.settled_profit)}</td><td class="${cls(row.pending_profit)}">${amount(row.pending_profit)}</td><td class="${cls(row.total_profit)}">${amount(row.total_profit)}</td><td>${esc(row.status)}</td><td>${row.report_path?`<a href="/api/reconciliation/download/${encodeURIComponent(row.run_id)}">下载 Excel</a>`:'-'}</td></tr>`).join('')||'<tr><td colspan="6" class="muted">暂无历史记录</td></tr>';
+  $('history').innerHTML=items.map(row=>`<tr><td>${esc(row.created_at)}</td><td class="${cls(row.settled_profit)}">${amount(row.settled_profit)}</td><td class="${cls(row.pending_profit)}">${amount(row.pending_profit)}</td><td class="${cls(row.total_profit)}">${amount(row.total_profit)}</td><td>${esc(row.status)}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">暂无历史记录</td></tr>';
 }
 async function loadInitial(){
   const [latest,history]=await Promise.all([api('/api/reconciliation/latest'),api('/api/reconciliation/history')]);
