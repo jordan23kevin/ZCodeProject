@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """从 sds.hlhfushi.cn/admin/orders 同步衣服成本（单价）到 temu_bills.db.sds_cost
 
-规则（2026-10-25 用户确认）：
+规则（2026-10-25 用户确认，同日核查修订）：
   - 先把每页条数切到 200 条/页，再从第 1 页开始遍历（列表按创建时间倒序）；
-  - 增量模式（默认）：整页订单全部已入库即停止，之后每次只抓新增；
-  - 全量模式（--full）：遍历全部页并回填/修正单价——真实单价永远优先于估价，
-    sds 上后面出现金额，重跑全量即自动修正；
-  - 没写单价的按货号前缀估价：DX=33 元，HX/RX=56 元（price_source='estimate'）。
+  - 增量模式（默认）：本页没有新增/更新即停止，之后每次只抓新增；
+  - 全量模式（--full）：遍历全部页并回填/修正单价，同时清理「已取消订单」的成本行；
+  - 已取消订单（半托管已取消）不入库——页面商品块存在也不计成本；
+  - 商品块判定：有 sku + 数量 即算（不依赖 Extcode 行；部分订单无 Extcode 但有 sku/单价）；
+  - 没写单价的按货号前缀估价：DX=33 元，HX/RX=58 元（price_source='estimate'）；
+    单价 0 元视为未定价按估价；真实单价永远优先，重跑全量自动修正。
 """
 import argparse
 import os
@@ -22,12 +24,19 @@ PAGE_SIZE = 200
 def estimate_price(design_code):
     code = (design_code or "").upper()
     if code.startswith(("HX", "RX")):
-        return 56.0
+        return 58.0
     return 33.0
 
 
+def is_cancelled(text):
+    """订单块全文判断是否已取消（半托管已取消 / 括号独立状态）"""
+    if "半托管已取消" in text:
+        return True
+    return bool(re.search(r"\(已取消\)", text))
+
+
 def parse_rows(page):
-    """解析当前页 DOM：订单行(订单号/第三方单号) + 后随商品行(Extcode/sku/单价/数量)"""
+    """解析当前页 DOM：订单行(订单号/第三方单号/状态) + 后随商品块(sku/单价/数量，Extcode 可缺)"""
     blocks = []
     current = None
     trs = page.evaluate("""() => [...document.querySelectorAll('table tbody tr')]
@@ -40,30 +49,38 @@ def parse_rows(page):
             no_m = re.search(r"订单号[:：]\s*(\d+)", text)
             current = {"po": po_m.group(1) if po_m else None,
                        "order_no": no_m.group(1) if no_m else None,
-                       "items": []}
-        elif "Extcode" in text and current is not None:
-            ext_m = re.search(r"Extcode[:：]\s*([^\n]+)", text)
-            sku_m = re.search(r"\bsku[:：]\s*(\d+)", text)
-            price_m = re.search(r"单价[:：]\s*[￥¥]\s*([0-9]+(?:\.[0-9]+)?)", text)
-            qty_m = re.search(r"数量[:：]\s*(\d+)", text)
-            time_m = re.search(r"创建时间[:：]\s*([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{8})", text)
-            current["items"].append({
-                "extcode": ext_m.group(1).strip() if ext_m else None,
-                "sku": sku_m.group(1) if sku_m else "",
-                "unit_price": float(price_m.group(1)) if price_m else None,
-                "qty": int(qty_m.group(1)) if qty_m else 1,
-                "order_time": time_m.group(1) if time_m else None,
-            })
+                       "rows": [text], "items": []}
+        elif current is not None:
+            current["rows"].append(text)
+            # 商品块：有 sku 号且带数量（Extcode 可能缺失；排除订单行自身）
+            if re.search(r"\bsku[:：]\s*\d+", text) and re.search(r"数量[:：]\s*\d+", text):
+                ext_m = re.search(r"Extcode[:：]\s*([^\n]+)", text)
+                sku_m = re.search(r"\bsku[:：]\s*(\d+)", text)
+                price_m = re.search(r"单价[:：]\s*[￥¥]\s*([0-9]+(?:\.[0-9]+)?)", text)
+                qty_m = re.search(r"数量[:：]\s*(\d+)", text)
+                time_m = re.search(r"创建时间[:：]\s*([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{8})", text)
+                current["items"].append({
+                    "extcode": ext_m.group(1).strip() if ext_m else None,
+                    "sku": sku_m.group(1) if sku_m else "",
+                    "unit_price": float(price_m.group(1)) if price_m else None,
+                    "qty": int(qty_m.group(1)) if qty_m else 1,
+                    "order_time": time_m.group(1) if time_m else None,
+                })
     if current:
         blocks.append(current)
+    for b in blocks:
+        b["cancelled"] = is_cancelled("\n".join(b["rows"]))
     return blocks
 
 
 def upsert_rows(con, blocks, fetched_at):
-    """入库；返回 (新增条数, 新回填真实价条数)"""
-    inserted = corrected = 0
+    """入库（跳过已取消订单）；返回 (新增条数, 新回填真实价条数, 跳过取消行数)"""
+    inserted = corrected = skipped = 0
     for block in blocks:
         if not block["po"]:
+            continue
+        if block["cancelled"]:
+            skipped += len(block["items"])
             continue
         for item in block["items"]:
             extcode = item["extcode"] or ""
@@ -99,7 +116,7 @@ def upsert_rows(con, blocks, fetched_at):
             elif real and old[0] != "sds":
                 corrected += 1
     con.commit()
-    return inserted, corrected
+    return inserted, corrected, skipped
 
 
 def ensure_schema(con):
@@ -154,16 +171,19 @@ def sync_sds_cost(db_path, full=False):
                 pass
 
             fetched_at = datetime.now(CST).isoformat(timespec="seconds")
-            total_inserted = total_corrected = 0
+            total_inserted = total_corrected = total_skipped = 0
+            cancelled_pos = set()
             page_no = 1
             while True:
                 blocks = parse_rows(page)
                 pos = [b["po"] for b in blocks if b["po"]]
                 page_items = sum(len(b["items"]) for b in blocks)
                 print(f"第{page_no}页: {len(pos)} 单 / {page_items} 个商品行")
-                inserted, corrected = upsert_rows(con, blocks, fetched_at)
+                inserted, corrected, skipped = upsert_rows(con, blocks, fetched_at)
                 total_inserted += inserted
                 total_corrected += corrected
+                total_skipped += skipped
+                cancelled_pos.update(b["po"] for b in blocks if b["cancelled"] and b["po"])
                 if not pos:
                     print("当前页没有可识别订单，停止")
                     break
@@ -188,10 +208,16 @@ def sync_sds_cost(db_path, full=False):
                     print("翻页后内容未变化，停止")
                     break
                 page_no += 1
+            if full and cancelled_pos:
+                # 清理已取消订单的成本行（整单取消不计成本）
+                placeholders = ",".join("?" for _ in cancelled_pos)
+                cur = con.execute(f"DELETE FROM sds_cost WHERE po IN ({placeholders})", list(cancelled_pos))
+                con.commit()
+                print(f"清理已取消订单成本行: {cur.rowcount} 行")
         src = con.execute("SELECT price_source, COUNT(*), COALESCE(SUM(qty),0) FROM sds_cost GROUP BY price_source").fetchall()
         for source, cnt, qty_sum in src:
             print(f"库存: price_source={source}: {cnt} 行 (共 {qty_sum} 件)")
-        print(f"完成: 新增 {total_inserted} 行, 回填真实价 {total_corrected} 行, 模式={'全量' if full else '增量'}")
+        print(f"完成: 新增 {total_inserted} 行, 回填真实价 {total_corrected} 行, 跳过取消单商品 {total_skipped} 行, 模式={'全量' if full else '增量'}")
     finally:
         con.close()
 
@@ -199,7 +225,7 @@ def sync_sds_cost(db_path, full=False):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default=os.environ.get("TEMU_BILLS_DB", r"E:\Temu账单\temu_bills.db"))
-    parser.add_argument("--full", action="store_true", help="全量遍历并修正单价（默认增量，整页已入库即停）")
+    parser.add_argument("--full", action="store_true", help="全量遍历并修正单价+清理取消单（默认增量）")
     args = parser.parse_args()
     sync_sds_cost(os.path.abspath(args.db), full=args.full)
 

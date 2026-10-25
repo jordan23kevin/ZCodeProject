@@ -6,9 +6,6 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import openpyxl
-from openpyxl.styles import Font, PatternFill
-
 CST = timezone(timedelta(hours=8))
 PRODUCT_DB = r"E:\Kimi Code\temu分析\报活动\base_data.db"
 REPORT_ROOT = r"E:\Temu账单\reports"
@@ -48,12 +45,12 @@ def cost_by_month(con, product_db=PRODUCT_DB):
                 sds_real.setdefault(f"ext:{str(extcode).upper()}", price)
 
     def unit_cost_for(sku_id, sku_code, mapped):
-        """真实单价优先（sds 实价表），没有按货号前缀估价：DX=33，HX/RX=56"""
+        """真实单价优先（sds 实价表），没有按货号前缀估价：DX=33，HX/RX=58"""
         for key in (f"sku:{sku_id}", f"ext:{str(sku_code or '').upper()}", f"ext:{str(mapped or '').upper()}"):
             if key in sds_real:
                 return sds_real[key]
         code = str(sku_code or mapped or "").upper()
-        return 56 if code.startswith(("HX", "RX")) else 33
+        return 58 if code.startswith(("HX", "RX")) else 33
 
     result = {}
     for file_key, src, qty, sku_id, sku_code, mapped in rows:
@@ -156,7 +153,7 @@ def collect_report(db_path, start=None, end=None, product_db=PRODUCT_DB):
         if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sds_cost'").fetchone():
             src_rows = con.execute("SELECT price_source, COUNT(*) FROM sds_cost GROUP BY price_source").fetchall()
             detail = "；".join(f"{'sds实价' if s == 'sds' else '前缀估价'} {c} 条" for s, c in src_rows)
-            notes.append({"level": "info", "title": "衣服成本来源", "detail": f"sds.hlhfushi.cn 订单成本：{detail}；估价规则 DX=33、HX/RX=56，sds 出现实价后全量刷新自动修正"})
+            notes.append({"level": "info", "title": "衣服成本来源", "detail": f"sds.hlhfushi.cn 订单成本：{detail}；估价规则 DX=33、HX/RX=58，sds 出现实价后全量刷新自动修正；已取消订单不计成本"})
         _vio_cols = {row[1] for row in con.execute("PRAGMA table_info(violation)")}
         _appeal_col = "appeal_status" if "appeal_status" in _vio_cols else "NULL"
         latest_violations = con.execute(f"SELECT violation_id,po,vtype,amount,tx_time,{_appeal_col} FROM violation ORDER BY tx_time DESC LIMIT 5").fetchall()
@@ -177,55 +174,15 @@ def collect_report(db_path, start=None, end=None, product_db=PRODUCT_DB):
         con.close()
 
 
-def write_excel(report, path):
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "月度汇总"
-    headers = ["月份", "已到账净额(不含划拨)", "未到账净额", "已到账胚衣成本", "未到账胚衣成本", "未到账直接费用", "退货费暂估", "已到账利润", "未到账利润", "总利润"]
-    ws.append(headers)
-    keys = ["month", "actual_net", "pending_net", "settled_cost", "pending_cost", "pending_direct_fees", "estimated_fees", "settled_profit", "pending_profit", "total_profit"]
-    for row in report["months"] + [report["totals"]]:
-        ws.append([row[key] for key in keys])
-    for cell in ws[1]:
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill("solid", fgColor="17365D")
-    for cell in ws[ws.max_row]:
-        cell.font = Font(bold=True)
-    widths = [12, 24, 16, 18, 18, 18, 14, 16, 16, 14]
-    for index, width in enumerate(widths, 1):
-        ws.column_dimensions[openpyxl.utils.get_column_letter(index)].width = width
-    ws.freeze_panes = "A2"
-    for row in ws.iter_rows(min_row=2, min_col=2):
-        for cell in row:
-            cell.number_format = '#,##0.00;[Red]-#,##0.00'
-    ws2 = wb.create_sheet("财务注意事项")
-    ws2.append(["级别", "事项", "说明"])
-    for note in report["notes"]:
-        ws2.append([note["level"], note["title"], note["detail"]])
-    for cell in ws2[1]:
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill("solid", fgColor="17365D")
-    ws2.column_dimensions["A"].width = 10
-    ws2.column_dimensions["B"].width = 32
-    ws2.column_dimensions["C"].width = 110
-    ws3 = wb.create_sheet("数据来源")
-    ws3.append(["项目", "值"])
-    for key, value in report["sources"].items():
-        ws3.append([key, value])
-    ws3.column_dimensions["A"].width = 26
-    ws3.column_dimensions["B"].width = 50
-    wb.save(path)
-
-
 def generate_report(db_path, start=None, end=None, report_root=REPORT_ROOT, product_db=PRODUCT_DB):
+    """生成对账报表：数据直接在对账平台(/reconciliation)展示，不再生成 Excel。
+    保留 JSON 快照与 recon_run/recon_month 历史记录供平台查询。"""
     report = collect_report(db_path, start, end, product_db)
     run_id = f"{datetime.now(CST):%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
     directory = Path(report_root) / run_id
     directory.mkdir(parents=True, exist_ok=True)
-    xlsx_path = directory / f"Temu对账_{run_id}.xlsx"
     json_path = directory / f"Temu对账_{run_id}.json"
-    write_excel(report, xlsx_path)
-    payload = {"run_id": run_id, "created_at": datetime.now(CST).isoformat(timespec="seconds"), **report, "report_path": str(xlsx_path)}
+    payload = {"run_id": run_id, "created_at": datetime.now(CST).isoformat(timespec="seconds"), **report, "report_path": None}
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     con = sqlite3.connect(db_path)
     try:
@@ -233,7 +190,7 @@ def generate_report(db_path, start=None, end=None, report_root=REPORT_ROOT, prod
         with con:
             con.execute(
                 "INSERT INTO recon_run(run_id,created_at,period_start,period_end,settled_profit,pending_profit,total_profit,report_path,status) VALUES(?,?,?,?,?,?,?,?,?)",
-                (run_id, payload["created_at"], start, end, report["totals"].get("settled_profit"), report["totals"].get("pending_profit"), report["totals"].get("total_profit"), str(xlsx_path), "completed"),
+                (run_id, payload["created_at"], start, end, report["totals"].get("settled_profit"), report["totals"].get("pending_profit"), report["totals"].get("total_profit"), None, "completed"),
             )
             for row in report["months"]:
                 con.execute(
