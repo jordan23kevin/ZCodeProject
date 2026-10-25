@@ -5,7 +5,7 @@ import sqlite3
 from datetime import date
 
 from reconciliation_pagination import set_max_page_size
-from reconciliation_sync import set_date_range
+from reconciliation_sync import fetch_start, months_between, set_date_range
 from sync_aftersales import backup_database, wait_api
 
 SETTLE_URL = "https://agentseller-eu.temu.com/labor/settle"
@@ -68,8 +68,13 @@ def _next(page, endpoint):
     """))
 
 
-def collect_payments(page, status, order_months, start=date(2026, 4, 1), end=date(2026, 10, 25)):
+def collect_payments(page, status, order_months, start=None, end=None):
     import calendar
+
+    if end is None:
+        end = date.today()
+    if start is None:
+        start = fetch_start()  # 滚动窗口：只抓最近 90 天
 
     label = "已到账款项" if status == "已到账" else "待处理款项"
     endpoint = "/api/xiaowenhou/settle-flow/sm/settled/po/page-query" if status == "已到账" else "/api/xiaowenhou/settle-flow/sm/unsettle/page-query"
@@ -78,16 +83,10 @@ def collect_payments(page, status, order_months, start=date(2026, 4, 1), end=dat
     page.click(f"text={label}", timeout=10000)
     page.wait_for_timeout(1500)
     rows = []
-    months = []
-    year, month = start.year, start.month
-    while (year, month) <= (end.year, end.month):
-        months.append((year, month))
-        month += 1
-        if month == 13:
-            year, month = year + 1, 1
-    for year, month in months:
+    for year, month in months_between(start, end):
+        start_day = start.day if (year, month) == (start.year, start.month) else 1
         last_day = calendar.monthrange(year, month)[1] if (year, month) < (end.year, end.month) else end.day
-        set_date_range(page, date(year, month, 1), date(year, month, last_day))
+        set_date_range(page, date(year, month, start_day), date(year, month, last_day))
         page_size = set_max_page_size(page, 200)  # 结算页上限 200
         page_number = 1
         expected_total = None
@@ -128,6 +127,8 @@ def replace_payments(con, rows):
     keys = {(row["status"], row["po"], row["sku_id"]) for row in rows}
     if len(keys) != len(rows):
         raise RuntimeError("款项快照存在重复 PO+SKU，拒绝整表替换")
+    # 只替换本次抓到的月份（file_key），90 天窗口外已结算的历史月份保留在库里
+    file_keys = sorted({row["file_key"] for row in rows})
     received = {}
     for row in rows:
         if row["status"] == "已到账":
@@ -154,7 +155,8 @@ def replace_payments(con, rows):
         raise RuntimeError(f"已到账与待处理金额不一致，需人工核对: {conflicts[:10]}")
     placeholders = ",".join("?" for _ in PAYMENT_COLUMNS)
     with con:
-        con.execute("DELETE FROM payment")
+        for file_key in file_keys:
+            con.execute("DELETE FROM payment WHERE file_key=?", (file_key,))
         con.executemany(
             f"INSERT INTO payment({','.join(PAYMENT_COLUMNS)}) VALUES({placeholders})",
             [[row.get(name) for name in PAYMENT_COLUMNS] for row in filtered],

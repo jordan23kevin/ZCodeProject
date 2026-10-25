@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 import argparse
+import calendar
 import json
 import os
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from reconciliation_pagination import set_max_page_size
 from sync_aftersales import backup_database, wait_api
@@ -11,6 +12,25 @@ from sync_aftersales import backup_database, wait_api
 ORDERS_URL = "https://agentseller-eu.temu.com/mmsos/orders.html?fulfillmentMode=9&pageNumber=1&pageSize=20&queryType=0&sortType=1&timeZone=UTC%2B8&sellerNoteLabelList=&packageAbnormalTypeList="
 ORDER_API = "/kirogi/bg/mms/recentOrderList"
 CST = timezone(timedelta(hours=8))
+# 抓数窗口：平台最晚结算 90 天、可用退款 90 天，只抓最近 90 天（2026-10-25 用户确认）
+SYNC_DAYS = 90
+
+
+def fetch_start(days=SYNC_DAYS):
+    """滚动抓数窗口起点（含）。已结算的历史月份定格在库里，不重抓。"""
+    return date.today() - timedelta(days=days)
+
+
+def months_between(start_day, end_day):
+    """闭区间内逐月 (year, month) 列表"""
+    months = []
+    year, month = start_day.year, start_day.month
+    while (year, month) <= (end_day.year, end_day.month):
+        months.append((year, month))
+        month += 1
+        if month == 13:
+            year, month = year + 1, 1
+    return months
 ORDER_STATUSES = {1: "平台处理中", 2: "待发货", 3: "已取消", 4: "已发货", 5: "已签收"}
 ORDER_COLUMNS = [
     "sub_order_no", "sku_id", "order_no", "site", "order_status", "batch_order_no", "sub_status", "qty",
@@ -91,7 +111,12 @@ def _click_next(page):
     """))
 
 
-def collect_orders(page):
+def collect_orders(page, start_day=None, end_day=None):
+    """抓订单；给定窗口时按月循环（订单页日期控件只支持单月区间）"""
+    if end_day is None:
+        end_day = date.today()
+    if start_day is None:
+        start_day = fetch_start()
     page.goto(ORDERS_URL, wait_until="domcontentloaded", timeout=90000)
     page.wait_for_timeout(5000)
     if "auth/authentication" in page.url:
@@ -99,30 +124,37 @@ def collect_orders(page):
     page_size = set_max_page_size(page, 100)  # 卖家中心订单页上限 100
     rows = []
     parents = set()
-    page_number = 1
-    expected_total = None
-    while True:
-        payload = _click_query(page) if page_number == 1 else _click_next(page)
-        result = payload.get("result") or {}
-        total = result.get("totalItemNum")
-        items = result.get("pageItems")
-        if not isinstance(total, int) or not isinstance(items, list):
-            raise ValueError("订单接口缺少 totalItemNum/pageItems")
-        if expected_total is None:
-            expected_total = total
-        elif total != expected_total:
-            raise RuntimeError(f"订单翻页期间总数变化: {expected_total} -> {total}")
-        for item in items:
-            parent = (item.get("parentOrderMap") or {}).get("parentOrderSn")
-            if not parent:
-                raise ValueError("订单缺少 parentOrderSn")
-            parents.add(parent)
-            rows.extend(flatten_order_item(item))
-        if not items or page_number * page_size >= expected_total:
-            break
-        page_number += 1
-    if len(parents) != expected_total:
-        raise RuntimeError(f"订单总数不一致: 页面={expected_total}, 抓取={len(parents)}")
+    for year, month in months_between(start_day, end_day):
+        s = date(year, month, start_day.day) if (year, month) == (start_day.year, start_day.month) else date(year, month, 1)
+        e = date(year, month, end_day.day) if (year, month) == (end_day.year, end_day.month) else date(year, month, calendar.monthrange(year, month)[1])
+        set_date_range(page, s, e)
+        page_number = 1
+        expected_total = None
+        month_parents = set()
+        while True:
+            payload = _click_query(page) if page_number == 1 else _click_next(page)
+            result = payload.get("result") or {}
+            total = result.get("totalItemNum")
+            items = result.get("pageItems")
+            if not isinstance(total, int) or not isinstance(items, list):
+                raise ValueError("订单接口缺少 totalItemNum/pageItems")
+            if expected_total is None:
+                expected_total = total
+            elif total != expected_total:
+                raise RuntimeError(f"订单翻页期间总数变化: {expected_total} -> {total}")
+            for item in items:
+                parent = (item.get("parentOrderMap") or {}).get("parentOrderSn")
+                if not parent:
+                    raise ValueError("订单缺少 parentOrderSn")
+                parents.add(parent)
+                month_parents.add(parent)
+                rows.extend(flatten_order_item(item))
+            if not items or page_number * page_size >= expected_total:
+                break
+            page_number += 1
+        if len(month_parents) != expected_total:
+            raise RuntimeError(f"订单总数不一致: 页面={expected_total}, 抓取={len(month_parents)}")
+        print(f"订单 {s}~{e}: {expected_total} 单")
     return rows
 
 
@@ -139,7 +171,7 @@ def sync_orders(db_path):
             rows = collect_orders(page)
         upsert_orders(con, rows)
         parents = {row["order_no"] for row in rows}
-        print(f"订单主单: {len(parents)}; 订单SKU行: {len(rows)}; 备份: {backup}")
+        print(f"订单主单: {len(parents)}; 订单SKU行: {len(rows)}; 窗口: 最近{SYNC_DAYS}天; 备份: {backup}")
     finally:
         con.close()
 

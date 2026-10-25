@@ -7,7 +7,7 @@ import sqlite3
 from datetime import date, datetime, timedelta, timezone
 
 from reconciliation_pagination import set_max_page_size
-from reconciliation_sync import set_date_range
+from reconciliation_sync import fetch_start, months_between, set_date_range
 from sync_aftersales import backup_database, wait_api
 
 CST = timezone(timedelta(hours=8))
@@ -125,13 +125,13 @@ def set_page_size(page, preferred=100):
     return set_max_page_size(page, preferred)  # 面单页上限 100
 
 
-def collect_month(page, url, endpoint, year, month, end_day, kind):
+def collect_month(page, url, endpoint, year, month, start_day, end_day, kind):
     page.goto(url, wait_until="domcontentloaded", timeout=90000)
     page.wait_for_timeout(3500)
     if kind == "ship":
         page.click("text=已出账", timeout=10000)
         page.wait_for_timeout(1500)
-    set_date_range(page, date(year, month, 1), date(year, month, end_day))
+    set_date_range(page, date(year, month, start_day), date(year, month, end_day))
     page_size = set_page_size(page, 100)
     rows = []
     seen = set()
@@ -183,28 +183,29 @@ def replace_snapshot(con, table, columns, rows):
     if not rows:
         raise RuntimeError(f"{table} 快照为空，拒绝清空")
     placeholders = ",".join("?" for _ in columns)
+    # 只替换本次抓到的月份（file_key），90 天窗口外已结算的历史月份保留在库里
+    file_keys = sorted({row["file_key"] for row in rows})
     with con:
-        con.execute(f"DELETE FROM {table}")
+        for file_key in file_keys:
+            con.execute(f"DELETE FROM {table} WHERE file_key=?", (file_key,))
         con.executemany(
             f"INSERT INTO {table}({','.join(columns)}) VALUES({placeholders})",
             [[row.get(name) for name in columns] for row in rows],
         )
 
 
-def sync_financials(db_path, start=date(2026, 4, 1), end=date(2026, 10, 25)):
+def sync_financials(db_path, start=None, end=None):
     from playwright.sync_api import sync_playwright
+
+    if end is None:
+        end = date.today()
+    if start is None:
+        start = fetch_start()  # 滚动窗口：只抓最近 90 天
 
     con = sqlite3.connect(db_path)
     try:
         ensure_financial_schema(con)
         backup = backup_database(db_path, os.path.join(os.path.dirname(db_path), "backups"))
-        months = []
-        year, month = start.year, start.month
-        while (year, month) <= (end.year, end.month):
-            months.append((year, month))
-            month += 1
-            if month == 13:
-                year, month = year + 1, 1
         snapshots = {"ledger": [], "ship_label": [], "return_label": []}
         with sync_playwright() as p:
             browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
@@ -215,9 +216,10 @@ def sync_financials(db_path, start=date(2026, 4, 1), end=date(2026, 10, 25)):
                 ("ship", SHIP_URL, SHIP_API, "ship_label"),
                 ("return", RETURN_URL, RETURN_API, "return_label"),
             ]:
-                for year, month in months:
+                for year, month in months_between(start, end):
+                    start_day = start.day if (year, month) == (start.year, start.month) else 1
                     last_day = calendar.monthrange(year, month)[1] if (year, month) < (end.year, end.month) else end.day
-                    rows = collect_month(page, url, endpoint, year, month, last_day, kind)
+                    rows = collect_month(page, url, endpoint, year, month, start_day, last_day, kind)
                     snapshots[table].extend(rows)
                     print(f"{kind} {year}-{month:02d}: {len(rows)} 行")
         columns = {"ledger": LEDGER_COLUMNS, "ship_label": SHIP_COLUMNS, "return_label": RETURN_COLUMNS}
